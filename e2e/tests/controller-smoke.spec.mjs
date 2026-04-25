@@ -1,5 +1,11 @@
 import { test, expect } from "@playwright/test";
 
+async function disableRuntimeMonitor(page) {
+  await page.addInitScript(() => {
+    window.__officeRuntimeMonitorDisabled = true;
+  });
+}
+
 test.describe("controller office smoke", () => {
   test("cozy runtime loads from shared /controller-assets/js/cozy.js module", async ({
     page,
@@ -38,6 +44,9 @@ test.describe("controller office smoke", () => {
     expect(sceneDebug.hasOwlCourier).toBe(true);
     expect(sceneDebug.hasAudio8).toBe(true);
     expect(sceneDebug.tube.x).toBe(988);
+    expect(sceneDebug.characterSkins.Codex).toContain("프리렌");
+    expect(sceneDebug.characterSkins.Claude).toContain("아카네");
+    expect(sceneDebug.characterSkins.Gemini).toContain("귀여운");
 
     const petResult = await page.evaluate(() => window.testPetCat());
     expect(petResult.catState).toBe("pet");
@@ -98,9 +107,111 @@ test.describe("controller office smoke", () => {
     await expect(matchingMsgs).toHaveCount(0);
   });
 
+  test("controller renders token HUD from monitor snapshot fallback", async ({ page }) => {
+    await page.addInitScript(() => {
+      window.__officeMonitorSocketDisabled = true;
+    });
+    const runtime = {
+      runtime_state: "RUNNING",
+      project_root: "/tmp/projectH",
+      lanes: [
+        { name: "Claude", state: "ready", note: "" },
+        { name: "Codex", state: "working", note: "monitoring" },
+        { name: "Gemini", state: "off", note: "" },
+      ],
+      control: { active_control_status: "implement", active_control_seq: 99 },
+      watcher: { alive: true },
+      active_round: { state: "ACTIVE" },
+      artifacts: {},
+    };
+    await page.route("**/api/runtime/status", (route) =>
+      route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify(runtime),
+      }),
+    );
+    await page.route("**/api/runtime/monitor-snapshot", (route) =>
+      route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({
+          ok: true,
+          runtime,
+          hud: {
+            collector: { phase: "idle" },
+            totals: {
+              total_tokens: 1500,
+              total_cost_usd: 0.42,
+              cache_hit_rate: 0.25,
+            },
+            agents: [
+              {
+                name: "Codex",
+                state: "working",
+                active: true,
+                events: 7,
+                total_tokens: 1500,
+                total_cost_usd: 0.42,
+                cache_hit_rate: 0.33,
+              },
+            ],
+          },
+          coordination_state: {
+            Codex: {
+              team_id: "round-99",
+              parent_id: "prompt-root",
+              approval_wait: true,
+            },
+          },
+          teams: [
+            {
+              id: "round-99",
+              label: "Round 99",
+              agents: ["Claude", "Codex"],
+              color: "#6aa7c9",
+              source: "test",
+            },
+          ],
+          communications: [
+            {
+              sequence: 1,
+              from: "Claude",
+              to: "Codex",
+              event_type: "handoff",
+              message: "delegate verification",
+            },
+          ],
+        }),
+      }),
+    );
+
+    await page.goto("/controller");
+
+    await expect(page.locator("#tab-content")).toContainText("Token HUD");
+    await expect(page.locator("#tab-content")).toContainText("fallback");
+    await expect(page.locator("#tab-content")).toContainText("25%cache");
+    const codexRow = page.locator('.token-agent-row[data-agent="Codex"]');
+    await expect(codexRow).toContainText("WORKING");
+    await expect(codexRow).toContainText("1.5k");
+    await expect(codexRow).toContainText("$0.42");
+    await expect(codexRow).toContainText("33%");
+    await expect(page.locator("#event-list")).toContainText("Claude → Codex");
+    await expect(page.locator("#event-list")).toContainText("Codex: 승인 대기");
+    const sceneDebug = await page.evaluate(() => window.getSceneDebug());
+    expect(sceneDebug.hasTeamHullRenderer).toBe(true);
+    expect(sceneDebug.hasCommunicationTransfer).toBe(true);
+    expect(sceneDebug.hasApprovalMarker).toBe(true);
+    expect(sceneDebug.hasViewCulling).toBe(true);
+    expect(sceneDebug.teamCount).toBe(1);
+    expect(sceneDebug.communicationTransferCount).toBeGreaterThan(0);
+    const positions = await page.evaluate(() => window.getAgentPositions());
+    expect(positions.Codex.teamId).toBe("round-99");
+    expect(positions.Codex.approvalWaiting).toBe(true);
+  });
+
   test("controller deduplicates repeated status fetch failures and logs one recovery", async ({
     page,
   }) => {
+    await disableRuntimeMonitor(page);
     let statusPollCount = 0;
     await page.route("**/api/runtime/status", async (route) => {
       statusPollCount += 1;
@@ -145,6 +256,7 @@ test.describe("controller office smoke", () => {
   });
 
   test("controller surfaces automation attention detail from runtime status", async ({ page }) => {
+    await disableRuntimeMonitor(page);
     await page.route("**/api/runtime/status", (route) =>
       route.fulfill({
         contentType: "application/json",
@@ -184,9 +296,76 @@ test.describe("controller office smoke", () => {
     await expect(incidentRoom).toContainText("stale_advisory_pending");
   });
 
+  test("controller renders main operator attention board for needs_operator reason", async ({ page }) => {
+    await disableRuntimeMonitor(page);
+    await page.route("**/api/runtime/status", (route) =>
+      route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({
+          runtime_state: "RUNNING",
+          project_root: "/tmp/projectH",
+          automation_health: "needs_operator",
+          automation_reason_code: "claude_auth_login_required",
+          automation_next_action: "operator_required",
+          automation_health_detail: "lane tail에서 Please run /login 감지",
+          degraded_reason: "claude_auth_login_required",
+          degraded_reasons: ["claude_auth_login_required"],
+          role_owners: { implement: "Claude", verify: "Codex", advisory: "Gemini" },
+          lanes: [
+            { name: "Claude", state: "broken", note: "auth_login_required", pid: 101 },
+            { name: "Codex", state: "ready", note: "waiting" },
+            { name: "Gemini", state: "ready", note: "waiting" },
+          ],
+          control: {
+            active_control_file: ".pipeline/operator_request.md",
+            active_control_status: "needs_operator",
+            active_control_seq: 123,
+          },
+          autonomy: {
+            mode: "needs_operator",
+            reason_code: "claude_auth_login_required",
+            decision_required: "Claude lane에서 /login을 완료하세요.",
+            operator_policy: "immediate_publish",
+            operator_eligible: true,
+          },
+          turn_state: { state: "CLAUDE_ACTIVE", active_role: "implement", active_lane: "Claude" },
+          watcher: { alive: true },
+          active_round: { state: "CLAUDE_ACTIVE" },
+          artifacts: {},
+        }),
+      }),
+    );
+    await page.route("**/api/runtime/capture-tail**", (route) =>
+      route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({ ok: true, text: "Please run /login" }),
+      }),
+    );
+
+    await page.goto("/controller");
+    const board = page.locator("#operator-attention-board");
+    await expect(board).toBeVisible();
+    await expect(board).toContainText("개입 필요");
+    await expect(board).toContainText("인증 로그인 필요");
+    await expect(board).toContainText("claude_auth_login_required");
+    await expect(board).toContainText("Claude / IMPLEMENT");
+    await expect(board).toContainText("Claude lane에서 /login을 완료하세요.");
+    await expect(board).toContainText("operator_request.md · #123");
+    await expect(board).toContainText("lane tail에서 Please run /login 감지");
+
+    const attention = await page.evaluate(() => window.getOperatorAttentionDebug());
+    expect(attention.tone).toBe("auth");
+    expect(attention.laneName).toBe("Claude");
+
+    await page.locator("#operator-attention-open-log").click();
+    await expect(page.locator("#log-modal")).toHaveClass(/open/);
+    await expect(page.locator("#lm-name")).toHaveText("Claude");
+  });
+
   test("controller shows active verify owner as working even when lane snapshot is ready", async ({
     page,
   }) => {
+    await disableRuntimeMonitor(page);
     await page.route("**/api/runtime/status", (route) =>
       route.fulfill({
         contentType: "application/json",
@@ -216,6 +395,18 @@ test.describe("controller office smoke", () => {
         body: JSON.stringify({ ok: true, text: "verification running" }),
       }),
     );
+    await page.route("**/api/runtime/agent-inspector**", (route) =>
+      route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({
+          ok: true,
+          agent: { id: "Claude", role: "verify", state: "working", note: "prompt visible", pid: 123 },
+          metrics: { total_tokens: 1200, total_cost_usd: 0.08, cache_hit_rate: 0.5 },
+          current_prompt: "Prompt: verify controller monitor",
+          conversation: ["User: inspect this", "Assistant: verification running"],
+        }),
+      }),
+    );
 
     await page.goto("/controller");
     await page.waitForFunction(() => window.getAgentPositions?.()?.Claude?.state === "working");
@@ -226,12 +417,17 @@ test.describe("controller office smoke", () => {
     await expect(page.locator("#tab-content")).toContainText("VERIFYING");
 
     await page.locator('.agent-card[data-agent="Claude"]').click();
+    await expect(page.locator("#agent-inspector")).toHaveClass(/open/);
+    await expect(page.locator("#agent-inspector")).toContainText("Prompt: verify controller monitor");
+    await expect(page.locator("#agent-inspector")).toContainText("50%");
+    await page.locator("#ai-open-log").click();
     await expect(page.locator("#lm-state")).toHaveText("WORKING");
   });
 
   test("marquee text keeps moving when the polled runtime payload is unchanged", async ({
     page,
   }) => {
+    await disableRuntimeMonitor(page);
     await page.route("**/api/runtime/status", (route) =>
       route.fulfill({
         contentType: "application/json",
@@ -284,6 +480,7 @@ test.describe("controller office smoke", () => {
   test("agent cards expose data-fatigue attribute for fatigue observability", async ({
     page,
   }) => {
+    await disableRuntimeMonitor(page);
     // Stub the API to return one working agent so the sidebar renders a card
     await page.route("**/api/runtime/status", (route) =>
       route.fulfill({
@@ -317,6 +514,7 @@ test.describe("controller office smoke", () => {
   test("setAgentFatigue hook transitions card to fatigued state", async ({
     page,
   }) => {
+    await disableRuntimeMonitor(page);
     await page.route("**/api/runtime/status", (route) =>
       route.fulfill({
         contentType: "application/json",
@@ -349,6 +547,7 @@ test.describe("controller office smoke", () => {
   test("setAgentFatigue hook transitions card to coffee state", async ({
     page,
   }) => {
+    await disableRuntimeMonitor(page);
     await page.route("**/api/runtime/status", (route) =>
       route.fulfill({
         contentType: "application/json",
@@ -381,6 +580,7 @@ test.describe("controller office smoke", () => {
   test("idle agents settle into lounge rest bounds", async ({
     page,
   }) => {
+    await disableRuntimeMonitor(page);
     // Stub the API to return one idle agent so the roam system is active
     await page.route("**/api/runtime/status", (route) =>
       route.fulfill({
@@ -431,6 +631,7 @@ test.describe("controller office smoke", () => {
   test("lounge rest zones keep idle agents partitioned", async ({
     page,
   }) => {
+    await disableRuntimeMonitor(page);
     await page.route("**/api/runtime/status", (route) =>
       route.fulfill({
         contentType: "application/json",
@@ -480,6 +681,7 @@ test.describe("controller office smoke", () => {
   test("lounge idle roam uses continuous micro-roam (no spot history)", async ({
     page,
   }) => {
+    await disableRuntimeMonitor(page);
     await page.route("**/api/runtime/status", (route) =>
       route.fulfill({
         contentType: "application/json",

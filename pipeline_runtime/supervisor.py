@@ -41,7 +41,7 @@ from .operator_autonomy import (
     operator_gate_marker_from_decision,
 )
 from .pr_merge_state import PrMergeStatusCache
-from .role_routes import VERIFY_TRIAGE_ESCALATION
+from .role_routes import VERIFY_TRIAGE_ESCALATION, is_verify_followup_route
 from .receipts import (
     build_receipt,
     manifest_feedback_path,
@@ -55,6 +55,7 @@ from .schema import (
     active_control_snapshot_from_status,
     atomic_write_json,
     append_jsonl,
+    completed_implement_handoff_truth,
     control_block_from_snapshot,
     control_seq_value,
     control_slot_spec_for_filename,
@@ -564,12 +565,48 @@ class RuntimeSupervisor:
             is_legacy_alias=is_legacy_alias,
         )
 
-    def _surface_turn_state_for_stale_operator_control(
+    def _surface_turn_state_for_gated_operator_control(
         self,
         turn_state: dict[str, Any] | None,
         stale_operator_control: dict[str, Any] | None,
+        operator_gate: dict[str, Any] | None = None,
     ) -> dict[str, Any] | None:
         if stale_operator_control is None:
+            if operator_gate is None:
+                return turn_state if isinstance(turn_state, dict) else None
+            if str(operator_gate.get("routed_to") or "") == "hibernate":
+                return {
+                    "state": "IDLE",
+                    "legacy_state": "IDLE",
+                    "entered_at": float((turn_state or {}).get("entered_at") or time.time()),
+                    "reason": "operator_request_gated_hibernate",
+                    "active_control_file": "",
+                    "active_control_seq": -1,
+                    "active_role": "",
+                    "active_lane": "",
+                }
+            if is_verify_followup_route(operator_gate.get("routed_to")):
+                current = dict(turn_state or {})
+                current_state = canonical_turn_state_name(
+                    current.get("state"),
+                    legacy_state=current.get("legacy_state"),
+                )
+                if current_state == "VERIFY_FOLLOWUP":
+                    return current
+                if current_state != "IDLE":
+                    return turn_state if isinstance(turn_state, dict) else None
+                control_seq = control_seq_value(operator_gate.get("control_seq"), default=-1)
+                control_file = str(operator_gate.get("control_file") or "operator_request.md")
+                return {
+                    "state": "VERIFY_FOLLOWUP",
+                    "legacy_state": "CODEX_FOLLOWUP",
+                    "entered_at": float(current.get("entered_at") or time.time()),
+                    "reason": str(operator_gate.get("reason") or "operator_request_gated"),
+                    "active_control_file": control_file,
+                    "active_control_seq": control_seq,
+                    "active_role": "verify",
+                    "active_lane": self._prompt_owner("verify"),
+                }
             return turn_state if isinstance(turn_state, dict) else None
         current = dict(turn_state or {})
         current_state = canonical_turn_state_name(
@@ -603,6 +640,27 @@ class RuntimeSupervisor:
         handoff_sha = self._control_handoff_sha(control)
         if not handoff_sha:
             return None
+        control_seq = snapshot_control_seq(snapshot)
+        active_control_updated_at = parse_iso_utc(str(snapshot.get("control_updated_at") or ""))
+        completed_truth = completed_implement_handoff_truth(
+            control_path,
+            repo_root=self.project_root,
+            work_root=self.project_root / "work",
+            verify_root=self.project_root / "verify",
+            active_control_updated_at=active_control_updated_at,
+        )
+        if completed_truth is not None:
+            return {
+                "control_file": str(snapshot.get("control_file") or ""),
+                "control_seq": control_seq,
+                "handoff_sha": handoff_sha,
+                "reason": "handoff_already_completed",
+                "blocked_fingerprint": str(completed_truth.get("work_path") or ""),
+                "routed_to": VERIFY_TRIAGE_ESCALATION,
+                "source_event": "artifact_truth_completed",
+                "work_path": str(completed_truth.get("work_path") or ""),
+                "verify_path": str(completed_truth.get("verify_path") or ""),
+            }
         raw_log = self.base_dir / "logs" / "experimental" / "raw.jsonl"
         if not raw_log.exists():
             return None
@@ -610,8 +668,6 @@ class RuntimeSupervisor:
             raw_lines = raw_log.read_text(encoding="utf-8").splitlines()
         except OSError:
             return None
-        control_seq = snapshot_control_seq(snapshot)
-        active_control_updated_at = parse_iso_utc(str(snapshot.get("control_updated_at") or ""))
         fallback: dict[str, Any] | None = None
         for raw in reversed(raw_lines[-400:]):
             raw = raw.strip()
@@ -1796,9 +1852,10 @@ class RuntimeSupervisor:
                 {},
                 control_age_cycles=control_age_cycles,
             )
-        status_turn_state = self._surface_turn_state_for_stale_operator_control(
+        status_turn_state = self._surface_turn_state_for_gated_operator_control(
             turn_state if isinstance(turn_state, dict) else None,
             stale_operator_control,
+            operator_gate,
         )
         active_lane = self._active_lane_for_runtime(
             status_turn_state,
@@ -2124,6 +2181,8 @@ class RuntimeSupervisor:
                         "handoff_sha": str(duplicate_control.get("handoff_sha") or ""),
                         "reason": str(duplicate_control.get("reason") or ""),
                         "routed_to": str(duplicate_control.get("routed_to") or ""),
+                        "work_path": str(duplicate_control.get("work_path") or ""),
+                        "verify_path": str(duplicate_control.get("verify_path") or ""),
                     },
                 )
 

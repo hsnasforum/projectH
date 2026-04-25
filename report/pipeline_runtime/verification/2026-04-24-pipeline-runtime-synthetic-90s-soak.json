@@ -1,0 +1,385 @@
+{
+  "title": "Pipeline Runtime synthetic soak sample",
+  "ok": true,
+  "summary": {
+    "project": "/tmp/projecth-pipeline-runtime-synthetic-2rkcd253",
+    "session": "aip-projecth-pipeline-runtime-synthetic-2rkcd253",
+    "mode": "experimental",
+    "workspace_retained": false,
+    "workspace_cleanup": "background_delete_requested(pid=360017)",
+    "duration_sec": 90.0,
+    "ready_ok": true,
+    "ready_wait_sec": 1.001,
+    "ready_timeout_sec": 60.0,
+    "samples": 17,
+    "state_counts": {
+      "RUNNING": 17
+    },
+    "degraded_counts": {},
+    "receipt_count": 1,
+    "control_change_count": 3,
+    "duplicate_dispatch_count": 0,
+    "control_mismatch_samples": 0,
+    "control_mismatch_max_streak": 0,
+    "receipt_pending_samples": 0,
+    "classification_gate_failures": 0,
+    "classification_gate_details": [],
+    "orphan_session": false,
+    "broken_seen": false,
+    "degraded_seen": false,
+    "readiness_snapshot": {
+      "runtime_state": "RUNNING",
+      "automation_health": "ok",
+      "automation_reason_code": "",
+      "automation_incident_family": "",
+      "automation_next_action": "continue",
+      "watcher": {
+        "alive": true,
+        "pid": 357724
+      },
+      "lanes": [
+        {
+          "name": "Claude",
+          "state": "READY",
+          "attachable": true,
+          "pid": 357603,
+          "note": "prompt_visible",
+          "last_event_at": "2026-04-24T02:23:54.690785Z",
+          "last_heartbeat_at": "2026-04-24T02:23:54.639852Z"
+        },
+        {
+          "name": "Codex",
+          "state": "READY",
+          "attachable": true,
+          "pid": 357625,
+          "note": "prompt_visible",
+          "last_event_at": "2026-04-24T02:23:54.698399Z",
+          "last_heartbeat_at": "2026-04-24T02:23:54.647759Z"
+        },
+        {
+          "name": "Gemini",
+          "state": "READY",
+          "attachable": true,
+          "pid": 357653,
+          "note": "prompt_visible",
+          "last_event_at": "2026-04-24T02:23:54.726015Z",
+          "last_heartbeat_at": "2026-04-24T02:23:54.674828Z"
+        }
+      ],
+      "control": {
+        "active_control_status": "none"
+      },
+      "active_round": {
+        "state": ""
+      }
+    },
+    "runtime_context": {
+      "current_run_id": "20260424T022354Z-p357475",
+      "automation_health": "ok",
+      "automation_reason_code": "",
+      "automation_incident_family": "",
+      "automation_next_action": "continue",
+      "open_control": {
+        "active_control_file": ".pipeline/implement_handoff.md",
+        "active_control_seq": 2,
+        "active_control_status": "implement"
+      },
+      "active_round": {
+        "job_id": "20260424-2026-04-24-synthetic-implement-0-719c7b64",
+        "round": 1,
+        "state": "CLOSED",
+        "artifact_path": "/tmp/projecth-pipeline-runtime-synthetic-2rkcd253/work/4/24/2026-04-24-synthetic-implement-0001.md",
+        "status": "VERIFY_DONE",
+        "dispatch_id": "",
+        "dispatch_control_seq": -1,
+        "dispatch_stage": "",
+        "completion_stage": "",
+        "note": "",
+        "degraded_reason": ""
+      },
+      "latest_status": {
+        "runtime_state": "RUNNING",
+        "automation_health": "ok",
+        "automation_reason_code": "",
+        "automation_incident_family": "",
+        "automation_next_action": "continue",
+        "watcher": {
+          "alive": true,
+          "pid": 357724
+        },
+        "lanes": [
+          {
+            "name": "Claude",
+            "state": "READY",
+            "attachable": true,
+            "pid": 357603,
+            "note": "prompt_visible",
+            "last_event_at": "2026-04-24T02:25:16.208896Z",
+            "last_heartbeat_at": "2026-04-24T02:25:16.208896Z"
+          },
+          {
+            "name": "Codex",
+            "state": "READY",
+            "attachable": true,
+            "pid": 357625,
+            "note": "prompt_visible",
+            "last_event_at": "2026-04-24T02:25:16.461182Z",
+            "last_heartbeat_at": "2026-04-24T02:25:16.461182Z"
+          },
+          {
+            "name": "Gemini",
+            "state": "READY",
+            "attachable": true,
+            "pid": 357653,
+            "note": "prompt_visible",
+            "last_event_at": "2026-04-24T02:25:16.079031Z",
+            "last_heartbeat_at": "2026-04-24T02:25:16.079031Z"
+          }
+        ],
+        "control": {
+          "active_control_status": "implement"
+        },
+        "active_round": {
+          "state": "CLOSED"
+        }
+      },
+      "recent_events": [
+        {
+          "seq": 114,
+          "ts": "2026-04-24T02:25:24.715582Z",
+          "run_id": "20260424T022354Z-p357475",
+          "event_type": "dispatch_selection",
+          "source": "supervisor",
+          "payload": {
+            "latest_work": "4/24/2026-04-24-synthetic-implement-0002.md",
+            "latest_verify": "—",
+            "date_key": "2026-04-24",
+            "latest_work_mtime": 1776997521.455107,
+            "latest_verify_date_key": "",
+            "latest_verify_mtime": 0.0
+          }
+        },
+        {
+          "seq": 115,
+          "ts": "2026-04-24T02:25:25.778286Z",
+          "run_id": "20260424T022354Z-p357475",
+          "event_type": "dispatch_selection",
+          "source": "supervisor",
+          "payload": {
+            "latest_work": "4/24/2026-04-24-synthetic-implement-0002.md",
+            "latest_verify": "—",
+            "date_key": "2026-04-24",
+            "latest_work_mtime": 1776997521.455107,
+            "latest_verify_date_key": "",
+            "latest_verify_mtime": 0.0
+          }
+        },
+        {
+          "seq": 116,
+          "ts": "2026-04-24T02:25:26.851655Z",
+          "run_id": "20260424T022354Z-p357475",
+          "event_type": "dispatch_selection",
+          "source": "supervisor",
+          "payload": {
+            "latest_work": "4/24/2026-04-24-synthetic-implement-0002.md",
+            "latest_verify": "—",
+            "date_key": "2026-04-24",
+            "latest_work_mtime": 1776997521.455107,
+            "latest_verify_date_key": "",
+            "latest_verify_mtime": 0.0
+          }
+        },
+        {
+          "seq": 117,
+          "ts": "2026-04-24T02:25:26.853702Z",
+          "run_id": "20260424T022354Z-p357475",
+          "event_type": "control_changed",
+          "source": "supervisor",
+          "payload": {
+            "active_control_file": "",
+            "active_control_slot": "",
+            "active_control_canonical_file": "",
+            "active_control_is_legacy_alias": false,
+            "active_control_seq": -1,
+            "active_control_status": "none",
+            "active_control_updated_at": "",
+            "control_age_cycles": 13
+          }
+        },
+        {
+          "seq": 118,
+          "ts": "2026-04-24T02:25:26.853771Z",
+          "run_id": "20260424T022354Z-p357475",
+          "event_type": "automation_incident",
+          "source": "supervisor",
+          "payload": {
+            "automation_health": "recovering",
+            "reason_code": "runtime_stopping",
+            "incident_family": "runtime_stopping",
+            "next_action": "retrying",
+            "control": {
+              "active_control_file": "",
+              "active_control_slot": "",
+              "active_control_canonical_file": "",
+              "active_control_is_legacy_alias": false,
+              "active_control_seq": -1,
+              "active_control_status": "none",
+              "active_control_updated_at": "",
+              "control_age_cycles": 13
+            },
+            "active_round": {}
+          }
+        },
+        {
+          "seq": 119,
+          "ts": "2026-04-24T02:25:26.923552Z",
+          "run_id": "20260424T022354Z-p357475",
+          "event_type": "dispatch_selection",
+          "source": "supervisor",
+          "payload": {
+            "latest_work": "4/24/2026-04-24-synthetic-implement-0002.md",
+            "latest_verify": "—",
+            "date_key": "2026-04-24",
+            "latest_work_mtime": 1776997521.455107,
+            "latest_verify_date_key": "",
+            "latest_verify_mtime": 0.0
+          }
+        },
+        {
+          "seq": 120,
+          "ts": "2026-04-24T02:25:27.074306Z",
+          "run_id": "20260424T022354Z-p357475",
+          "event_type": "dispatch_selection",
+          "source": "supervisor",
+          "payload": {
+            "latest_work": "4/24/2026-04-24-synthetic-implement-0002.md",
+            "latest_verify": "—",
+            "date_key": "2026-04-24",
+            "latest_work_mtime": 1776997521.455107,
+            "latest_verify_date_key": "",
+            "latest_verify_mtime": 0.0
+          }
+        },
+        {
+          "seq": 121,
+          "ts": "2026-04-24T02:25:27.076344Z",
+          "run_id": "20260424T022354Z-p357475",
+          "event_type": "automation_incident",
+          "source": "supervisor",
+          "payload": {
+            "automation_health": "attention",
+            "reason_code": "runtime_stopped",
+            "incident_family": "runtime_stopped",
+            "next_action": "operator_required",
+            "control": {
+              "active_control_file": "",
+              "active_control_slot": "",
+              "active_control_canonical_file": "",
+              "active_control_is_legacy_alias": false,
+              "active_control_seq": -1,
+              "active_control_status": "none",
+              "active_control_updated_at": "",
+              "control_age_cycles": 15
+            },
+            "active_round": {}
+          }
+        },
+        {
+          "seq": 122,
+          "ts": "2026-04-24T02:25:27.076459Z",
+          "run_id": "20260424T022354Z-p357475",
+          "event_type": "lane_spawned",
+          "source": "supervisor",
+          "payload": {
+            "lane": "Claude",
+            "state": "OFF"
+          }
+        },
+        {
+          "seq": 123,
+          "ts": "2026-04-24T02:25:27.076517Z",
+          "run_id": "20260424T022354Z-p357475",
+          "event_type": "lane_spawned",
+          "source": "supervisor",
+          "payload": {
+            "lane": "Codex",
+            "state": "OFF"
+          }
+        },
+        {
+          "seq": 124,
+          "ts": "2026-04-24T02:25:27.076589Z",
+          "run_id": "20260424T022354Z-p357475",
+          "event_type": "lane_spawned",
+          "source": "supervisor",
+          "payload": {
+            "lane": "Gemini",
+            "state": "OFF"
+          }
+        },
+        {
+          "seq": 125,
+          "ts": "2026-04-24T02:25:27.076653Z",
+          "run_id": "20260424T022354Z-p357475",
+          "event_type": "runtime_stopped",
+          "source": "supervisor",
+          "payload": {
+            "runtime_state": "STOPPED"
+          }
+        }
+      ]
+    },
+    "incident_family": "",
+    "automation_health": "ok",
+    "automation_reason_code": "",
+    "automation_next_action": "continue",
+    "current_run_id": "20260424T022354Z-p357475"
+  },
+  "checks": [
+    {
+      "name": "runtime start",
+      "ok": true,
+      "detail": "started"
+    },
+    {
+      "name": "runtime ready barrier",
+      "ok": true,
+      "detail": "wait_sec=1.001, timeout_sec=60.0, {\"active_round\": {\"state\": \"\"}, \"automation_health\": \"ok\", \"automation_incident_family\": \"\", \"automation_next_action\": \"continue\", \"automation_reason_code\": \"\", \"control\": {\"active_control_status\": \"none\"}, \"lanes\": [{\"attachable\": true, \"last_event_at\": \"2026-04-24T02:23:54.690785Z\", \"last_heartbeat_at\": \"2026-04-24T02:23:54.639852Z\", \"name\": \"Claude\", \"note\": \"prompt_visible\", \"pid\": 357603, \"state\": \"READY\"}, {\"attachable\": true, \"last_event_at\": \"2026-04-24T02:23:54.698399Z\", \"last_heartbeat_at\": \"2026-04-24T02:23:54.647759Z\", \"name\": \"Codex\", \"note\": \"prompt_visible\", \"pid\": 357625, \"state\": \"READY\"}, {\"attachable\": true, \"last_event_at\": \"2026-04-24T02:23:54.726015Z\", \"last_heartbeat_at\": \"2026-04-24T02:23:54.674828Z\", \"name\": \"Gemini\", \"note\": \"prompt_visible\", \"pid\": 357653, \"state\": \"READY\"}], \"runtime_state\": \"RUNNING\", \"watcher\": {\"alive\": true, \"pid\": 357724}}"
+    },
+    {
+      "name": "synthetic workload produced receipts",
+      "ok": true,
+      "detail": "receipt_count=1"
+    },
+    {
+      "name": "soak completed without BROKEN",
+      "ok": true,
+      "detail": "broken_seen=False"
+    },
+    {
+      "name": "soak completed without DEGRADED",
+      "ok": true,
+      "detail": "degraded_seen=False"
+    },
+    {
+      "name": "duplicate dispatch stayed at zero",
+      "ok": true,
+      "detail": "duplicate_dispatch_count=0"
+    },
+    {
+      "name": "control surface stayed free of persistent mismatch",
+      "ok": true,
+      "detail": "control_mismatch_samples=0, max_streak=0"
+    },
+    {
+      "name": "classification_fallback_detected",
+      "ok": true,
+      "detail": "[]"
+    },
+    {
+      "name": "stop left no orphan session",
+      "ok": true,
+      "detail": "orphan_session=False"
+    }
+  ]
+}

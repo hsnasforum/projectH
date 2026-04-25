@@ -21,6 +21,7 @@ class PipelineRuntimeFakeLaneTest(unittest.TestCase):
             self.assertEqual(len(written), 2)
             verify_notes = list((root / "verify").rglob("*.md"))
             self.assertEqual(len(verify_notes), 1)
+            self.assertIn("work/4/12/seed.md", verify_notes[0].read_text(encoding="utf-8"))
             handoff = root / ".pipeline" / "implement_handoff.md"
             self.assertTrue(handoff.exists())
             self.assertIn("CONTROL_SEQ: 4", handoff.read_text(encoding="utf-8"))

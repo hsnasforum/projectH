@@ -1,88 +1,64 @@
 # AGENTS.md
 
-## Mission
+## Purpose
 
-Build and maintain a **local-first AI assistant web MVP** for personal document work, with the first reviewed-memory slice shipped (review queue, aggregate apply trigger, emitted/apply/result/active-effect path, stop-apply, reversal, and conflict-visibility).
+This file is the mid-sized root memory for agents working in `projectH`.
+Keep high-risk operating boundaries here, and put low-level or path-specific
+detail in referenced docs that are read only when the current task touches that
+area.
 
-The product should help users:
-- read local files
-- summarize and search documents
-- keep session history locally
-- save notes only through explicit approval
-- inspect evidence, sources, and audit logs
+## Product Contract
 
-Long term, the project may evolve toward a proprietary model.
-**Current phase is not model creation.** Current phase is defining the product loop, correction/approval memory, evidence policy, and evaluation structure that a future tuned or proprietary model would need.
+`projectH` is a **local-first document assistant web MVP**, not a generic
+chatbot starter.
 
-## Long-Term North Star
-
-Long term, `projectH` aims to become a **teachable local personal agent**:
-- the user can teach it through correction, approval, rejection, and examples
-- it retains durable preferences and working style locally
-- it later expands from document work into constrained local tool or program operation
-- risky actions remain explicit, auditable, and approval-gated
-
-This north star is **not** the current shipped contract. The current shipped contract remains a document-first MVP.
-
-## Automation Completion Target
-
-The pipeline automation north star is:
-- do not call the user for ordinary next-step, ambiguity, stall, rollover, or recovery choices
-- when problems occur, route them through implement / verify-handoff / advisory owner discussion first, using `/work`, `/verify`, current docs, and runtime evidence as the shared record
-- make each repeated failure produce recursive improvement: a named incident, focused replay, clearer owner boundary, shared helper, or runtime surface that makes the next fix smaller
-- treat "recursive learning" and "evolutionary exploration" as repo-local operational learning for now: persistent notes, tests, incident families, and bounded candidate comparison, not model-weight learning or autonomous risky action
-
-Until the safety model evolves, real-risk actions such as destructive writes, credential/auth work, approval-record repair, truth-sync blockers, and publication boundaries remain explicit and auditable.
-
-## Current Product Slice
-
-The repository currently implements a Python-based local web shell with:
+Current shipped contract:
 - local web shell on `127.0.0.1`
-- recent sessions and conversation timeline
-- file summary / document search / general chat modes
-- approval-based save flow
-- reissue approval flow for changing save paths
-- evidence/source panel with source-role trust labels
-- structured search result preview panel
-- summary source-type labels (`문서 요약` / `선택 결과 요약`)
-- summary span / applied-range panel
-- response origin badge (`MOCK`, `OLLAMA`, `WEB`, `SYSTEM`) with separate answer-mode badge for web investigation, source-role trust labels, and verification strength tags in origin detail
-- applied-preferences badge (`선호 N건 반영`)
-- streaming progress and cancel
-- response feedback capture
-- grounded-brief artifact trace anchor, original-response snapshot, corrected-outcome capture, corrected-save bridge, and artifact-linked reject/reissue reason traces
-- PDF text-layer reading and OCR-not-supported guidance
-- permission-gated web investigation (disabled/approval/enabled per session) with local JSON history, in-session reload, and history-card badges (answer-mode badges, color-coded verification-strength badges, color-coded source-role trust badges)
-- entity-card / latest-update answer-mode distinction with separate verification labels and entity-card strong-badge downgrade
-- claim-coverage panel with status tags, actionable hints, source role with trust level labels, color-coded fact-strength summary bar, and dedicated plain-language focus-slot reinvestigation explanation (reinforced / regressed / still single-source / still unresolved)
-- review queue (`검토 후보`), aggregate apply trigger (`검토 메모 적용 후보`), and emitted/apply/result/active-effect path, stop-apply, reversal, and conflict-visibility
-- Playwright smoke coverage for the core browser flows
+- local file summary, document search, and general chat
+- session history stored locally
+- approval-gated note saving and reissue flow
+- evidence/source panels, web-investigation history, and source trust labels
+- response origin and answer-mode badges for web investigation
+- streaming progress, cancel, response feedback, and PDF text-layer reading
+- OCR-not-supported guidance instead of silent OCR failure
+- reviewed-memory slice through visible review queue, aggregate apply,
+  active-effect path, explicit stop, reversal, and conflict visibility
+- Playwright smoke coverage for core browser flows
 
-Do not describe this repository as a generic starter unless the user explicitly asks for historical context.
+Long-term north star:
+- a teachable local personal agent that learns from correction, approval,
+  rejection, and examples
+- durable local preferences and working style
+- later, tightly approved local tool or program operation
+
+Do not present the north star as shipped behavior. Current work remains
+document-first, local-first, approval-based, and replaceable across model,
+runtime, and storage.
+
+Frontier model releases such as GPT-5.5 are runtime capability context only.
+They may justify larger coherent local bundles when tests and evidence support
+the scope, but they do not change product scope, branding, API assumptions, or
+approval/operator boundaries.
 
 ## Product Priorities
 
-Priority order:
 1. Local-first behavior
 2. Approval-based safety
 3. Practical document productivity
-4. Teachability through corrections, approvals, and feedback-ready structure
+4. Teachability through correction, approval, and feedback traces
 5. Auditable evidence and source handling
 6. Commercial/IP-safe architecture
 7. Replaceable model/runtime/storage seams
 
-## Current Scope Boundaries
-
-### In Scope
+In scope:
 - local file reading
-- document summarization
-- document search
+- document summarization and search
 - session persistence
 - approval-gated note saving
-- task and search logs
-- evidence-backed web investigation as a **secondary** mode
+- task/search logs
+- evidence-backed web investigation as a secondary mode
 
-### Out of Scope For The Current Phase Unless Explicitly Requested
+Out of scope unless explicitly requested:
 - wake-word voice assistant
 - mobile app
 - browser login automation
@@ -90,509 +66,320 @@ Priority order:
 - always-on background agents
 - large-scale independent pretraining
 - cloud-first architecture
-- broad desktop or program operation outside tightly approved flows
+- broad desktop/program operation outside approved flows
 
-### Long-Term Direction But Not Current Contract
-- structured correction memory
-- durable user preference memory
-- approval-gated local tool or program operation
-- reusable trajectories for later personalization or proprietary-model training
+## Context Budget Policy
+
+Root memory files (`AGENTS.md`, `CLAUDE.md`, `GEMINI.md`,
+`PROJECT_CUSTOM_INSTRUCTIONS.md`) should be mid-sized routing and guardrail
+pages. They should preserve the rules most likely to prevent unsafe stops,
+scope drift, or repeated automation stalls, while keeping detailed runtime
+mechanics out of the always-loaded context.
+
+Default read set for a round:
+- active owner root memory file only
+- the active control/work/verify file for that round
+- source files and tests directly touched by the task
+
+Read detailed references only when relevant:
+- product/spec drift: `docs/project-brief.md`, `docs/PRODUCT_SPEC.md`,
+  `docs/ARCHITECTURE.md`, `docs/ACCEPTANCE_CRITERIA.md`,
+  `docs/MILESTONES.md`, `docs/TASK_BACKLOG.md`
+- pipeline/runtime specifics: `.pipeline/README.md`,
+  `.pipeline/harness/*.md`, `.claude/rules/pipeline-runtime.md`
+- browser/E2E specifics: `.claude/rules/browser-e2e.md`
+- doc-sync specifics: `.claude/rules/doc-sync.md`
+- latest implementation truth: newest relevant `work/` and `verify/` notes
+- long-term strategy only when requested: `plandoc/` and
+  `docs/superpowers/**`
+
+Do not put static guide files such as `work/README.md`, `verify/README.md`, or
+`.pipeline/README.md` into every prompt by default. Pull them only when a task
+actually needs that policy detail.
+
+If a prompt already names exact source paths, docs, or tests, read those first
+and avoid widening into historical planning folders. `docs/superpowers/**`,
+`docs/recycle/**`, and `plandoc/**` are not current truth unless the user,
+latest `/work`, latest `/verify`, or active control explicitly cites them.
 
 ## Repository Map
 
-- `app/`
-  - local web shell and CLI entrypoints
-  - web template and request handling
-- `core/`
-  - orchestration, intent classification, approval logic, investigation pipeline
-- `tools/`
-  - explicit auditable tools such as file read, file search, web search, note writing
-- `storage/`
-  - local session JSON, web search history JSON, task log JSONL
-- `model_adapter/`
-  - provider-swappable runtime adapters
-- `docs/`
-  - product, spec, architecture, acceptance, milestones, backlog
-- `plandoc/`
-  - strategic and staged roadmap documents that sit above the current shipped contract
-- `work/`
-  - tracked Korean closeout notes and operator handoff context
-- `verify/`
-  - tracked Korean verification rerun notes and truth-reconciliation handoff results
-- `report/`
-  - occasional Korean whole-project trajectory audits or milestone-level review memos
-  - `report/gemini/` stores Gemini advisory or mediation logs
-- `.pipeline/`
-  - rolling automation handoff slots for the single-Codex tmux flow
-  - `implement_handoff.md` is the canonical implement control slot; historical alias `claude_handoff.md` is read-only compatibility for the same logical slot
-  - `advisory_request.md` is the canonical verify/handoff-owner -> advisory-owner arbitration request slot; historical alias `gemini_request.md` is read-only compatibility for the same logical slot
-  - `advisory_advice.md` is the canonical advisory-owner -> verify/handoff-owner advisory slot; historical alias `gemini_advice.md` is read-only compatibility for the same logical slot
-  - `operator_request.md` is the operator-only stop slot in the current stage-3 flow
-  - `harness/implement.md`, `harness/verify.md`, `harness/advisory.md`, and `harness/council.md` are role protocols, not control slots; watcher prompts may surface them as `ROLE_HARNESS` / `COUNCIL_HARNESS`
-  - `codex_feedback.md` is optional scratch or legacy compatibility text and is no longer part of the execution path
-  - `gpt_prompt.md` is an optional or legacy scratch slot and is no longer part of the canonical flow
-- `.agents/skills/`, `.claude/skills/`
-  - reusable repo-specific skills
-- `.codex/config.toml`
-  - Codex local defaults, enabled skills, and subagent registry
-- `.codex/agents/`, `.claude/agents/`
-  - planning/review/spec/QA helper agents
+- `app/`: local web shell, web handlers, CLI entrypoints
+- `core/`: orchestration, intent classification, approval logic,
+  investigation pipeline
+- `tools/`: explicit auditable tools such as file read/search and note write
+- `storage/`: local session, web-history, and task-log JSON/JSONL
+- `model_adapter/`: provider-swappable runtime adapters
+- `controller/`: local pipeline/controller monitor UI and server
+- `docs/`: current product/spec/architecture/acceptance/milestone docs
+- `plandoc/`: strategy above the current shipped contract
+- `work/`: Korean implementation closeout notes
+- `verify/`: Korean verification and truth-reconciliation notes
+- `report/`: broader audits and `report/gemini/` advisory logs
+- `.pipeline/`: rolling automation control slots and harnesses
+- `.agents/skills/`, `.claude/skills/`: mirrored repo skills
+- `.codex/agents/`, `.claude/agents/`: mirrored helper agents
+- `.codex/config.toml`: Codex defaults, enabled skills, subagent registry
 
-Current source-of-truth docs live in the root `docs/` directory.
-`docs/recycle/` contains retained drafts and historical notes unless a file is explicitly promoted into the root docs set.
+## Automation Contract
 
-## Agent / Skill Surfaces
+Automation target:
+- do not call the user for ordinary next-step, ambiguity, stall, rollover, or
+  recovery choices
+- route ordinary ambiguity through implement / verify-handoff / advisory owner
+  discussion using `/work`, `/verify`, current docs, and runtime evidence
+- make repeated failures produce recursive improvement: incident family,
+  focused replay, owner boundary, shared helper, or runtime surface
+- treat recursive learning as repo-local operational memory, not model-weight
+  learning or autonomous risky action
 
-- `.codex/config.toml`
-  - enables repo-specific skills for Codex
-  - registers repo helper agents that should map to repeated workflows or risks
-  - `.codex/agents/`
-  - Codex subagent definitions
-  - current useful roles include:
-    - `planner`
-    - `reviewer`
-    - `spec-editor`
-    - `qa-e2e-reviewer`
-    - `approval-auditor`
-    - `investigation-reviewer`
-    - `documenter`
-    - `trace-implementer`
-- `.claude/agents/`
-  - mirrored prompts for the same helper-agent roles
-- `.agents/skills/`, `.claude/skills/`
-  - mirrored repo-specific skills
-  - current useful skills include:
-    - `approval-flow-audit`
-    - `doc-sync`
-    - `e2e-smoke-triage`
-    - `finalize-lite`
-    - `investigation-quality-audit`
-    - `mvp-scope`
-    - `onboard-lite`
-    - `next-slice-triage`
-    - `release-check`
-    - `round-handoff`
-    - `security-gate`
-    - `work-log-closeout`
-- `.claude/rules/`
-  - Claude Code path-scoped instruction files for heavier file-family guidance
-  - use these when detailed pipeline/browser/doc-sync rules should not bloat Claude startup memory
+Real-risk actions still require explicit, auditable boundaries:
+- destructive writes
+- credential/auth work
+- approval-record repair
+- truth-sync blockers
+- external publication, branch/PR publication, merge execution
 
-## Turbo-lite Wrapper Order
+Operator stops must be structured and actionable. A pending
+`.pipeline/operator_request.md` should include `STATUS: needs_operator`,
+`CONTROL_SEQ`, `REASON_CODE`, `OPERATOR_POLICY`, `DECISION_CLASS`,
+`DECISION_REQUIRED`, `BASED_ON_WORK`, and `BASED_ON_VERIFY`. It should explain
+why automation is stopping now, which evidence it used, and what one decision
+would let automation resume.
 
-- Use `onboard-lite` first when the repo or subsystem is unfamiliar and you need actual run/test entrypoints plus immediate ownership boundaries before planning or implementation.
-- Use `finalize-lite` after a meaningful implementation round to close focused verification truth, doc-sync requirements, and `/work` closeout readiness on the implementation side.
-- Use `round-handoff` when verification truth still needs rerun/reconciliation and a `/verify`-backed handoff is required.
-- Use `next-slice-triage` only after `/work` and `/verify` truth is already current and the remaining task is picking one exact next slice or the correct advisory/operator escalation.
-- Do not collapse these wrappers into one broad workflow. Each wrapper should stop at its own boundary.
+If a stop is only a labeled choice set that agents can narrow from current
+docs, milestones, latest `/work`, and latest `/verify`, route advisory-first
+instead of calling the operator. Keep actual safety, destructive, auth,
+credential, approval-record, truth-sync, publication, and merge boundaries as
+operator stops.
 
-## Single Codex Pipeline Convention
+## Pipeline Roles
 
-- When tmux or a comparable split-lane setup is used, the canonical runtime roles are:
-  - implement owner lane = active `role_bindings.implement`
-  - verify/handoff owner lane = active `role_bindings.verify`
-  - advisory owner lane = active `role_bindings.advisory` when enabled
-  - watcher = file-watch and delivery helper lane
-- Canonical role-based control filenames are `.pipeline/implement_handoff.md`, `.pipeline/advisory_request.md`, `.pipeline/advisory_advice.md`, and `.pipeline/operator_request.md`.
-- Historical filenames `.pipeline/claude_handoff.md`, `.pipeline/gemini_request.md`, and `.pipeline/gemini_advice.md` are read-only compatibility aliases for those same logical role slots. They must not be treated as separate active control planes.
-- If a canonical file and its historical alias both exist for the same slot, resolve them as one logical control: higher `CONTROL_SEQ` wins, and the canonical filename wins when `CONTROL_SEQ` ties.
-- Prompt ownership follows the active role binding. The bound owner reads its root memory file (`AGENTS.md`, `CLAUDE.md`, or `GEMINI.md`) for that round.
-- `.pipeline/harness/*.md` files are role-neutral SOPs inspired by self-contained skill/harness patterns. They are not execution signals and do not replace `/work`, `/verify`, supervisor status/events, or active control slots.
-- `council.md` is a convergence protocol for blocked or ambiguous rounds, not a fourth physical agent. Verify/handoff or recovery prompts may use it to reduce implement/verify/advisory evidence into one next control.
-- Verification / handoff owner responsibilities:
-  - read the newest `/work` note first
-  - read the newest same-day `/verify` note if one exists
-  - rerun the requested verification honestly
-  - leave or update the persistent `/verify` note
-  - write the next implement-facing execution handoff to `.pipeline/implement_handoff.md` when one exact slice is fixed
-  - write `.pipeline/advisory_request.md` when the only blocker is next-slice ambiguity, overlapping candidates, or a low-confidence tie-break before operator escalation
-  - if an active implement-owner session asks a live side question such as context exhaustion, session rollover, or continue-vs-switch, use `.pipeline/advisory_request.md` only as verify/advisory coordination and relay the answer back to the implement owner as a short lane reply instead of rewriting `.pipeline/implement_handoff.md` mid-session
-  - write `.pipeline/operator_request.md` only when automation must stop for a real operator-only decision, approval/truth-sync blocker, immediate safety stop, or after advisory advice still leaves no truthful exact slice
-- `.pipeline/implement_handoff.md` is the canonical implement control slot.
-- `.pipeline/implement_handoff.md` should declare `STATUS: implement` and should include `CONTROL_SEQ`.
-- When `STATUS: implement` is active, the implement owner may only implement that exact slice or emit a pane-local `STATUS: implement_blocked` sentinel with `BLOCK_REASON`, `BLOCK_REASON_CODE`, `REQUEST: verify_triage`, `ESCALATION_CLASS: verify_triage`, `HANDOFF`, `HANDOFF_SHA`, and `BLOCK_ID`.
-- Implement-owner rounds stop after the bounded file edits plus the canonical `/work` closeout. The implement owner must not commit, push, publish a branch, or open a PR from the implement lane.
-- Commit/push automation is a large-bundle boundary only. Use it only when the operator explicitly approves a verified bundle such as release, soak, PR stabilization, or direct publish work; small/local slices stop at `/work` and remain local instead of opening commit/push operator stops.
-- PR creation is included in that verified large-bundle publish follow-up when the active control is `REASON_CODE: pr_creation_gate`, `OPERATOR_POLICY: gate_24h`, and `DECISION_CLASS: release_gate`. Create or reuse a draft PR, record the PR URL in `/work`, then write the next control. If an older draft PR is already waiting for merge approval, keep that pending merge candidate stable by default: publish the next verified bundle as a stacked child branch/PR with the parent branch as its base, record the parent/child linkage in `/work`, and retarget the child to the repository default base branch after the parent merges. A draft PR merge gate with `REASON_CODE: pr_merge_gate`, `OPERATOR_POLICY: internal_only`, and `DECISION_CLASS: merge_gate` remains an operator-approved merge backlog, but it should not block safe local implementation; verify/handoff should leave merge approval pending and write the next safe local control. Destructive publication changes, auth/credential repair, approval-record/truth-sync blockers, and external publication boundaries still require an operator stop.
-- If a verified large bundle already carries `REASON_CODE: commit_push_bundle_authorization` with `OPERATOR_POLICY: internal_only`, automation should route it to verify/handoff-owner publish follow-up instead of hibernating or asking the user again. The follow-up must still scope the dirty tree and keep the action auditable.
-- Do not hand commit/push/PR creation work or merge execution to the implement owner. The implement lane still forbids commit, push, branch/PR publish, and merge actions, so publish follow-up belongs to the verify/handoff owner or to an advisory escalation if the verify/handoff owner cannot execute it truthfully. Local post-PR implementation may continue only because merge approval remains pending separately.
-- watcher should auto-route that `implement_blocked` sentinel to verify/handoff-owner triage instead of opening an operator stop directly.
-- `.pipeline/advisory_request.md` is the current verify/handoff-owner -> advisory-owner arbitration slot.
-- `.pipeline/advisory_request.md` should declare `STATUS: request_open` and should include `CONTROL_SEQ` while pending.
-- `.pipeline/advisory_advice.md` is the current advisory-owner -> verify/handoff-owner advisory slot.
-- `.pipeline/advisory_advice.md` should declare `STATUS: advice_ready` and should include `CONTROL_SEQ` while pending.
-- `.pipeline/session_arbitration_draft.md` is an optional watcher-generated non-canonical draft slot.
-- `.pipeline/session_arbitration_draft.md` should declare `STATUS: draft_only` only, and must not be treated as a stop/go execution signal.
-- `.pipeline/operator_request.md` is the current operator-only stop slot.
-- `.pipeline/operator_request.md` should declare `STATUS: needs_operator`, should include `CONTROL_SEQ`, `REASON_CODE`, `OPERATOR_POLICY`, `DECISION_CLASS`, `DECISION_REQUIRED`, `BASED_ON_WORK`, and `BASED_ON_VERIFY`, and should record:
-  - why automation is stopping now
-  - which latest `/work` and `/verify` pair the stop is based on
-  - what the operator must decide before automation can resume
-- supervisor/watcher should classify operator stop publish/gate behavior from `OPERATOR_POLICY` first, then `REASON_CODE`, and only use free-form prose as explanatory context.
-- Gemini is advisory only:
-  - it may write `report/gemini/...md`
-  - it may write `.pipeline/advisory_advice.md`
-  - it must not directly write `.pipeline/implement_handoff.md` or `.pipeline/operator_request.md`
-  - it should prefer file edit/write tools for advisory output instead of shell heredoc or shell redirection
-  - watcher prompts for Gemini should prefer explicit `@path` file mentions and exact advisory output paths over loose path prose
-  - when arbitration already names exact shipped docs or a current runtime-doc family, Gemini should inspect those paths first and avoid widening into `docs/superpowers/**`, `plandoc/**`, or other historical planning docs unless the request or latest persistent notes explicitly cite them as current evidence
-  - pane-only answers do not close the advisory round; the round is complete only after both `report/gemini/...md` and `.pipeline/advisory_advice.md` are written
-  - if the advice is answering an active implement-owner session's side question, the verify/handoff owner should relay that answer as a short lane reply and keep `.pipeline/implement_handoff.md` unchanged until the session boundary or next round handoff
-- `.pipeline/codex_feedback.md` may still exist as optional scratch, but Claude should not rely on it as a direct execution slot.
-- In automation, the newest valid control file wins by `CONTROL_SEQ` first and `mtime` only as a fallback, and stale control files are excluded from dispatch:
-  - `.pipeline/implement_handoff.md` → implement owner 실행
-  - `.pipeline/advisory_request.md` → advisory owner 실행
-  - `.pipeline/advisory_advice.md` → verify/handoff-owner follow-up
-  - `.pipeline/operator_request.md` → 자동 진행 중단, operator 대기
-- `.pipeline/session_arbitration_draft.md` is not a control file. watcher may write it as a draft only after an active implement-owner session shows the escalation pattern and the lanes are settled enough for arbitration: verify/advisory panes must be idle, and the implement owner must be either idle or stably showing the escalation text for a short settle window. watcher should clear that draft again when implement-owner activity resumes or canonical advisory/operator control opens, and should suppress immediate same-fingerprint rewrites for a short cooldown. The verify/handoff owner must explicitly decide whether to ignore it, answer the implement owner directly, or promote it into `.pipeline/advisory_request.md`.
-- `.pipeline/gpt_prompt.md` may remain as an optional or legacy scratch slot, but it is no longer required for the canonical flow.
-- Persistent records in `/work`, `/verify`, and `report/` should default to Korean unless the user explicitly asks otherwise.
-- Execution-facing rolling slots in `.pipeline/` should default to concise English-led instructions so Claude, Codex, and Gemini can execute exact slices without translation drift.
-- File paths, test names, selectors, field names, and literal code identifiers should stay in their original form even inside Korean records or English execution slots.
-- Persistent truth still lives in `/work` and `/verify`; if `.pipeline` disagrees with them, trust the latest `/work` and `/verify`.
-- watcher guarantees file-detection and pane-delivery only. If the implement owner or verify/handoff owner is busy, interrupted, or not actually ready to receive input, that is a lane/session-state issue rather than a `.pipeline` contract issue.
-- `.pipeline/implement_handoff.md` is the round-start execution contract, not a live side-channel. Mid-session advisory arbitration answers should normally return to the implement owner as a short lane reply so later troubleshooting can still compare the finished work against the unchanged handoff that started the round.
+Role ownership comes from active `role_bindings`, not vendor-named legacy files.
 
-## Codex Review Scope
+Canonical control slots:
+- `.pipeline/implement_handoff.md`: implement owner input
+- `.pipeline/advisory_request.md`: verify/handoff -> advisory request
+- `.pipeline/advisory_advice.md`: advisory -> verify/handoff recommendation
+- `.pipeline/operator_request.md`: operator-only stop slot
 
-- In the canonical flow, Codex is not the default whole-project auditor for every round.
-- Codex should first verify whether the latest implement-owner `/work` note is truthful:
-  - the claimed code changes are actually present
-  - the claimed docs changes match implementation
-  - the claimed checks were actually rerun when required
-  - the round did not widen scope away from current MVP priorities
-- Treat `/verify` as the review report for the latest implement-owner round plus a narrow direction guard, not as a mandatory full-repository diagnosis.
-- After that review, Codex should either:
-  - choose one exact next slice and write `STATUS: implement` to `.pipeline/implement_handoff.md`, or
-  - write `.pipeline/advisory_request.md` when the only blocker is next-slice ambiguity, overlapping candidates, or a low-confidence tie-break, or
-  - explicitly stop automation with `.pipeline/operator_request.md` only when a real operator-only decision remains, approval-record/truth-sync work must happen first, immediate safety requires a stop, or Gemini was already unavailable/inconclusive
-- If a stop request presents labeled choices, such as lettered, numbered, inline parenthesized, or Korean `n안` options, that can be narrowed from current `docs/`, milestones, latest `/work`, and latest `/verify`, treat it as next-slice ambiguity and route advisory-first instead of holding for the operator, unless the decision header itself includes safety, destructive, auth/credential, approval-record, or truth-sync blockers.
-- If watcher has already routed such a gated operator request to verify/handoff retriage and that lane returns to an idle prompt without writing a newer control slot, watcher may record `operator_retriage_no_next_control` and machine-write the next `.pipeline/advisory_request.md` so the agents arbitrate before asking the operator.
-- In the canonical flow, Codex should not close a verification round with pane-only reasoning or a control-slot rewrite alone. Codex must leave or update `/verify` before writing the next control slot.
-- When the latest `/work` and `/verify` already closed one family truthfully, prefer automatic next-slice selection over `needs_operator` if one smaller same-family follow-up remains.
-- Default automatic tie-break order is:
-  - same-family current-risk reduction
-  - same-family user-visible improvement
-  - new quality axis
-  - internal cleanup
-- However, if the same day already contains 3 or more same-family docs-only truth-sync rounds in a row, Codex must not auto-select yet another narrower docs-only micro-slice from that family. At that point Codex should either:
-  - choose one slightly larger but still bounded docs-only bundle that closes the remaining same-family drift in one round, or
-  - open `.pipeline/advisory_request.md` first, or `.pipeline/operator_request.md` only if a real operator-only decision remains, instead of extending the docs-only micro-loop
-- If Codex stops with `.pipeline/operator_request.md`, the stop request should still explain the reason and the missing operator decision instead of leaving the rolling slot empty.
-- Do not push slice selection back onto Claude with wording such as "continue only if you can find a good slice."
-- Use a broader whole-project audit only when explicitly requested or when a milestone, release, or trajectory check is needed.
-- When a broader audit is needed, record it under `report/` so it does not overwrite the meaning of `/verify`.
+Historical aliases are read-only compatibility inputs:
+- `.pipeline/claude_handoff.md`
+- `.pipeline/gemini_request.md`
+- `.pipeline/gemini_advice.md`
 
-## Slice Selection Guardrails
+If canonical and alias files exist for the same logical slot, resolve by higher
+`CONTROL_SEQ`; canonical wins ties. Newest valid control uses `CONTROL_SEQ`
+first and `mtime` only as fallback.
 
-- The next slice must improve at least one of the following:
-  - user-visible value in the current document-first MVP
-  - a concrete current-risk reduction
-  - a currently shipped contract that is actually broken or misleading
-- Do not choose the next slice only because a route, helper, contract family, or handler-level regression is still incomplete.
-- Do not let uncovered verification gaps alone drive roadmap priority unless they block a currently shipped user flow.
-- Prefer slices that the user can see, feel, or directly benefit from over internal completeness work.
-- Do not choose a micro-slice when one slightly larger bounded slice can close the same user-visible or current-risk unit within the same verification family.
-- If the latest round already closed one family truthfully, prefer the next smallest same-family current-risk reduction before opening a different quality axis.
-- But if same-day history already shows 3 or more consecutive same-family docs-only truth-sync rounds, stop shrinking that family into smaller docs-only slices. Close the remaining docs-only drift as one bounded bundle or escalate instead.
-- When multiple plausible slices remain, choose in this order unless a newer `/verify` gives a stronger reason otherwise:
-  - current-risk reduction
-  - same-family user-visible improvement
-  - new quality axis
-  - internal cleanup
-- Use `STATUS: needs_operator` only when:
-  - approval-record or truth-sync work must happen before any new implementation slice can start, or
-  - a real operator-only decision or immediate safety stop is required now, or
-  - advisory arbitration is unavailable or already completed and two or more candidates still remain genuinely tied after the order above.
+`.pipeline/harness/*.md` files are role protocols, not control slots.
+`.pipeline/session_arbitration_draft.md` is draft-only and never a stop/go
+signal. `.pipeline/codex_feedback.md` and `.pipeline/gpt_prompt.md` are
+optional/legacy scratch.
 
-## Recursive Improvement Rules
+Control statuses:
+- `.pipeline/implement_handoff.md` uses `STATUS: implement`
+- `.pipeline/advisory_request.md` uses `STATUS: request_open`
+- `.pipeline/advisory_advice.md` uses `STATUS: advice_ready`
+- `.pipeline/operator_request.md` uses `STATUS: needs_operator`
+- `.pipeline/session_arbitration_draft.md` uses `STATUS: draft_only`
 
-- In runtime / launcher / watcher / supervisor work, "recursive improvement" means each fix should make the next fix smaller, more local, and easier to verify.
-- Do not treat recursive improvement as repeated patch layering. If the same incident family recurs, prefer tightening the owning boundary or shared helper over appending another file-local special case.
-- Recursive learning is implemented as persistent operational memory: `/work` and `/verify` notes, incident families, replay tests, docs, and shared helpers. Do not claim model learning unless a real learning pipeline exists.
-- Evolutionary exploration means bounded candidate comparison by current evidence and milestones, followed by one exact control. It does not mean broad random exploration or asking the user to choose between options the agents can narrow themselves.
-- Do not hardcode the current branch, commit SHA, `CONTROL_SEQ`, pane id, Korean display text, exact operator prose, or one-off file body in runtime logic. Put policy in structured metadata, shared parsers, status-label helpers, fixtures, or docs.
-- Do not duplicate near-copy logic across watcher, supervisor, launcher, controller, or tests. If two layers need the same truth, move it to the owning module or a shared helper and make thin clients consume that surface.
-- Do not pile unrelated responsibilities into one large function or file just because it is convenient. Keep the smallest coherent owner, and extract parsing, labeling, control writing, lane-surface, or event-contract logic when concentration starts making future fixes harder.
-- First classify whether a problem is:
-  - an existing named incident family, or
-  - a genuinely new incident family.
-- For an existing family, extend the owning module, contract, or replay test instead of creating parallel heuristics in higher layers.
-- For a new family, add:
-  - a named incident or machine note,
-  - a focused replay test,
-  - a truthful runtime surface,
-  before considering broader soak or UI polish.
-- Keep thin clients thin. `pipeline-launcher.py`, `controller.server`, and browser/controller consumers should not gain extra truth inference just to hide runtime drift.
-- Long soak remains baseline evidence, not the default proof for runtime-edge fixes. Prefer launcher live stability gate plus incident replay unless the runtime contract itself changed materially.
-- A good recursive-improvement change should reduce future diff surface, reduce duplicated logic, or move logic toward a clearer owner. If it only adds another exception branch, treat that as a temporary stopgap and leave a cleanup path.
+Verify/handoff owner:
+- read newest relevant `/work`, then same-day `/verify` if present
+- rerun the narrowest honest verification
+- leave or update `/verify` before writing the next control
+- write one exact `.pipeline/implement_handoff.md` when a slice is clear
+- write `.pipeline/advisory_request.md` only for next-slice ambiguity,
+  overlapping candidates, or low-confidence tie-breaks
+- write `.pipeline/operator_request.md` only for real operator-only decisions,
+  approval/truth-sync blockers, immediate safety stops, or unresolved
+  post-advisory ambiguity
+- if an implement-owner session asks a live side question such as context
+  exhaustion, session rollover, or continue-vs-switch, use advisory only for
+  coordination and relay the answer back as a short lane reply; do not rewrite
+  `.pipeline/implement_handoff.md` mid-session
+- if watcher routes an operator-retriage follow-up, close it by writing exactly
+  one newer control slot; returning idle with no control lets watcher escalate
+  to advisory with `operator_retriage_no_next_control`
+- handle approved large-bundle publish follow-up in the verify/handoff lane,
+  not by handing commit/push/PR creation to implement
 
-## Reviewed-Memory Planning Boundary
+Implement owner:
+- execute only the exact active `STATUS: implement` slice
+- do not self-select the next slice
+- stop after bounded edits plus canonical `/work` closeout
+- do not commit, push, publish branches/PRs, or merge from the implement lane
+- if blocked/stale/already implemented, emit pane-local
+  `STATUS: implement_blocked` with structured fields and stop
 
-- Reviewed-memory remains in scope, but planning should proceed from the user-visible loop outward, not from internal contract completeness inward.
-- For current planning and handoff purposes, the default reviewed-memory anchor is:
-  - the reviewed-memory path becomes visible to the user
-  - the effect can become active
-  - the effect can be explicitly stopped
-- Later reviewed-memory layers that may already exist in code or historical notes, such as deeper reversal, conflict-visibility, or route-by-route handler completeness, must not automatically become the next default slice.
-- If a later reviewed-memory layer is chosen again, the handoff must explain why it improves current MVP value more than summary quality, search quality, approval UX, evidence UX, or current user-visible reviewed-memory clarity.
+Advisory owner:
+- compare bounded candidates and recommend one exact next slice, axis switch,
+  or one real operator decision
+- write `report/gemini/...md` and `.pipeline/advisory_advice.md`
+- do not write implement handoffs, operator stops, `/work`, or `/verify`
 
-## Verification Scope Rules
+Publish boundaries:
+- ordinary small/local slices stop at `/work` and dirty local state
+- commit/push/PR creation is only for explicitly approved, verified large
+  bundles such as release, soak, PR stabilization, or direct publish work
+- `commit_push_bundle_authorization + internal_only` and
+  `pr_creation_gate + gate_24h + release_gate` are verify/handoff follow-ups
+  when already approved; they should not re-ask the operator by default
+- `pr_merge_gate`, destructive publication changes, auth/credential repair,
+  approval-record/truth-sync blockers, and external publication boundaries stay
+  operator-approved boundaries
 
-- Verification should be risk-based, not maximal by default.
-- Run the narrowest relevant check first.
-- For Playwright-only smoke tightening, selector-only drift fixes, or single-scenario fixture updates, rerun the isolated affected browser scenario first instead of jumping straight to the full browser suite.
-- Use full browser or end-to-end verification only when:
-  - a browser-visible contract changed
-  - a release or ready decision is being made
-  - a current browser flow is suspected broken
-  - the change touched shared browser helpers or multiple browser scenarios
-  - an isolated browser rerun suggests broader browser-family drift
-- Do not treat every focused service or handler regression as a reason to rerun the full browser suite.
-- Do not let uncovered route-level regressions automatically become the next product slice unless they protect a currently shipped user-facing contract.
+## Slice Selection
 
-## Working Rules
+Choose the next slice only if it improves one of:
+- user-visible value in the current document-first MVP
+- a concrete current-risk reduction
+- a shipped contract that is broken or misleading
 
-1. Inspect the current implementation before changing docs or behavior.
-2. Prefer the smallest defensible change.
-3. Keep default behavior read-heavy and approval-based.
-4. Do not silently widen scope from “document assistant” into “general-purpose web chatbot.”
-5. If implementation and docs disagree, **make docs match implementation**, or mark the gap as `TODO` / `OPEN QUESTION`.
-6. Separate facts, assumptions, and recommendations when useful.
-7. Respond to the user in Korean honorifics.
-8. If you add or rename an agent, mirror it across `.codex/agents/` and `.claude/agents/`, and register it in `.codex/config.toml`.
-9. If you add or rename a repo skill, mirror it across `.agents/skills/` and `.claude/skills/`, and enable it in `.codex/config.toml` if Codex should use it by default.
-10. New agents or skills must solve a repeated repo workflow or repeated risk area. Do not add generic prompts with no clear project-specific role.
-11. Keep operator instructions short, implementation-truthful, and tied to current MVP scope.
-12. When discussing strategy, always separate:
-   - current shipped contract
-   - next phase design target
-   - long-term north star
-13. Use `trace-implementer` for small additive grounded-brief trace or memory-foundation implementation slices that must keep current UI stable while moving code, tests, and docs together.
-14. Use `finalize-lite` when a meaningful implementation round is ending and you need one narrow wrapper to confirm focused verification, required doc sync, and truthful `/work` closeout readiness without adding commit/PR, `/verify`, or next-slice work.
-15. Use `next-slice-triage` when current `/work` and `/verify` truth is already reconciled and the remaining job is choosing one exact next slice or deciding whether ambiguity should go to Gemini or operator escalation.
-16. Use `onboard-lite` when you are entering an unfamiliar repo or subsystem and need the minimum run/test entrypoints, ownership boundaries, and current risks before planning or implementation, without widening into a whole-project audit.
-17. Use `round-handoff` when a Codex round is complete and you need to re-check the latest `/work` note, rerun honest verification, leave or update a `/verify` note, and draft the next operator prompt without overstating progress.
-18. In the single tmux flow, keep the active verify/handoff owner responsible for rerun verification and next-implement feedback together; do not reintroduce a second canonical reviewer lane unless the docs are updated again.
-19. In automation handoff, the active implement owner should implement only `.pipeline/implement_handoff.md` when it says `STATUS: implement`. If that slice is blocked, the implement owner should emit the `STATUS: implement_blocked` sentinel with `BLOCK_REASON_CODE` and `ESCALATION_CLASS` instead of asking the operator to choose. Gemini와 operator stop files must not be routed to the implement owner.
-20. Prefer extending existing shared helpers, queries, scripts, and prompts over adding near-copy code paths. If temporary duplication is unavoidable, say why and leave a clear cleanup path.
-21. Do not split one coherent task into many ultra-small slices just to keep rounds tiny. Prefer the smallest coherent reviewable slice that closes meaningful progress when the files and verification path naturally belong together.
+Default tie-break:
+1. same-family current-risk reduction
+2. same-family user-visible improvement
+3. new quality axis
+4. internal cleanup
 
-## Personalization / Learning Rules
+Avoid route/helper completeness work unless it protects a currently shipped
+user-facing contract. Avoid docs-only micro-loops; after three same-family
+docs-only truth-sync rounds in one day, close the remaining drift as one bounded
+bundle or escalate.
 
-- Treat user corrections, approvals, rejections, and examples as future personalization or training assets, but do not present them as model learning unless that learning path is actually implemented.
-- Distinguish transient session context, durable preference memory, and future training artifacts.
-- Prefer structures that preserve later teachability:
-  - accepted output
-  - corrected output
-  - approval / rejection reason
-  - preference signal
-  - evidence and source trace
-- Future program or tool operation must remain observable, approval-gated, and reversible.
-- Do not claim autonomous desktop or program control as current behavior unless it is explicitly implemented and tested.
+Reviewed-memory remains in scope, but the planning anchor is user-visible
+reviewed-memory, active effect, and explicit stop. Deeper reversal,
+conflict-visibility, or route completeness is not the automatic next slice.
 
-## Work And Verify Log Protocol
+## Recursive Improvement
 
-- Meaningful implementation or operator-flow work should leave a closeout note under `work/<month>/<day>/YYYY-MM-DD-<slug>.md`.
-- Meaningful verification-backed handoff or independent rerun-check work should leave a verification note under `verify/<month>/<day>/YYYY-MM-DD-<slug>.md`.
-- Occasional whole-project, milestone, or trajectory audits should leave a report under `report/YYYY-MM-DD-<slug>.md`.
-- Persistent notes under `work/`, `verify/`, and `report/` should default to Korean.
-- Rolling execution slots under `.pipeline/` should default to English-led execution prompts.
-- `.pipeline/implement_handoff.md`, `.pipeline/advisory_request.md`, `.pipeline/advisory_advice.md`, `.pipeline/operator_request.md`, and optional scratch files like `.pipeline/codex_feedback.md` never replace the persistent `/work` and `/verify` notes.
-- `.pipeline/gpt_prompt.md` may remain as an optional or legacy scratch slot, but it is not required in the canonical single-Codex flow.
-- In the current stage-3 single-runtime flow:
-  - the active implement owner finishes implementation and leaves `/work`
-  - the active verify/handoff owner reruns verification and leaves `/verify`
-  - the active verify/handoff owner then writes `.pipeline/implement_handoff.md` for the next implement round when one exact slice is fixed
-  - if the active verify/handoff owner cannot narrow one exact slice yet, it writes `.pipeline/advisory_request.md`
-  - the active advisory owner writes `.pipeline/advisory_advice.md` plus `report/gemini/...md`
-  - the active verify/handoff owner then writes the final `.pipeline/implement_handoff.md` or `.pipeline/operator_request.md`
-  - if automation must stop, the active verify/handoff owner writes `.pipeline/operator_request.md`
-- `/verify` should stay tied to the latest implement-owner round. Do not turn every verification note into a whole-project audit.
-- Before starting a new meaningful round, check the newest note in today's `work/<month>/<day>/` folder. If there is no note for today, read the newest note from the previous day.
-- Before starting a verification-backed handoff round, read the newest `work/<month>/<day>/` note first and then the newest note in today's `verify/<month>/<day>/` folder if one exists.
-- New `work/` closeout notes and new `verify/` verification notes should use these sections in order unless the user explicitly asks for another format:
-  - `## 변경 파일`
-  - `## 사용 skill`
-  - `## 변경 이유`
-  - `## 핵심 변경`
-  - `## 검증`
-  - `## 남은 리스크`
-- `## 사용 skill` is always required. If no skill was used, write `- 없음`.
-- If a verification-only note changed no files, write `- 없음` under `## 변경 파일` instead of inventing a write.
-- Never claim a test, command, or verification result that was not actually run.
-- If operator rules, helper-agent roles, Codex config, or `/work` / `/verify` policy change, update `work/README.md` and `verify/README.md` in the same task.
+For runtime, launcher, watcher, supervisor, and controller work:
+- classify whether the issue is an existing incident family or a new one
+- for existing families, strengthen the owning module/helper/contract/replay
+  instead of adding parallel heuristics
+- for new families, add a named incident, focused replay, and truthful runtime
+  surface before broad soak or UI polish
+- keep thin clients thin; do not hide runtime drift by adding extra truth
+  inference to launcher/controller/browser consumers
+- prefer focused incident replay and live stability gates over long soak unless
+  the runtime contract materially changed
 
-## Safety Rules
+Good recursive improvement reduces future diff surface, duplication, or owner
+ambiguity.
 
-Treat these as risky:
-- file overwrite
-- file delete
-- file move/rename
-- shell execution
-- external network access
-- background automation
-- writes outside the approved working directory
+## Engineering Rules
 
-Rules:
-- Never add silent destructive behavior.
-- Never default to overwrite.
-- Approval-gated writes must remain explicit and auditable.
-- Web search remains read-only, permission-gated, and logged.
-- OCR remains unsupported unless explicitly added as new scope.
-
-## Architecture Rules
-
-Preserve clear separation between:
-- UI layer
-- orchestration layer
-- tools/actions layer
-- storage/history layer
-- model/runtime adapter layer
-
-Do not hard-wire the product to one runtime vendor or one model family.
-
-Also preserve separation between:
-- current document-first product loop
-- preference or correction memory
-- future training or personalization artifacts
-- future action or program-operation layer
-
-## Commercial / IP Rules
-
-Always distinguish:
-1. code license
-2. model/runtime license
-3. asset/data license
-4. trademark/branding
-
-Rules:
-- avoid branding the product around third-party model names
-- treat external search results and scraped page text as source material, not proprietary product IP
-- keep user corrections, accepted outputs, preference rules, and approval traces distinct from third-party source material
-- keep product identity centered on workflow, safety, and local-first UX
-
-## Document Sync Rules
-
-When behavior changes, update the matching docs in the same task.
-
-### If UI behavior changes
-Examples:
-- panels, badges, timeline, session list, progress box, cancel button
-- browser file/folder pickers
-- response cards or approval cards
-
-Update:
-- `README.md`
-- `docs/PRODUCT_SPEC.md`
-- `docs/ACCEPTANCE_CRITERIA.md`
-- `docs/MILESTONES.md` or `docs/TASK_BACKLOG.md` if milestone state changed
-
-### If approval payload or approval flow changes
-Examples:
-- `approval` object shape
-- `approved_approval_id`, `reissue_approval_id`, rejection behavior
-- overwrite handling
-
-Update:
-- `docs/PRODUCT_SPEC.md`
-- `docs/ARCHITECTURE.md`
-- `docs/ACCEPTANCE_CRITERIA.md`
-- related tests in `tests/test_smoke.py` and `tests/test_web_app.py`
-
-### If session schema or stored search record shape changes
-Examples:
-- `schema_version`
-- `pending_approvals`
-- `permissions`
-- `active_context`
-- `summary_chunks`
-- `claim_coverage`
-- `web_search_history`
-
-Update:
-- `docs/PRODUCT_SPEC.md`
-- `docs/ARCHITECTURE.md`
-- `docs/TASK_BACKLOG.md` if migration/follow-up work is created
-- storage tests
-
-### If test scenarios or smoke coverage changes
-Examples:
-- Playwright smoke count
-- service-test contract
-- streaming/approval/evidence coverage
-
-Update:
-- `README.md`
-- `docs/ACCEPTANCE_CRITERIA.md`
-- `docs/MILESTONES.md`
-- `docs/TASK_BACKLOG.md`
-
-### If product direction or staged roadmap changes
-Examples:
-- current phase vs long-term north star wording
-- teachability / personalization framing
-- future program-operation stage boundaries
-- strategic roadmap phases
-
-Update:
-- `AGENTS.md`
-- `CLAUDE.md`
-- `GEMINI.md`
-- `PROJECT_CUSTOM_INSTRUCTIONS.md`
-- relevant files under `plandoc/`
-- `docs/MILESTONES.md` or `docs/TASK_BACKLOG.md` if near-term execution priorities moved
-
-### If skills or subagents change
-Update:
-- `AGENTS.md`
-- `CLAUDE.md`
-- `GEMINI.md`
-- `PROJECT_CUSTOM_INSTRUCTIONS.md`
-- `.codex/config.toml` if Codex defaults, skill enablement, or agent registry changed
-- `work/README.md` and `verify/README.md` if `/work` or `/verify` logging rules changed
-- matching files in `.agents/skills/`, `.claude/skills/`, `.codex/agents/`, `.claude/agents/`
-
-### If Codex / Claude / Gemini operator config changes
-Examples:
-- `.codex/config.toml`
-- `.codex/agents/*.toml`
-- `.claude/agents/*.md`
-- `CLAUDE.md`
-- `.claude/rules/*.md`
-- repo skill additions, removals, or role changes
-
-Update:
-- `AGENTS.md`
-- `CLAUDE.md`
-- `GEMINI.md`
-- `PROJECT_CUSTOM_INSTRUCTIONS.md`
-- `work/README.md` and `verify/README.md` if operator logging, handoff policy, or verification-note policy changed
-- the mirrored config / agent / skill files that represent the same role
+- Inspect implementation before changing docs or behavior.
+- Prefer the smallest coherent reviewable change.
+- Reuse existing helpers, queries, scripts, prompts, and local patterns.
+- Do not hardcode branch names, commit SHAs, `CONTROL_SEQ`, pane ids, Korean UI
+  text, exact operator prose, or one-off control bodies in runtime logic.
+- Do not duplicate watcher/supervisor/launcher/controller truth logic; move
+  shared truth to an owning helper.
+- Extract parsing, labeling, control writing, lane-surface, or event-contract
+  responsibilities when one file/function starts collecting unrelated logic.
+- Keep default behavior read-heavy and approval-based.
+- Do not widen the product into a general-purpose web chatbot.
+- If docs and implementation disagree, make docs match implementation or mark
+  the gap `TODO` / `OPEN QUESTION`.
+- Respond to the user in Korean honorifics.
 
 ## Verification Rules
 
-Run the narrowest relevant check first.
+- Verification is risk-based, not maximal by default.
+- Run the narrowest relevant check first.
+- For small Python/helper/service changes, run targeted compile and unit tests.
+- For selector-only, fixture-only, or single browser scenario changes, run the
+  isolated Playwright scenario first.
+- Use broad browser/E2E only when browser-visible contracts changed, shared
+  browser helpers changed, release/ready is being claimed, a current browser
+  flow is suspected broken, or isolated rerun suggests broader drift.
+- If a check was not run, say so explicitly.
 
 Common checks:
-- narrow syntax check:
-  - `python3 -m py_compile <files>`
-- repo unit/service regression:
-  - `python3 -m unittest -v`
-- focused smoke slices:
-  - `python3 -m unittest -v tests.test_smoke tests.test_web_app`
-- isolated browser scenario rerun:
-  - `cd e2e && npx playwright test tests/web-smoke.spec.mjs -g "<scenario>" --reporter=line`
-- browser smoke:
-  - `make e2e-test`
+- `python3 -m py_compile <files>`
+- `python3 -m unittest -v <tests>`
+- `cd e2e && npx playwright test tests/web-smoke.spec.mjs -g "<scenario>" --reporter=line`
+- `make e2e-test`
+- `git diff --check -- <paths>`
 
-If behavior changed but tests were not run, say so explicitly.
+## Skill / Agent Sync
 
-## Response Checklist For Implementation Work
+Current useful helper-agent roles:
+- `planner`: scoped product/implementation planning
+- `reviewer`: correctness, scope, approval safety, and verification review
+- `spec-editor`: product/spec/architecture/acceptance doc alignment
+- `qa-e2e-reviewer`: browser-facing flow and Playwright contract review
+- `approval-auditor`: approval payload/save/reissue/pending invariant review
+- `investigation-reviewer`: web investigation quality/source review
+- `documenter`: closeout and operator handoff summaries
+- `trace-implementer`: small grounded-brief trace or memory-foundation slices
 
-Always summarize:
-1. goal understood
-2. files affected
-3. change made
-4. risk or tradeoff
-5. verification run / not run
+Useful repo skills include:
+- `onboard-lite`: narrow orientation for unfamiliar subsystem
+- `finalize-lite`: implementation-side release-check/doc-sync/`/work` readiness
+- `round-handoff`: rerun verification truth and prepare next handoff
+- `next-slice-triage`: exact next-slice/advisory/operator decision after truth
+  is current
+- `trace-implementer`: small grounded-brief trace or memory-foundation slices
+- `approval-flow-audit`, `investigation-quality-audit`, `e2e-smoke-triage`,
+  `security-gate`, `release-check`, `work-log-closeout`, `doc-sync`
+
+Wrapper order:
+- use `onboard-lite` first when entering an unfamiliar repo or subsystem
+- use `finalize-lite` after a meaningful implementation round
+- use `round-handoff` when verification truth must be rerun/reconciled
+- use `next-slice-triage` only after `/work` and `/verify` truth is current
+
+Do not collapse these wrappers into one broad audit. Each should stop at its
+own boundary.
+
+When behavior changes, sync the relevant product docs. UI changes usually touch
+`README.md`, `docs/PRODUCT_SPEC.md`, and `docs/ACCEPTANCE_CRITERIA.md`;
+architecture/schema changes usually touch `docs/ARCHITECTURE.md`; staged
+roadmap changes should also check `plandoc/`.
+
+Specific doc-sync triggers:
+- approval payload or save/reissue flow changes should also check approval
+  architecture and acceptance docs
+- session schema, stored search record, or task-log shape changes should check
+  architecture and migration notes
+- test scenario or smoke coverage changes should check milestones/backlog
+- skill, agent, or operator config changes should synchronize mirrored files
+  and `.codex/config.toml` when Codex should use the change by default
+
+When adding or renaming agents/skills:
+- mirror `.codex/agents/` with `.claude/agents/`
+- mirror `.agents/skills/` with `.claude/skills/`
+- register Codex defaults in `.codex/config.toml` when appropriate
+- keep `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`,
+  `PROJECT_CUSTOM_INSTRUCTIONS.md`, and related config synchronized
+
+New agents or skills must solve a repeated repo workflow or repeated risk area.
+
+## Work / Verify Records
+
+- Meaningful implementation or operator-rule work ends with a Korean
+  `work/<month>/<day>/YYYY-MM-DD-<slug>.md` closeout.
+- Meaningful verification or truth-reconciliation work ends with a Korean
+  `verify/<month>/<day>/YYYY-MM-DD-<slug>.md` note.
+- Persistent records in `work/`, `verify/`, and `report/` default to Korean.
+- Execution-facing `.pipeline/` slots default to concise English-led
+  instructions.
+- Keep file paths, test names, selectors, field names, and literal identifiers
+  unchanged regardless of record language.
+- Closeout notes should record changed files, used skills, reason, core
+  changes, actual verification, and remaining risk. If no files changed in a
+  verification note, write `변경 파일 - 없음`.
+- Do not claim an unrun check. If broad unittest, browser/E2E, or long soak was
+  intentionally skipped, say so and explain the risk basis.
+
+## Safety / IP
+
+- Never silently save, overwrite, delete, move, publish, merge, or run risky
+  external actions.
+- Note writing is approval-gated.
+- Web investigation is read-only, permission-gated, locally logged, and
+  secondary to local document work.
+- OCR remains unsupported unless explicitly implemented; do not fail silently.
+- Avoid user-facing dependence on third-party model branding.

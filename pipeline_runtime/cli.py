@@ -32,6 +32,7 @@ from .lane_surface import READY_MARKERS as _READY_MARKERS
 from .lane_surface import busy_markers_for_lane
 from .lane_surface import lines_match_markers as _shared_lines_match_markers
 from .lane_surface import pane_text_has_codex_activity as _shared_pane_text_has_codex_activity
+from .lane_surface import tail_has_busy_indicator as _shared_tail_has_busy_indicator
 from .lane_surface import text_is_ready as _shared_text_is_ready
 from .lane_surface import text_matches_markers as _shared_text_matches_markers
 from .schema import atomic_write_json, iso_utc, read_json
@@ -538,6 +539,35 @@ def _doctor(args: argparse.Namespace) -> int:
     return 0 if bool(payload.get("ok")) else 1
 
 
+def _doctor_required_failure_lines(payload: dict[str, object]) -> list[str]:
+    lines: list[str] = []
+    for item in list(payload.get("checks") or []):
+        if not isinstance(item, dict):
+            continue
+        if item.get("status") != "fail" or item.get("severity") != "required":
+            continue
+        name = str(item.get("name") or "").strip()
+        detail = str(item.get("detail") or "").strip()
+        hint = str(item.get("hint") or "").strip()
+        line = name or "required_check"
+        if detail:
+            line += f": {detail}"
+        if hint:
+            line += f" ({hint})"
+        lines.append(line)
+    return lines
+
+
+def start_preflight_failure_message(project_root: Path, session_name: str) -> str:
+    payload = _doctor_payload(project_root, session_name)
+    if bool(payload.get("ok")):
+        return ""
+    failures = _doctor_required_failure_lines(payload)
+    if not failures:
+        return "pipeline doctor required preflight failed"
+    return "pipeline doctor required preflight failed: " + "; ".join(failures[:4])
+
+
 def _wait_for_stop_completion(
     project_root: Path,
     session_name: str,
@@ -715,6 +745,10 @@ def _spawn_supervisor(args: argparse.Namespace) -> int:
         if stop_code != 0:
             return stop_code
         time.sleep(1.0)
+    preflight_failure = start_preflight_failure_message(project_root, session_name)
+    if preflight_failure:
+        print(preflight_failure, file=sys.stderr)
+        return 1
     run_id = RuntimeSupervisor(project_root, session_name=args.session, mode=mode, start_runtime=False).run_id
     log_dir = project_root / ".pipeline" / "runs" / run_id / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
@@ -788,7 +822,8 @@ def _stop_supervisor(args: argparse.Namespace) -> int:
         _supervisor_pid_path(project_root).unlink()
     except FileNotFoundError:
         pass
-    return 1
+    _coerce_status_to_stopped(project_root)
+    return 0
 
 
 def _restart_supervisor(args: argparse.Namespace) -> int:
@@ -955,7 +990,11 @@ class _WrapperEmitter:
         if not self.recent_lines:
             return
         now_value = float(now) if now is not None else time.monotonic()
-        text = "\n".join(self.recent_lines[-40:])
+        text_lines = list(self.recent_lines[-40:])
+        partial = self.partial.strip()
+        if partial:
+            text_lines.append(partial)
+        text = "\n".join(text_lines)
         if self._maybe_auto_dismiss_blocking_prompt(text):
             return
         lane_busy_markers = busy_markers_for_lane(self.lane_name)
@@ -993,7 +1032,8 @@ class _WrapperEmitter:
         task_active = task_claimed_active and control_seq >= 0
         task_done_for_current_key = bool(task_key) and self.done_key == task_key
         prompt_visible = ready_detected or _text_is_ready(self.lane_name, text)
-        busy_visible = _text_matches_markers(text, lane_busy_markers)
+        busy_visible = _shared_tail_has_busy_indicator(text, self.lane_name)
+        task_activity_detected = activity_detected or (task_active and busy_visible)
 
         if task_active and not task_done_for_current_key and self.seen_key != task_key:
             self.seen_key = task_key
@@ -1005,7 +1045,7 @@ class _WrapperEmitter:
             }
             self.append("DISPATCH_SEEN", dict(self.seen_payload), derived_from="task_hint")
 
-        if activity_detected and task_active and not task_done_for_current_key:
+        if task_activity_detected and task_active and not task_done_for_current_key:
             if self.accepted_key != task_key:
                 self.accepted_key = task_key
                 self.accepted_payload = {
@@ -1034,7 +1074,7 @@ class _WrapperEmitter:
                 return
             if current_task_still_active:
                 self._task_inactive_since = 0.0
-                if activity_detected or busy_visible:
+                if task_activity_detected or busy_visible:
                     self._last_activity_at = now_value
                     self.busy_state = True
                 return

@@ -129,6 +129,7 @@ RUNTIME_LANE_ORDER = physical_lane_order()
 _CONTROL_HEADER_LINE_RE = re.compile(r"^\s*([A-Z][A-Z0-9_]*):\s*(.*?)\s*$")
 ROUND_NOTE_NAME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}-.+\.md$")
 WORK_PATH_RE = re.compile(r"(work/\d+/\d+/[^\s`]+\.md)")
+IMPLEMENT_HANDOFF_VERIFIED_STATUSES = frozenset({"verified"})
 
 # `.pipeline/state/` 안에는 watcher/supervisor가 함께 쓰는 공용 상태 파일(`turn_state.json`,
 # `autonomy_state.json`)이 루트에 남고, JobState JSON은 전용 하위 디렉터리 `jobs/`를 primary
@@ -448,11 +449,15 @@ def note_referenced_work_paths(note_path: Path, *, repo_root: Path) -> set[str]:
         text = note_path.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return set()
+    return referenced_work_paths_from_text(text, repo_root=repo_root)
+
+
+def referenced_work_paths_from_text(text: str, *, repo_root: Path) -> set[str]:
     return {
         normalized
         for normalized in (
             normalize_repo_artifact_path(match.group(1), repo_root)
-            for match in WORK_PATH_RE.finditer(text)
+            for match in WORK_PATH_RE.finditer(str(text or ""))
         )
         if normalized
     }
@@ -506,6 +511,63 @@ def latest_verify_note_for_work(
 
     if latest_referenced is not None:
         return latest_referenced
+    return None
+
+
+def completed_implement_handoff_truth(
+    handoff_path: Path,
+    *,
+    repo_root: Path,
+    work_root: Path | None = None,
+    verify_root: Path | None = None,
+    active_control_updated_at: float = 0.0,
+) -> dict[str, Any] | None:
+    meta = read_control_meta(handoff_path)
+    if str(meta.get("status") or "").strip() != "implement":
+        return None
+    try:
+        text = handoff_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+
+    work_base = work_root or (repo_root / "work")
+    verify_base = verify_root or (repo_root / "verify")
+    referenced_paths = sorted(referenced_work_paths_from_text(text, repo_root=repo_root))
+    for referenced in referenced_paths:
+        work_path = repo_root / referenced
+        if not work_path.exists():
+            continue
+        try:
+            work_mtime = work_path.stat().st_mtime
+        except OSError:
+            continue
+        if active_control_updated_at > 0 and work_mtime + 0.001 < active_control_updated_at:
+            continue
+        verify_path = latest_verify_note_for_work(
+            work_base,
+            verify_base,
+            work_path,
+            repo_root=repo_root,
+        )
+        if verify_path is None:
+            continue
+        verify_meta = read_control_meta(verify_path)
+        verify_status = str(verify_meta.get("status") or "").strip().lower()
+        if verify_status not in IMPLEMENT_HANDOFF_VERIFIED_STATUSES:
+            continue
+        try:
+            verify_mtime = verify_path.stat().st_mtime
+        except OSError:
+            continue
+        if verify_mtime + 0.001 < work_mtime:
+            continue
+        return {
+            "work_path": referenced,
+            "verify_path": normalize_repo_artifact_path(verify_path, repo_root),
+            "verify_status": verify_status,
+            "work_mtime": work_mtime,
+            "verify_mtime": verify_mtime,
+        }
     return None
 
 

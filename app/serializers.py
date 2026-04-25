@@ -82,6 +82,7 @@ class SerializerMixin:
         localized.pop("reviewed_memory_local_effect_presence_proof_record_store", None)
         localized_source_messages = localized.get("messages", [])
         localized_messages: list[dict[str, Any]] = []
+        preference_by_fingerprint: dict[str, dict[str, str]] | None = None
         superseded_reject_index = self._build_superseded_reject_signal_index(session)
         historical_save_identity_index = self._build_historical_save_identity_signal_index(session)
         existing_proof_record_store_entries = session.get(
@@ -217,6 +218,52 @@ class SerializerMixin:
             localized_message["claim_coverage_progress_summary"] = localize_text(
                 str(localized_message.get("claim_coverage_progress_summary") or "")
             ).strip()
+            if (
+                not localized_message.get("applied_preferences")
+                and localized_message.get("applied_preference_ids")
+            ):
+                fp_ids = [
+                    str(fp).strip()
+                    for fp in (localized_message.get("applied_preference_ids") or [])
+                    if str(fp or "").strip()
+                ]
+                if fp_ids:
+                    if preference_by_fingerprint is None:
+                        preference_by_fingerprint = {}
+                        try:
+                            try:
+                                all_preferences = self.preference_store.list_all(limit=200)
+                            except TypeError:
+                                all_preferences = self.preference_store.list_all()
+                        except Exception:
+                            all_preferences = []
+                        for preference in all_preferences:
+                            if isinstance(preference, dict):
+                                fingerprint = str(
+                                    preference.get("delta_fingerprint")
+                                    or preference.get("fingerprint")
+                                    or ""
+                                ).strip()
+                                description = str(preference.get("description") or "")
+                            else:
+                                fingerprint = str(
+                                    getattr(preference, "delta_fingerprint", "")
+                                    or getattr(preference, "fingerprint", "")
+                                    or ""
+                                ).strip()
+                                description = str(getattr(preference, "description", "") or "")
+                            if fingerprint:
+                                preference_by_fingerprint[fingerprint] = {
+                                    "fingerprint": fingerprint,
+                                    "description": description,
+                                }
+                    resolved_preferences = [
+                        dict(preference_by_fingerprint[fp])
+                        for fp in fp_ids
+                        if fp in preference_by_fingerprint
+                    ]
+                    if resolved_preferences:
+                        localized_message["applied_preferences"] = resolved_preferences
             localized_messages.append(localized_message)
         localized["messages"] = localized_messages
         preliminary_recurrence_aggregate_candidates = self._build_recurrence_aggregate_candidates(

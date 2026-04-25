@@ -85,6 +85,10 @@ class TokenQueriesTest(unittest.TestCase):
             self.assertEqual(totals.actual_cost_usd_sum, 1.25)
             self.assertEqual(totals.estimated_only_cost_usd_sum, 0.75)
             self.assertEqual(len(agents), 2)
+            by_source = {item.source: item for item in agents}
+            self.assertEqual(by_source["codex"].cache_read_tokens, 3)
+            self.assertEqual(by_source["codex"].cache_write_tokens, 1)
+            self.assertEqual(by_source["codex"].thinking_tokens, 2)
             self.assertEqual(agents[0].linked_events, 0)
             self.assertEqual(agents[1].linked_events, 0)
 

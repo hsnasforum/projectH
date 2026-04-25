@@ -1,0 +1,52 @@
+# Pipeline Runtime synthetic soak sample
+
+## 요약
+- project=/tmp/projecth-pipeline-runtime-synthetic-2rkcd253
+- session=aip-projecth-pipeline-runtime-synthetic-2rkcd253
+- mode=experimental
+- duration_sec=90.0
+- ready_ok=True
+- ready_wait_sec=1.001
+- ready_timeout_sec=60.0
+- samples=17
+- state_counts={"RUNNING": 17}
+- degraded_counts={}
+- receipt_count=1
+- control_change_count=3
+- duplicate_dispatch_count=0
+- control_mismatch_samples=0
+- control_mismatch_max_streak=0
+- receipt_pending_samples=0
+- classification_gate_failures=0
+- classification_gate_details=[]
+- orphan_session=False
+- broken_seen=False
+- workspace_retained=False
+- workspace_cleanup=background_delete_requested(pid=360017)
+- current_run_id=20260424T022354Z-p357475
+- automation_health=ok
+- automation_reason_code=
+- incident_family=
+- automation_next_action=continue
+- open_control={"active_control_file": ".pipeline/implement_handoff.md", "active_control_seq": 2, "active_control_status": "implement"}
+- readiness_snapshot={"active_round": {"state": ""}, "automation_health": "ok", "automation_incident_family": "", "automation_next_action": "continue", "automation_reason_code": "", "control": {"active_control_status": "none"}, "lanes": [{"attachable": true, "last_event_at": "2026-04-24T02:23:54.690785Z", "last_heartbeat_at": "2026-04-24T02:23:54.639852Z", "name": "Claude", "note": "prompt_visible", "pid": 357603, "state": "READY"}, {"attachable": true, "last_event_at": "2026-04-24T02:23:54.698399Z", "last_heartbeat_at": "2026-04-24T02:23:54.647759Z", "name": "Codex", "note": "prompt_visible", "pid": 357625, "state": "READY"}, {"attachable": true, "last_event_at": "2026-04-24T02:23:54.726015Z", "last_heartbeat_at": "2026-04-24T02:23:54.674828Z", "name": "Gemini", "note": "prompt_visible", "pid": 357653, "state": "READY"}], "runtime_state": "RUNNING", "watcher": {"alive": true, "pid": 357724}}
+
+## 체크 결과
+- `PASS` runtime start
+  - started
+- `PASS` runtime ready barrier
+  - wait_sec=1.001, timeout_sec=60.0, {"active_round": {"state": ""}, "automation_health": "ok", "automation_incident_family": "", "automation_next_action": "continue", "automation_reason_code": "", "control": {"active_control_status": "none"}, "lanes": [{"attachable": true, "last_event_at": "2026-04-24T02:23:54.690785Z", "last_heartbeat_at": "2026-04-24T02:23:54.639852Z", "name": "Claude", "note": "prompt_visible", "pid": 357603, "state": "READY"}, {"attachable": true, "last_event_at": "2026-04-24T02:23:54.698399Z", "last_heartbeat_at": "2026-04-24T02:23:54.647759Z", "name": "Codex", "note": "prompt_visible", "pid": 357625, "state": "READY"}, {"attachable": true, "last_event_at": "2026-04-24T02:23:54.726015Z", "last_heartbeat_at": "2026-04-24T02:23:54.674828Z", "name": "Gemini", "note": "prompt_visible", "pid": 357653, "state": "READY"}], "runtime_state": "RUNNING", "watcher": {"alive": true, "pid": 357724}}
+- `PASS` synthetic workload produced receipts
+  - receipt_count=1
+- `PASS` soak completed without BROKEN
+  - broken_seen=False
+- `PASS` soak completed without DEGRADED
+  - degraded_seen=False
+- `PASS` duplicate dispatch stayed at zero
+  - duplicate_dispatch_count=0
+- `PASS` control surface stayed free of persistent mismatch
+  - control_mismatch_samples=0, max_streak=0
+- `PASS` classification_fallback_detected
+  - []
+- `PASS` stop left no orphan session
+  - orphan_session=False

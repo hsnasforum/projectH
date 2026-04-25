@@ -34,12 +34,9 @@ import re
 import subprocess
 import sys
 import tempfile
-import threading
 import time
-from dataclasses import dataclass, field, asdict
-from enum import Enum
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Optional
 
 _PROJECT_IMPORT_ROOT = os.environ.get("PROJECT_ROOT") or os.getcwd()
 if _PROJECT_IMPORT_ROOT:
@@ -60,9 +57,7 @@ from pipeline_runtime.lane_surface import (
     pane_text_has_codex_activity as _shared_pane_text_has_codex_activity,
     pane_text_has_gemini_activity as _shared_pane_text_has_gemini_activity,
     pane_text_has_input_cursor as _shared_pane_text_has_input_cursor,
-    pane_text_has_working_indicator as _shared_pane_text_has_working_indicator,
     pane_text_is_idle as _shared_pane_text_is_idle,
-    wait_for_pane_settle as _shared_wait_for_pane_settle,
 )
 from pipeline_runtime.lane_catalog import (
     default_role_bindings,
@@ -94,6 +89,7 @@ from pipeline_runtime.schema import (
     active_control_snapshot_from_entry,
     active_control_snapshot_from_status,
     atomic_write_text,
+    completed_implement_handoff_truth,
     control_block_from_snapshot,
     control_filenames_equivalent,
     control_seq_value,
@@ -109,6 +105,7 @@ from pipeline_runtime.schema import (
     snapshot_control_seq,
 )
 from pipeline_runtime.turn_arbitration import (
+    TURN_VERIFY_FOLLOWUP,
     WatcherTurnInputs,
     legacy_turn_state_name,
     legacy_watcher_turn_name,
@@ -125,7 +122,38 @@ from verify_fsm import (
     compute_multi_file_sig,
     make_job_id,
 )
-from watcher_dispatch import DispatchIntent, WatcherDispatchQueue
+from watcher_dispatch import (
+    _DISPATCH_LOCKS_GUARD,
+    _DISPATCH_LOCKS,
+    _DISPATCH_LOCK_TIMEOUT_SEC,
+    _wait_for_input_ready,
+    _wait_for_dispatch_window,
+    _is_pane_dead,
+    _respawn_pane,
+    _clear_prompt_input_line,
+    _dispatch_lock_for,
+    _pane_has_working_indicator,
+    tmux_send_keys,
+    _dispatch_codex,
+    _dispatch_claude,
+    _dispatch_gemini,
+    DispatchIntent,
+    WatcherDispatchQueue,
+)
+from watcher_state import (
+    _JSONSCHEMA_AVAILABLE,
+    ControlSignal,
+    DedupeGuard,
+    LeaseData,
+    ManifestCollector,
+    PaneLease,
+    WatcherTurnState,
+)
+from watcher_stabilizer import (
+    ArtifactStabilizer,
+    StabilizeSnapshot,
+    compute_file_sha256,
+)
 from watcher_prompt_assembly import (
     DEFAULT_ADVISORY_PROMPT,
     DEFAULT_ADVISORY_RECOVERY_PROMPT,
@@ -138,14 +166,6 @@ from watcher_prompt_assembly import (
     PromptDispatchSpec,
     WatcherPromptAssembler,
 )
-
-# jsonschema는 선택적 의존성 — 없으면 필수 필드 구조 검증만 수행
-try:
-    import jsonschema as _jsonschema
-    _JSONSCHEMA_AVAILABLE = True
-except ImportError:
-    _jsonschema = None  # type: ignore
-    _JSONSCHEMA_AVAILABLE = False
 
 # ---------------------------------------------------------------------------
 # Session name — pipeline-gui.py / start-pipeline.sh와 동일 규칙
@@ -217,449 +237,7 @@ ROUND_NOTE_NAME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}-.+\.md$")
 ROUND_NOTE_SECTION_RE = re.compile(r"^##\s+(.+?)\s*$")
 ROUND_NOTE_PATH_RE = re.compile(r"(?<!@)(?:\./)?([A-Za-z0-9_.\-/]+?\.[A-Za-z0-9]+)")
 ROUND_NOTE_METADATA_ONLY_PREFIXES = ("work/", "verify/", "report/", ".pipeline/", "pipeline/")
-_DISPATCH_LOCKS_GUARD = threading.Lock()
-_DISPATCH_LOCKS: dict[str, threading.Lock] = {}
-_DISPATCH_LOCK_TIMEOUT_SEC = 30.0
 _MATCHING_VERIFY_PENDING_ARCHIVE_REASON = "matching_verify_already_exists"
-
-
-class WatcherTurnState(str, Enum):
-    IDLE = "IDLE"
-    IMPLEMENT_ACTIVE = "IMPLEMENT_ACTIVE"
-    VERIFY_ACTIVE = "VERIFY_ACTIVE"
-    VERIFY_FOLLOWUP = "VERIFY_FOLLOWUP"
-    ADVISORY_ACTIVE = "ADVISORY_ACTIVE"
-    OPERATOR_WAIT = "OPERATOR_WAIT"
-
-    # Legacy enum aliases kept for a compatibility window. Callers may still
-    # reference the old names, but persisted/runtime truth uses role-first
-    # values above.
-    CODEX_VERIFY = VERIFY_ACTIVE
-
-
-def compute_file_sha256(path: Path) -> str:
-    """파일 내용 기준 sha256 hex. 읽을 수 없으면 빈 문자열."""
-    try:
-        return hashlib.sha256(path.read_bytes()).hexdigest()
-    except OSError:
-        return ""
-
-
-# ---------------------------------------------------------------------------
-# ArtifactStabilizer
-# ---------------------------------------------------------------------------
-@dataclass
-class StabilizeSnapshot:
-    hash:  str
-    size:  int
-    mtime: float
-
-
-class ArtifactStabilizer:
-    """hash + mtime + size 3중 비교로 연속 N회 동일할 때만 안정화 완료 판정."""
-
-    def __init__(self, settle_sec: float = 3.0, required_stable: int = 2) -> None:
-        self.settle_sec      = settle_sec
-        self.required_stable = required_stable
-        self._snapshots: dict[str, list[StabilizeSnapshot]] = {}
-
-    def _snapshot(self, path: Path) -> Optional[StabilizeSnapshot]:
-        try:
-            stat = path.stat()
-            h    = hashlib.sha256(path.read_bytes()).hexdigest()
-            return StabilizeSnapshot(hash=h, size=stat.st_size, mtime=stat.st_mtime)
-        except OSError:
-            return None
-
-    def check(self, job_id: str, artifact_path: str) -> bool:
-        path = Path(artifact_path)
-        snap = self._snapshot(path)
-        if snap is None:
-            self._snapshots.pop(job_id, None)
-            return False
-
-        if time.time() - snap.mtime < self.settle_sec:
-            self._snapshots.pop(job_id, None)
-            return False
-
-        history = self._snapshots.setdefault(job_id, [])
-
-        # hash + size + mtime 3중 비교 — touch처럼 내용 동일 mtime 변경도 리셋
-        if history and history[-1] != snap:
-            self._snapshots[job_id] = []
-            history = self._snapshots[job_id]
-
-        history.append(snap)
-        return len(history) >= self.required_stable
-
-    def clear(self, job_id: str) -> None:
-        self._snapshots.pop(job_id, None)
-
-
-# ---------------------------------------------------------------------------
-# PaneLease
-# ---------------------------------------------------------------------------
-@dataclass
-class LeaseData:
-    job_id:        str
-    round:         int
-    started_at:    float
-    lease_ttl_sec: int
-    pane_target:   str
-    owner_pid:     int | None = None
-
-
-@dataclass
-class ControlSignal:
-    kind:        str
-    path:        Path
-    status:      str
-    mtime:       float
-    sig:         str
-    control_seq: int = -1
-    slot_id:     str = ""
-    canonical_file: str = ""
-    is_legacy_alias: bool = False
-
-
-class PaneLease:
-    """slot별 lock 파일 기반 lease. dry_run 시 dispatch 직후 즉시 해제."""
-
-    def __init__(
-        self,
-        lock_dir: Path,
-        default_ttl: int = 900,
-        dry_run: bool = False,
-        owner_pid_path: Optional[Path] = None,
-    ) -> None:
-        self.lock_dir    = lock_dir
-        self.default_ttl = default_ttl
-        self.dry_run     = dry_run
-        self.owner_pid_path = owner_pid_path
-        lock_dir.mkdir(parents=True, exist_ok=True)
-
-    def _lock_path(self, slot: str) -> Path:
-        return self.lock_dir / f"{slot}.lock"
-
-    def _read_owner_pid_state(self) -> tuple[int | None, float]:
-        if self.owner_pid_path is None:
-            return None, 0.0
-        try:
-            stat = self.owner_pid_path.stat()
-            raw_pid = self.owner_pid_path.read_text(encoding="utf-8").strip()
-        except FileNotFoundError:
-            return None, 0.0
-        except OSError:
-            return None, 0.0
-        if not raw_pid:
-            return None, stat.st_mtime
-        try:
-            pid = int(raw_pid)
-        except ValueError:
-            return None, stat.st_mtime
-        if pid <= 0:
-            return None, stat.st_mtime
-        return pid, stat.st_mtime
-
-    def _pid_dead(self, pid: int | None) -> bool:
-        if pid is None or pid <= 0:
-            return False
-        try:
-            os.kill(pid, 0)
-        except ProcessLookupError:
-            return True
-        except PermissionError:
-            return False
-        except OSError:
-            return False
-        return False
-
-    def _owner_dead(self) -> bool:
-        # owner_pid_path가 wired되지 않은 경우: 감시할 supervisor가 없는 standalone 운영이
-        # 가능하므로 "dead"로 판정하지 않는다.
-        owner_pid, _ = self._read_owner_pid_state()
-        if owner_pid is None:
-            # pid 파일이 없거나 비어 있거나 손상된 경우는 dead가 아니라 판단 보류.
-            return False
-        return self._pid_dead(owner_pid)
-
-    def _clear_lock(self, slot: str, *, reason: str) -> None:
-        path = self._lock_path(slot)
-        if not path.exists():
-            return
-        try:
-            path.unlink()
-        except OSError:
-            return
-        log.warning("lease released: slot=%s reason=%s", slot, reason)
-
-    def _clear_if_owner_dead(self, slot: str) -> None:
-        path = self._lock_path(slot)
-        if not path.exists():
-            return
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            data = {}
-
-        owner_pid = data.get("owner_pid")
-        if isinstance(owner_pid, int) and owner_pid > 0:
-            if self._pid_dead(owner_pid):
-                self._clear_lock(slot, reason="owner_dead")
-            return
-
-        # legacy lease에는 owner_pid가 없으므로, supervisor.pid가 lock보다 나중에
-        # 다시 쓰였으면 restart 이후 stale lease로 보고 정리한다.
-        _, owner_pid_mtime = self._read_owner_pid_state()
-        started_at = 0.0
-        try:
-            started_at = float(data.get("started_at") or 0.0)
-        except (TypeError, ValueError):
-            started_at = 0.0
-        if owner_pid_mtime > 0.0 and started_at > 0.0 and owner_pid_mtime > started_at:
-            self._clear_lock(slot, reason="owner_restarted")
-            return
-
-        if self._owner_dead():
-            self._clear_lock(slot, reason="owner_dead")
-
-    def acquire(self, slot: str, job_id: str, round_: int,
-                pane_target: str, ttl: Optional[int] = None) -> bool:
-        path = self._lock_path(slot)
-        self._clear_if_owner_dead(slot)
-        if path.exists():
-            try:
-                data    = json.loads(path.read_text())
-                elapsed = time.time() - data["started_at"]
-                if elapsed < data["lease_ttl_sec"]:
-                    log.debug("lease active: slot=%s job=%s elapsed=%.1fs",
-                              slot, data["job_id"], elapsed)
-                    return False
-            except (json.JSONDecodeError, KeyError):
-                pass
-
-        lease = LeaseData(
-            job_id=job_id, round=round_, started_at=time.time(),
-            lease_ttl_sec=ttl or self.default_ttl, pane_target=pane_target,
-            owner_pid=self._read_owner_pid_state()[0],
-        )
-        path.write_text(json.dumps(asdict(lease), ensure_ascii=False, indent=2))
-        log.info("lease acquired: slot=%s job=%s round=%d pane=%s",
-                 slot, job_id, round_, pane_target)
-        return True
-
-    def release(self, slot: str) -> None:
-        path = self._lock_path(slot)
-        if path.exists():
-            path.unlink()
-            log.info("lease released: slot=%s", slot)
-
-    def is_active(self, slot: str) -> bool:
-        path = self._lock_path(slot)
-        self._clear_if_owner_dead(slot)
-        if not path.exists():
-            return False
-        try:
-            data = json.loads(path.read_text())
-            return (time.time() - data["started_at"]) < data["lease_ttl_sec"]
-        except (json.JSONDecodeError, KeyError):
-            return False
-
-
-# ---------------------------------------------------------------------------
-# DedupeGuard
-# ---------------------------------------------------------------------------
-class DedupeGuard:
-    """
-    job_id + round + artifact_hash + target_slot 조합으로 중복 dispatch 억제.
-    dispatch.jsonl / suppressed.jsonl 에 reason 포함 기록.
-    로그 디렉터리: events_dir (experimental/)
-    """
-
-    def __init__(self, events_dir: Path) -> None:
-        self.events_dir     = events_dir
-        self.dispatch_log   = events_dir / "dispatch.jsonl"
-        self.suppressed_log = events_dir / "suppressed.jsonl"
-        self._seen: set[str] = set()
-        self._load()
-
-    def _load(self) -> None:
-        if self.dispatch_log.exists():
-            for line in self.dispatch_log.read_text().splitlines():
-                try:
-                    self._seen.add(json.loads(line)["key"])
-                except (json.JSONDecodeError, KeyError):
-                    pass
-
-    @staticmethod
-    def _make_key(job_id: str, round_: int, artifact_hash: str, target_slot: str) -> str:
-        return f"{job_id}|{round_}|{artifact_hash}|{target_slot}"
-
-    def is_duplicate(self, job_id: str, round_: int,
-                     artifact_hash: str, target_slot: str) -> bool:
-        return self._make_key(job_id, round_, artifact_hash, target_slot) in self._seen
-
-    def mark_dispatch(self, job_id: str, round_: int, artifact_hash: str,
-                      target_slot: str, pane_target: str, dry_run: bool) -> None:
-        key = self._make_key(job_id, round_, artifact_hash, target_slot)
-        self._seen.add(key)
-        self.events_dir.mkdir(parents=True, exist_ok=True)
-        entry = {
-            "event": "dispatch", "key": key, "job_id": job_id,
-            "round": round_, "artifact_hash": artifact_hash,
-            "target_slot": target_slot, "pane_target": pane_target,
-            "dry_run": dry_run, "at": time.time(),
-        }
-        with self.dispatch_log.open("a") as f:
-            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
-
-    def mark_suppressed(self, job_id: str, round_: int, artifact_hash: str,
-                        target_slot: str, reason: str) -> None:
-        key = self._make_key(job_id, round_, artifact_hash, target_slot)
-        self.events_dir.mkdir(parents=True, exist_ok=True)
-        entry = {
-            "event": "suppressed", "key": key, "job_id": job_id,
-            "round": round_, "artifact_hash": artifact_hash,
-            "target_slot": target_slot, "reason": reason, "at": time.time(),
-        }
-        with self.suppressed_log.open("a") as f:
-            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
-        log.info("suppressed: job=%s slot=%s reason=%s", job_id, target_slot, reason)
-
-    def forget(self, job_id: str, round_: int, artifact_hash: str, target_slot: str) -> None:
-        key = self._make_key(job_id, round_, artifact_hash, target_slot)
-        self._seen.discard(key)
-
-
-# ---------------------------------------------------------------------------
-# ManifestCollector  (2단계 핵심)
-# ---------------------------------------------------------------------------
-class ManifestCollector:
-    """
-    verify pane이 저장한 manifest JSON을 폴링하고 유효성을 검증한다.
-
-    manifest 경로: <manifests_dir>/<job_id>/round-<n>.verify.json
-
-    유효 조건 (4중 일치):
-      1. job_id 일치
-      2. round 일치
-      3. role == "slot_verify"
-      4. artifact_hash == 현재 라운드 아티팩트 hash
-
-    jsonschema 미설치 시: 필수 필드 존재 여부만 확인 (구조 검증으로 대체)
-    """
-
-    REQUIRED_FIELDS = {"schema_version", "job_id", "round", "role", "artifact_hash", "created_at"}
-
-    def __init__(self, manifests_dir: Path, schema_path: Optional[Path] = None) -> None:
-        self.manifests_dir = manifests_dir
-        self._schema: Optional[dict] = None
-        if schema_path and schema_path.exists():
-            try:
-                self._schema = json.loads(schema_path.read_text())
-                log.info("manifest schema loaded: %s  jsonschema=%s",
-                         schema_path, _JSONSCHEMA_AVAILABLE)
-            except (json.JSONDecodeError, OSError) as e:
-                log.warning("schema load failed: %s", e)
-
-    def manifest_path(self, job_id: str, round_: int) -> Path:
-        return self.manifests_dir / job_id / f"round-{round_}.verify.json"
-
-    def poll(self, job: JobState) -> Optional[dict]:
-        """
-        manifest 파일이 존재하면 읽어서 반환.
-        없으면 None.
-        """
-        path = self.manifest_path(job.job_id, job.round)
-        if not path.exists():
-            return None
-        try:
-            return json.loads(path.read_text())
-        except (json.JSONDecodeError, OSError) as e:
-            log.warning("manifest read error: job=%s path=%s err=%s", job.job_id, path, e)
-            return None
-
-    def validate(self, manifest: dict, job: JobState) -> tuple[bool, str]:
-        """
-        (valid: bool, reason: str) 반환.
-
-        검증 순서:
-          1. jsonschema (설치된 경우) 또는 필수 필드 구조 검증
-          2. 4중 일치 확인
-        """
-        # --- 스키마 검증 ---
-        if _JSONSCHEMA_AVAILABLE and self._schema:
-            try:
-                _jsonschema.validate(instance=manifest, schema=self._schema)
-            except _jsonschema.ValidationError as e:
-                return False, f"schema_error: {e.message}"
-        else:
-            # jsonschema 미설치 fallback: 필수 필드 존재 + 최소 값 검증
-            missing = [k for k in self.REQUIRED_FIELDS if k not in manifest]
-            if missing:
-                return False, f"missing_fields: {sorted(missing)}"
-            if manifest.get("schema_version") != 1:
-                return False, f"schema_version_invalid: {manifest.get('schema_version')}"
-            if manifest.get("role") not in {"slot_gen", "slot_verify", "slot_counter"}:
-                return False, f"role_invalid: {manifest.get('role')}"
-
-        # --- 4중 일치 ---
-        if manifest.get("job_id") != job.job_id:
-            return False, f"job_id_mismatch: {manifest.get('job_id')} != {job.job_id}"
-        if manifest.get("round") != job.round:
-            return False, f"round_mismatch: {manifest.get('round')} != {job.round}"
-        if manifest.get("role") != "slot_verify":
-            return False, f"role_mismatch: {manifest.get('role')}"
-        if manifest.get("artifact_hash") != job.artifact_hash:
-            return False, (f"hash_mismatch: manifest={manifest.get('artifact_hash')[:16]}… "
-                           f"job={job.artifact_hash[:16]}…")
-
-        return True, "ok"
-
-    def extract_scores(self, manifest: dict) -> dict:
-        """
-        JobState 업데이트에 필요한 정량 필드 추출.
-        없는 필드는 안전 기본값으로 채운다.
-        """
-        required_checks = manifest.get("required_checks", 0)
-        passed_checks   = manifest.get("passed_checks", 0)
-        validation_score = (
-            passed_checks / required_checks if required_checks > 0 else 0.0
-        )
-
-        blockers     = manifest.get("blockers", [])
-        blocker_count = sum(1 for b in blockers if b.get("severity") == "critical")
-
-        return {
-            "validation_score": round(validation_score, 4),
-            "blocker_count":    blocker_count,
-        }
-
-
-# ---------------------------------------------------------------------------
-# tmux 전송 헬퍼
-# ---------------------------------------------------------------------------
-def _capture_pane_text(pane_target: str) -> str:
-    return _shared_capture_pane_text(pane_target)
-
-
-def wait_for_pane_settle(
-    pane_target: str,
-    timeout_sec: float = 12.0,
-    quiet_sec: float = 1.0,
-    poll_sec: float = 0.25,
-) -> bool:
-    """
-    pane 출력이 잠잠해질 때까지 기다린다.
-    fresh CLI lane에서 startup 로그나 MCP 초기화 출력이 계속 나오는 동안
-    첫 handoff를 보내면 텍스트만 남고 submit이 누락될 수 있다.
-    """
-    return _shared_wait_for_pane_settle(
-        pane_target,
-        timeout_sec=timeout_sec,
-        quiet_sec=quiet_sec,
-        poll_sec=poll_sec,
-    )
 
 
 def _line_looks_like_input_prompt(line: str) -> bool:
@@ -693,521 +271,38 @@ def _pane_text_has_gemini_ready_prompt(text: str) -> bool:
     return has_type_your_message and (has_workspace_hint or has_gemini_banner)
 
 
-def _pane_text_has_busy_indicator(text: str) -> bool:
-    return _shared_pane_text_has_busy_indicator(text)
-
-
-def _pane_text_has_input_cursor(text: str) -> bool:
+def _pane_has_input_cursor(pane_target: str) -> bool:
+    """Check if the pane shows an input prompt in the recent visible lines."""
+    text = _shared_capture_pane_text(pane_target)
     return _shared_pane_text_has_input_cursor(text)
 
 
-def _pane_has_input_cursor(pane_target: str) -> bool:
-    """Check if the pane shows an input prompt in the recent visible lines."""
-    text = _capture_pane_text(pane_target)
-    return _pane_text_has_input_cursor(text)
-
-
-def _pane_has_working_indicator(pane_target: str) -> bool:
-    """Check whether the recent pane output shows Codex has started working."""
-    text = _capture_pane_text(pane_target)
-    return _shared_pane_text_has_working_indicator(text)
-
-
-def _pane_text_is_idle(text: str) -> bool:
-    """Treat a pane as idle only when a prompt is visible and no busy signal remains."""
-    return _shared_pane_text_is_idle(text)
-
-
-def _pane_text_has_codex_activity(text: str) -> bool:
-    """Detect Codex response activity even when the input prompt remains visible."""
-    return _shared_pane_text_has_codex_activity(text)
-
-
-def _pane_text_has_gemini_activity(text: str) -> bool:
-    """Detect Gemini response/tool activity even when the input prompt remains visible."""
-    return _shared_pane_text_has_gemini_activity(text)
-
-
-_LIVE_SESSION_ESCALATION_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
-    (
-        "context_exhaustion",
-        re.compile(
-            r"context window|context exhausted|window nearly full|maximum context|conversation too long|컨텍스트\s*window|컨텍스트.*가득",
-            re.IGNORECASE,
-        ),
-    ),
-    (
-        "session_rollover",
-        re.compile(
-            r"new session recommended|session rollover|start a new session|fresh session|new thread|새 세션|새로.*세션",
-            re.IGNORECASE,
-        ),
-    ),
-    (
-        "continue_vs_switch",
-        re.compile(
-            r"continue\?|should i continue|continue here|handoff and continue|진행할까요|이어가시는 것을 강하게 권고|이어서 진행",
-            re.IGNORECASE,
-        ),
-    ),
+from watcher_signals import (
+    _LIVE_SESSION_ESCALATION_PATTERNS,
+    _LIVE_SESSION_ESCALATION_FALLBACK_KEYWORDS,
+    _IMPLEMENT_BLOCKED_STATUS_RE,
+    _IMPLEMENT_BLOCKED_FIELD_RE,
+    _IMPLEMENT_BLOCKED_WRAP_KEYS,
+    _IMPLEMENT_BLOCKED_TEMPLATE_MARKERS,
+    _IMPLEMENT_ALREADY_DONE_PATTERNS,
+    _IMPLEMENT_NO_CHANGE_PATTERNS,
+    _IMPLEMENT_FORBIDDEN_MENU_PATTERNS,
+    _HANDOFF_MARKDOWN_BULLET_LITERAL_RE,
+    _MATERIALIZED_BLOCK_REASON_CODES,
+    _MATERIALIZED_BLOCK_REASONS,
+    _HandoffSentenceReplacementTarget,
+    _normalize_escalation_line,
+    _match_implement_blocked_status,
+    _can_append_implement_blocked_wrap,
+    _decode_handoff_markdown_literal,
+    _parse_handoff_sentence_replacement_target,
+    _fallback_escalation_reasons,
+    _extract_live_session_escalation,
+    _normalize_control_path_hint,
+    _extract_implement_blocked_signal,
+    _extract_implement_forbidden_menu_signal,
+    _extract_implement_completed_handoff_signal,
 )
-
-_LIVE_SESSION_ESCALATION_FALLBACK_KEYWORDS: dict[str, tuple[str, ...]] = {
-    "context_exhaustion": (
-        "context", "window", "full", "exhaust", "too long", "maximum context",
-        "token", "limit", "컨텍스트", "가득", "소진", "길어",
-    ),
-    "session_rollover": (
-        "new session", "fresh session", "new thread", "start over", "restart session",
-        "open a new", "새 세션", "새로", "다음 세션", "새 thread",
-    ),
-    "continue_vs_switch": (
-        "continue", "keep going", "handoff", "switch", "continue here",
-        "진행", "이어서", "계속", "이어갈", "이어가",
-    ),
-}
-
-_IMPLEMENT_BLOCKED_STATUS_RE = re.compile(r"^\s*(?:[-*•]\s+)?STATUS:\s*(.*?)\s*$", re.IGNORECASE)
-_IMPLEMENT_BLOCKED_FIELD_RE = re.compile(r"^\s*(?:[-*•]\s+)?([A-Z_]+):\s*(.*?)\s*$")
-_IMPLEMENT_BLOCKED_WRAP_KEYS = {"BLOCK_REASON", "HANDOFF", "HANDOFF_SHA", "BLOCK_ID"}
-_IMPLEMENT_BLOCKED_TEMPLATE_MARKERS = (
-    "blocked_sentinel:",
-    "emit the exact sentinel below",
-)
-_IMPLEMENT_ALREADY_DONE_PATTERNS: tuple[re.Pattern[str], ...] = (
-    re.compile(r"\balready completed\b", re.IGNORECASE),
-    re.compile(r"\balready addressed\b", re.IGNORECASE),
-    re.compile(r"\bthe work described in the handoff was already completed\b", re.IGNORECASE),
-    re.compile(r"\bthe handoff was already completed\b", re.IGNORECASE),
-    re.compile(r"핸드오프.*이미.*완료", re.IGNORECASE),
-    re.compile(r"슬라이스.*이미.*완료", re.IGNORECASE),
-    re.compile(r"이미 완료된 상태", re.IGNORECASE),
-)
-_IMPLEMENT_NO_CHANGE_PATTERNS: tuple[re.Pattern[str], ...] = (
-    re.compile(r"\bno uncommitted changes\b", re.IGNORECASE),
-    re.compile(r"\bno remaining\b", re.IGNORECASE),
-    re.compile(r"\bno generic instances remain\b", re.IGNORECASE),
-    re.compile(r"추가로 변경할 파일이 없", re.IGNORECASE),
-    re.compile(r"변경할 파일이 없", re.IGNORECASE),
-    re.compile(r"잔존 없음", re.IGNORECASE),
-)
-_IMPLEMENT_FORBIDDEN_MENU_PATTERNS: tuple[re.Pattern[str], ...] = (
-    re.compile(r"다음\s+중\s+하나를\s+선택", re.IGNORECASE),
-    re.compile(r"choose one of the following", re.IGNORECASE),
-    re.compile(r"which option should i", re.IGNORECASE),
-    re.compile(r"select (?:one|an option)", re.IGNORECASE),
-    re.compile(r"operator.*choose", re.IGNORECASE),
-)
-_HANDOFF_MARKDOWN_BULLET_LITERAL_RE = re.compile(r"^\s*-\s+`(.*)`\s*$")
-_MATERIALIZED_BLOCK_REASON_CODES = {
-    "already_implemented",
-    "duplicate_handoff",
-    "handoff_already_applied",
-}
-_MATERIALIZED_BLOCK_REASONS = {
-    "handoff_already_completed",
-    "slice_already_materialized",
-}
-
-
-def _normalize_escalation_line(line: str) -> str:
-    normalized = line.strip().lower()
-    normalized = re.sub(r"\d+[hmsp초분시간]+", "#", normalized)
-    normalized = re.sub(r"\d+", "#", normalized)
-    normalized = re.sub(r"\s+", " ", normalized)
-    return normalized
-
-
-def _match_implement_blocked_status(
-    recent_lines: list[str],
-    idx: int,
-) -> tuple[bool, int, list[str]]:
-    line = recent_lines[idx]
-    match = _IMPLEMENT_BLOCKED_STATUS_RE.match(line)
-    if not match:
-        return False, idx, []
-    value = match.group(1).strip().lower()
-    if value == "implement_blocked":
-        return True, idx + 1, [f"STATUS: {value}"]
-    if value:
-        return False, idx, []
-    if idx + 1 >= len(recent_lines):
-        return False, idx, []
-    next_line = recent_lines[idx + 1].strip().lower()
-    if next_line != "implement_blocked":
-        return False, idx, []
-    return True, idx + 2, ["STATUS: implement_blocked"]
-
-
-def _can_append_implement_blocked_wrap(key: str, stripped: str) -> bool:
-    if not stripped or _line_looks_like_input_prompt(stripped):
-        return False
-    if key == "BLOCK_REASON":
-        return True
-    if key == "HANDOFF":
-        return True
-    if key == "HANDOFF_SHA":
-        return bool(re.fullmatch(r"[0-9a-fA-F]+", stripped))
-    if key == "BLOCK_ID":
-        return bool(re.fullmatch(r"[0-9A-Za-z._:/-]+", stripped))
-    return False
-
-
-def _decode_handoff_markdown_literal(line: str) -> str:
-    match = _HANDOFF_MARKDOWN_BULLET_LITERAL_RE.match(line)
-    if not match:
-        return ""
-    return match.group(1).replace("\\`", "`").strip()
-
-
-@dataclass(frozen=True)
-class _HandoffSentenceReplacementTarget:
-    path: str
-    current_sentence: str
-    replacement_sentence: str
-
-
-def _parse_handoff_sentence_replacement_target(
-    handoff_text: str,
-) -> Optional[_HandoffSentenceReplacementTarget]:
-    target_path = ""
-    current_sentence = ""
-    replacement_sentence = ""
-    capture_mode = ""
-    for raw_line in handoff_text.splitlines():
-        line = raw_line.strip()
-        if line == "EDIT EXACTLY ONE FILE:":
-            capture_mode = "path"
-            continue
-        if line.startswith("CURRENT SENTENCE TO REPLACE"):
-            capture_mode = "current"
-            continue
-        if line.startswith("REPLACEMENT SENTENCE"):
-            capture_mode = "replacement"
-            continue
-        if not line.startswith("- "):
-            continue
-        literal = _decode_handoff_markdown_literal(line)
-        if not literal:
-            continue
-        if capture_mode == "path" and not target_path:
-            target_path = literal
-        elif capture_mode == "current" and not current_sentence:
-            current_sentence = literal
-        elif capture_mode == "replacement" and not replacement_sentence:
-            replacement_sentence = literal
-        capture_mode = ""
-        if target_path and current_sentence and replacement_sentence:
-            return _HandoffSentenceReplacementTarget(
-                path=target_path,
-                current_sentence=current_sentence,
-                replacement_sentence=replacement_sentence,
-            )
-    if not target_path or not current_sentence or not replacement_sentence:
-        return None
-    return _HandoffSentenceReplacementTarget(
-        path=target_path,
-        current_sentence=current_sentence,
-        replacement_sentence=replacement_sentence,
-    )
-
-
-def _fallback_escalation_reasons(lines: list[str]) -> list[str]:
-    window_text = " ".join(_normalize_escalation_line(line) for line in lines)
-    matched: list[str] = []
-    for reason, keywords in _LIVE_SESSION_ESCALATION_FALLBACK_KEYWORDS.items():
-        if any(keyword in window_text for keyword in keywords):
-            matched.append(reason)
-    if len(matched) < 2:
-        return []
-    if "continue_vs_switch" in matched and any(
-        reason in matched for reason in ("context_exhaustion", "session_rollover")
-    ):
-        return matched
-    if {"context_exhaustion", "session_rollover"}.issubset(matched):
-        return matched
-    return []
-
-
-def _extract_live_session_escalation(text: str) -> Optional[dict[str, object]]:
-    """Return a normalized live-session escalation signal from pane text."""
-    if not text.strip():
-        return None
-
-    recent_lines = [line.strip() for line in text.splitlines() if line.strip()]
-    if not recent_lines:
-        return None
-    recent_lines = recent_lines[-60:]
-    hot_window = recent_lines[-12:]
-
-    matched_reasons: list[str] = []
-    excerpt_lines: list[str] = []
-    matched_in_hot_window = False
-    for line in recent_lines:
-        matched_here = False
-        for reason, pattern in _LIVE_SESSION_ESCALATION_PATTERNS:
-            if pattern.search(line):
-                matched_here = True
-                if reason not in matched_reasons:
-                    matched_reasons.append(reason)
-        if matched_here:
-            excerpt_lines.append(line)
-            if line in hot_window:
-                matched_in_hot_window = True
-
-    if not matched_reasons:
-        fallback_reasons = _fallback_escalation_reasons(hot_window)
-        if fallback_reasons:
-            matched_reasons = fallback_reasons
-            excerpt_lines = hot_window[-8:]
-            matched_in_hot_window = True
-
-    if not matched_reasons or not matched_in_hot_window:
-        return None
-
-    normalized_excerpt = [_normalize_escalation_line(line) for line in excerpt_lines[:8]]
-    fingerprint_source = "|".join(matched_reasons + normalized_excerpt)
-    fingerprint = hashlib.sha1(fingerprint_source.encode("utf-8")).hexdigest()
-    return {
-        "reasons": matched_reasons,
-        "excerpt_lines": excerpt_lines[:8],
-        "fingerprint": fingerprint,
-    }
-
-
-def _normalize_control_path_hint(path_hint: str) -> str:
-    return path_hint.strip().lstrip("./").replace("\\", "/")
-
-
-def _extract_implement_blocked_signal(
-    text: str,
-    active_handoff_path: str = "",
-    active_handoff_sha: str = "",
-) -> Optional[dict[str, object]]:
-    """Return an explicit implement_blocked sentinel if present in recent implement-owner output."""
-    if not text.strip():
-        return None
-
-    recent_lines = [line.rstrip() for line in text.splitlines() if line.strip()]
-    if not recent_lines:
-        return None
-    recent_lines = recent_lines[-80:]
-
-    for idx in range(len(recent_lines) - 1, -1, -1):
-        matched, field_start_idx, block_lines = _match_implement_blocked_status(recent_lines, idx)
-        if not matched:
-            continue
-
-        template_context = "\n".join(line.strip().lower() for line in recent_lines[max(0, idx - 3):idx])
-        if any(marker in template_context for marker in _IMPLEMENT_BLOCKED_TEMPLATE_MARKERS):
-            continue
-
-        fields: dict[str, str] = {}
-        current_key = ""
-        for line in recent_lines[field_start_idx: field_start_idx + 24]:
-            stripped = line.strip()
-            if _line_looks_like_input_prompt(stripped):
-                break
-            match = _IMPLEMENT_BLOCKED_FIELD_RE.match(line)
-            if match:
-                current_key = match.group(1).upper()
-                fields[current_key] = match.group(2).strip()
-                block_lines.append(f"{current_key}: {fields[current_key]}".rstrip())
-                continue
-            if (
-                current_key in _IMPLEMENT_BLOCKED_WRAP_KEYS
-                and _can_append_implement_blocked_wrap(current_key, stripped)
-            ):
-                prefix = fields.get(current_key, "")
-                separator = " " if current_key == "BLOCK_REASON" and prefix else ""
-                fields[current_key] = prefix + separator + stripped
-                if block_lines:
-                    block_lines[-1] = f"{current_key}: {fields[current_key]}".rstrip()
-                continue
-            if current_key == "BLOCK_ID":
-                break
-            if stripped:
-                block_lines.append(stripped)
-
-        request = normalize_verify_triage_escalation(fields.get("REQUEST", ""))
-        escalation_class = fields.get("ESCALATION_CLASS", "").strip().lower()
-        escalation_class = normalize_verify_triage_escalation(escalation_class)
-        if request and not is_verify_triage_escalation(request):
-            return None
-        if escalation_class and not is_verify_triage_escalation(escalation_class):
-            return None
-        if escalation_class and request and escalation_class != request:
-            return None
-        request = escalation_class or request or VERIFY_TRIAGE_ESCALATION
-
-        block_reason_code = normalize_reason_code(fields.get("BLOCK_REASON_CODE", ""))
-
-        handoff_hint = fields.get("HANDOFF", "")
-        if active_handoff_path and handoff_hint:
-            if _normalize_control_path_hint(handoff_hint) != _normalize_control_path_hint(active_handoff_path):
-                return None
-
-        handoff_sig = fields.get("HANDOFF_SHA") or fields.get("HANDOFF_SIG") or ""
-        if active_handoff_sha and handoff_sig and handoff_sig != active_handoff_sha:
-            return None
-
-        block_reason = fields.get("BLOCK_REASON", "implement_blocked").strip().lower() or "implement_blocked"
-        if block_reason.startswith("<"):
-            continue
-        fingerprint_source = "|".join(
-            [
-                "sentinel",
-                active_handoff_sha or handoff_sig,
-                block_reason,
-                "|".join(_normalize_escalation_line(line) for line in block_lines[:6]),
-            ]
-        )
-        fingerprint = fields.get("BLOCK_ID", "").strip() or hashlib.sha1(
-            fingerprint_source.encode("utf-8")
-        ).hexdigest()
-        if fingerprint.startswith("<") or "<short_reason" in fingerprint.lower():
-            continue
-        return {
-            "source": "sentinel",
-            "reason": block_reason,
-            "reason_code": block_reason_code,
-            "escalation_class": request,
-            "request": request,
-            "excerpt_lines": block_lines[:6],
-            "fingerprint": fingerprint,
-            "handoff_hint": handoff_hint,
-        }
-    return None
-
-
-def _extract_implement_forbidden_menu_signal(text: str, active_handoff_sha: str = "") -> Optional[dict[str, object]]:
-    """Detect forbidden operator-choice text in recent implement-owner output as a soft blocked signal."""
-    if not text.strip():
-        return None
-
-    recent_lines = [line.strip() for line in text.splitlines() if line.strip()]
-    if not recent_lines:
-        return None
-    hot_window = recent_lines[-16:]
-    matched_lines = [
-        line for line in hot_window
-        if any(pattern.search(line) for pattern in _IMPLEMENT_FORBIDDEN_MENU_PATTERNS)
-    ]
-    if not matched_lines:
-        return None
-
-    fingerprint_source = "|".join(
-        ["soft_blocked", active_handoff_sha, *(_normalize_escalation_line(line) for line in matched_lines[:6])]
-    )
-    return {
-        "source": "soft_blocked",
-        "reason": "forbidden_operator_menu",
-        "reason_code": VERIFY_TRIAGE_ONLY_REASON,
-        "escalation_class": VERIFY_TRIAGE_ESCALATION,
-        "request": VERIFY_TRIAGE_ESCALATION,
-        "excerpt_lines": matched_lines[:6],
-        "fingerprint": hashlib.sha1(fingerprint_source.encode("utf-8")).hexdigest(),
-        "handoff_hint": "",
-    }
-
-
-def _extract_implement_completed_handoff_signal(text: str, active_handoff_sha: str = "") -> Optional[dict[str, object]]:
-    """Detect the implement owner saying the current handoff is already complete / no-op."""
-    if not text.strip():
-        return None
-
-    recent_lines = [line.strip() for line in text.splitlines() if line.strip()]
-    if not recent_lines:
-        return None
-    hot_window = recent_lines[-24:]
-    done_lines = [
-        line for line in hot_window
-        if any(pattern.search(line) for pattern in _IMPLEMENT_ALREADY_DONE_PATTERNS)
-    ]
-    noop_lines = [
-        line for line in hot_window
-        if any(pattern.search(line) for pattern in _IMPLEMENT_NO_CHANGE_PATTERNS)
-    ]
-    if not done_lines:
-        return None
-    if not noop_lines and not any("handoff" in line.lower() for line in done_lines):
-        return None
-
-    excerpt_lines = (done_lines + noop_lines)[:6]
-    fingerprint_source = "|".join(
-        ["soft_completed", active_handoff_sha, *(_normalize_escalation_line(line) for line in excerpt_lines)]
-    )
-    return {
-        "source": "soft_completed",
-        "reason": "handoff_already_completed",
-        "reason_code": "duplicate_handoff",
-        "escalation_class": VERIFY_TRIAGE_ESCALATION,
-        "request": VERIFY_TRIAGE_ESCALATION,
-        "excerpt_lines": excerpt_lines,
-        "fingerprint": hashlib.sha1(fingerprint_source.encode("utf-8")).hexdigest(),
-        "handoff_hint": "",
-    }
-
-
-def _wait_for_input_ready(
-    pane_target: str,
-    timeout_sec: float = 30.0,
-    poll_sec: float = 0.5,
-    stable_sec: float = 2.0,
-) -> bool:
-    """
-    Wait until the pane shows a stable input prompt.
-
-    For fresh Codex startup, the prompt may briefly appear while MCP boot/logging is
-    still settling. Requiring a short continuous ready window makes the first
-    dispatch less likely to land during that unstable startup phase.
-    """
-    deadline = time.time() + timeout_sec
-    ready_since: Optional[float] = None
-    while time.time() < deadline:
-        snapshot = _capture_pane_text(pane_target)
-        if _pane_text_has_input_cursor(snapshot):
-            if ready_since is None:
-                ready_since = time.time()
-            elif time.time() - ready_since >= stable_sec:
-                return True
-        else:
-            ready_since = None
-        time.sleep(poll_sec)
-    return False
-
-
-def _wait_for_dispatch_window(
-    pane_target: str,
-    pane_type: str,
-    timeout_sec: float = 10.0,
-) -> bool:
-    """
-    Dispatch 직전 pane이 실제 입력을 받을 준비가 됐는지 기다린다.
-    MCP 문자열 기반 장기 대기 대신, 고정된 짧은 readiness 확인만 수행한다.
-    """
-    if _is_pane_dead(pane_target):
-        _respawn_pane(pane_target)
-
-    if not _wait_for_input_ready(
-        pane_target,
-        timeout_sec=timeout_sec,
-        poll_sec=0.5,
-        stable_sec=2.0,
-    ):
-        log.warning(
-            "%s pane not ready for dispatch (timeout=%.1fs)",
-            pane_type, timeout_sec,
-        )
-        return False
-
-    wait_for_pane_settle(
-        pane_target,
-        timeout_sec=3.0,
-        quiet_sec=0.75,
-        poll_sec=0.25,
-    )
-    return True
 
 
 # Prompt temp file cleanup list (cleaned at exit)
@@ -1225,28 +320,6 @@ def _cleanup_prompt_files() -> None:
 atexit.register(_cleanup_prompt_files)
 
 
-def _is_pane_dead(pane_target: str) -> bool:
-    """Check if a tmux pane is in dead (exited) state."""
-    try:
-        result = subprocess.run(
-            ["tmux", "display-message", "-t", pane_target, "-p", "#{pane_dead}"],
-            check=True, capture_output=True, text=True,
-        )
-        return result.stdout.strip() == "1"
-    except subprocess.CalledProcessError:
-        return True
-
-
-def _respawn_pane(pane_target: str) -> None:
-    """Respawn a dead tmux pane back to a bash shell."""
-    log.info("respawning dead pane: %s", pane_target)
-    subprocess.run(
-        ["tmux", "respawn-pane", "-k", "-t", pane_target],
-        check=False, capture_output=True,
-    )
-    time.sleep(1.0)
-
-
 def _write_prompt_file(command: str) -> str:
     """Write prompt to a temp file. Registered for cleanup at exit."""
     fd = tempfile.NamedTemporaryFile(
@@ -1261,139 +334,6 @@ def _write_prompt_file(command: str) -> str:
 def _normalize_prompt_text(text: str) -> str:
     """Convert literal \\n sequences from shell-passed templates into real newlines."""
     return text.replace("\\n", "\n")
-
-
-def _clear_prompt_input_line(pane_target: str) -> None:
-    """Clear any stale unsent text before an automated dispatch."""
-    subprocess.run(
-        ["tmux", "send-keys", "-t", pane_target, "C-u"],
-        check=True,
-        capture_output=True,
-    )
-    time.sleep(0.1)
-
-
-def _dispatch_lock_for(pane_target: str) -> threading.Lock:
-    with _DISPATCH_LOCKS_GUARD:
-        lock = _DISPATCH_LOCKS.get(pane_target)
-        if lock is None:
-            lock = threading.Lock()
-            _DISPATCH_LOCKS[pane_target] = lock
-        return lock
-
-
-def tmux_send_keys(
-    pane_target: str,
-    command: str,
-    dry_run: bool = False,
-    pane_type: str = "claude",
-) -> bool:
-    """Send a prompt to a tmux pane.
-
-    pane_type: "codex" — paste-buffer + Enter retry with working-indicator check
-               "claude" — paste-buffer + Enter retry
-               "gemini" — paste-buffer + Enter retry
-    """
-    log.info("send-keys target=%s pane_type=%s dry_run=%s", pane_target, pane_type, dry_run)
-    if dry_run:
-        return True
-    dispatch_lock = _dispatch_lock_for(pane_target)
-    if not dispatch_lock.acquire(timeout=_DISPATCH_LOCK_TIMEOUT_SEC):
-        log.warning(
-            "send-keys skipped: pane dispatch busy target=%s pane_type=%s",
-            pane_target,
-            pane_type,
-        )
-        return False
-    try:
-        if not _wait_for_dispatch_window(pane_target, pane_type):
-            return False
-        if pane_type == "codex":
-            return _dispatch_codex(pane_target, command)
-        if pane_type == "gemini":
-            return _dispatch_gemini(pane_target, command)
-        return _dispatch_claude(pane_target, command)
-    except subprocess.CalledProcessError as e:
-        log.error("send-keys failed: %s", e.stderr.decode().strip())
-        return False
-    finally:
-        dispatch_lock.release()
-
-
-def _dispatch_codex(pane_target: str, command: str) -> bool:
-    """Dispatch to Codex pane.
-
-    Codex interactive session is kept alive (started by start-pipeline.sh).
-    Always paste-buffer into the running session — never re-launch codex.
-    """
-    log.info("dispatching codex prompt: chars=%d", len(command))
-    _clear_prompt_input_line(pane_target)
-    subprocess.run(["tmux", "set-buffer", command], check=True, capture_output=True)
-    subprocess.run(["tmux", "paste-buffer", "-t", pane_target], check=True, capture_output=True)
-    pasted_snapshot = _capture_pane_text(pane_target)
-    time.sleep(1.0)
-    for attempt in range(3):
-        subprocess.run(["tmux", "send-keys", "-t", pane_target, "Enter"], check=True, capture_output=True)
-        time.sleep(1.5)
-        snapshot = _capture_pane_text(pane_target)
-        if not _pane_text_has_input_cursor(snapshot):
-            log.info("codex prompt consumed: attempt %d", attempt + 1)
-            deadline = time.time() + 6.0
-            while time.time() < deadline:
-                if _pane_has_working_indicator(pane_target):
-                    log.info("codex working indicator detected")
-                    return True
-                current_snapshot = _capture_pane_text(pane_target)
-                if current_snapshot != snapshot and _pane_text_has_codex_activity(current_snapshot):
-                    log.info("codex response activity detected after consume: attempt %d", attempt + 1)
-                    return True
-                time.sleep(0.5)
-            log.info(
-                "codex dispatch consumed without immediate confirmation: defer acceptance to wrapper events"
-            )
-            return True
-        if snapshot != pasted_snapshot and _pane_text_has_codex_activity(snapshot):
-            log.info("codex response activity detected: attempt %d", attempt + 1)
-            return True
-    log.info("codex prompt still visible or unconfirmed after retries")
-    return False
-
-
-def _dispatch_claude(pane_target: str, command: str) -> bool:
-    """Dispatch to Claude pane via paste-buffer + Enter."""
-    _clear_prompt_input_line(pane_target)
-    subprocess.run(["tmux", "set-buffer", command], check=True, capture_output=True)
-    subprocess.run(["tmux", "paste-buffer", "-t", pane_target], check=True, capture_output=True)
-    time.sleep(1.0)
-    for attempt in range(3):
-        subprocess.run(["tmux", "send-keys", "-t", pane_target, "Enter"], check=True, capture_output=True)
-        time.sleep(1.5)
-        if not _pane_has_input_cursor(pane_target):
-            log.info("claude prompt consumed: attempt %d", attempt + 1)
-            return True
-    log.info("claude prompt still visible or unconfirmed after retries")
-    return False
-
-
-def _dispatch_gemini(pane_target: str, command: str) -> bool:
-    """Dispatch to Gemini pane via paste-buffer + Enter."""
-    _clear_prompt_input_line(pane_target)
-    subprocess.run(["tmux", "set-buffer", command], check=True, capture_output=True)
-    subprocess.run(["tmux", "paste-buffer", "-t", pane_target], check=True, capture_output=True)
-    pasted_snapshot = _capture_pane_text(pane_target)
-    time.sleep(1.0)
-    for attempt in range(3):
-        subprocess.run(["tmux", "send-keys", "-t", pane_target, "Enter"], check=True, capture_output=True)
-        time.sleep(1.5)
-        snapshot = _capture_pane_text(pane_target)
-        if not _pane_text_has_input_cursor(snapshot):
-            log.info("gemini prompt consumed: attempt %d", attempt + 1)
-            return True
-        if snapshot != pasted_snapshot and _pane_text_has_gemini_activity(snapshot):
-            log.info("gemini response activity detected: attempt %d", attempt + 1)
-            return True
-    log.info("gemini prompt still visible or unconfirmed after retries")
-    return False
 
 
 # ---------------------------------------------------------------------------
@@ -1609,7 +549,7 @@ class WatcherCore:
         self.collector = ManifestCollector(self.manifests_dir, schema_path)
         self.dispatch_queue = WatcherDispatchQueue(
             lane_input_defer_cooldown_sec=self._lane_input_defer_cooldown_sec,
-            capture_pane_text=lambda target: _capture_pane_text(target),
+            capture_pane_text=lambda target: _shared_capture_pane_text(target),
             send_keys=lambda target, prompt, pane_type: tmux_send_keys(
                 target, prompt, self.dry_run, pane_type=pane_type
             ),
@@ -1682,10 +622,10 @@ class WatcherCore:
             restart_recovery_grace_sec=float(config.get("restart_recovery_grace_sec", 15.0)),
             completion_paths=self.completion_paths,
             error_log=self.events_dir / "errors.jsonl",
-            capture_pane_text=lambda target: _capture_pane_text(target),
-            pane_text_has_busy_indicator=lambda text: _pane_text_has_busy_indicator(text),
-            pane_text_has_input_cursor=lambda text: _pane_text_has_input_cursor(text),
-            pane_text_is_idle=lambda text: _pane_text_is_idle(text),
+            capture_pane_text=lambda target: _shared_capture_pane_text(target),
+            pane_text_has_busy_indicator=lambda text: _shared_pane_text_has_busy_indicator(text),
+            pane_text_has_input_cursor=lambda text: _shared_pane_text_has_input_cursor(text),
+            pane_text_is_idle=lambda text: _shared_pane_text_is_idle(text),
             normalize_prompt_text=self.prompt_assembler.finalize_prompt_text,
             send_keys=lambda target, prompt, dry_run, pane_type: tmux_send_keys(
                 target,
@@ -1938,10 +878,10 @@ class WatcherCore:
         implement_target = self._prompt_pane_target("implement")
         if not implement_target:
             return False
-        pane_text = _capture_pane_text(implement_target)
+        pane_text = _shared_capture_pane_text(implement_target)
         if not pane_text.strip():
             return False
-        return not _pane_text_is_idle(pane_text)
+        return not _shared_pane_text_is_idle(pane_text)
 
     # ------------------------------------------------------------------
     def _build_lane_statuses(self, heartbeat_iso: str) -> list[dict[str, object]]:
@@ -3498,8 +2438,7 @@ class WatcherCore:
                 active_jobs.append(job)
                 continue
             self.stabilizer.clear(job.job_id)
-            log.info("lease released: slot=slot_verify reason=archive_matching_verified_pending")
-            self.lease.release("slot_verify")
+            self.sm.release_verify_lease_for_archive(job)
             if job.artifact_hash:
                 self.dedupe.forget(job.job_id, job.round, job.artifact_hash, "slot_verify")
             archived = self._archive_current_run_job(
@@ -3527,13 +2466,38 @@ class WatcherCore:
         """Resolve which functional role should act next."""
         handoff_active = self._is_active_control(self.implement_handoff_path, "implement")
         handoff_mtime = self._get_path_mtime(self.implement_handoff_path) if handoff_active else 0.0
+        operator_request_active = self._is_active_control(self.operator_request_path, "needs_operator")
+        advisory_request_active = self._is_active_control(self.advisory_request_path, "request_open")
+        advisory_advice_active = self._is_active_control(self.advisory_advice_path, "advice_ready")
+        handoff_completed = bool(
+            handoff_active
+            and completed_implement_handoff_truth(
+                self.implement_handoff_path,
+                repo_root=self.repo_root,
+                work_root=self.watch_dir,
+                verify_root=self.verify_dir,
+                active_control_updated_at=handoff_mtime,
+            )
+            is not None
+        )
+        if (
+            handoff_completed
+            and not operator_request_active
+            and not advisory_request_active
+            and not advisory_advice_active
+        ):
+            return TURN_VERIFY_FOLLOWUP
         return resolve_watcher_turn(
             WatcherTurnInputs(
-                operator_request_active=self._is_active_control(self.operator_request_path, "needs_operator"),
-                advisory_request_active=self._is_active_control(self.advisory_request_path, "request_open"),
-                advisory_advice_active=self._is_active_control(self.advisory_advice_path, "advice_ready"),
-                implement_handoff_active=handoff_active,
-                latest_work_needs_verify=self._handoff_verify_blocker_exists(handoff_mtime),
+                operator_request_active=operator_request_active,
+                advisory_request_active=advisory_request_active,
+                advisory_advice_active=advisory_advice_active,
+                implement_handoff_active=handoff_active and not handoff_completed,
+                latest_work_needs_verify=(
+                    self._handoff_verify_blocker_exists(handoff_mtime)
+                    if not handoff_completed
+                    else False
+                ),
                 implement_handoff_verify_active=self._implement_handoff_verify_active(),
                 idle_release_cooldown_active=self._is_idle_release_cooldown_active(),
                 operator_recovery_marker=self._operator_control_recovery_marker(),
@@ -3557,7 +2521,7 @@ class WatcherCore:
             return
 
         now = time.time()
-        pane_text = _capture_pane_text(target)
+        pane_text = _shared_capture_pane_text(target)
         pane_fingerprint = hashlib.md5(pane_text.encode()).hexdigest() if pane_text else ""
 
         # Check for progress: pane fingerprint changed
@@ -3578,7 +2542,7 @@ class WatcherCore:
             return
 
         # Final guard: pane must look idle too
-        if not _pane_text_is_idle(pane_text):
+        if not _shared_pane_text_is_idle(pane_text):
             return
 
         log.warning(
@@ -3603,8 +2567,8 @@ class WatcherCore:
         target = self._prompt_pane_target("verify")
         if not target:
             return
-        verify_snapshot = _capture_pane_text(target)
-        if not _pane_text_is_idle(verify_snapshot):
+        verify_snapshot = _shared_capture_pane_text(target)
+        if not _shared_pane_text_is_idle(verify_snapshot):
             return
         self._mark_operator_retriage_started(operator_sig, marker)
         self._clear_implement_blocked_state("operator_wait_idle_retriage")
@@ -3843,7 +2807,10 @@ class WatcherCore:
             self._pending_idle_release_handoff = None
             return False
         handoff_mtime = handoff_control.mtime
-        dispatch_state = self._implement_handoff_dispatch_state(handoff_mtime)
+        dispatch_state = self._implement_handoff_dispatch_state(
+            handoff_mtime,
+            handoff_control.path if handoff_control is not None else self.implement_handoff_path,
+        )
         if not dispatch_state["dispatchable"]:
             self._pending_idle_release_handoff = None
             return False
@@ -4041,15 +3008,35 @@ class WatcherCore:
         return self.lease.is_active("slot_verify")
 
     # ------------------------------------------------------------------
-    def _implement_handoff_dispatch_state(self, handoff_mtime: float) -> dict[str, bool]:
+    def _implement_handoff_dispatch_state(
+        self,
+        handoff_mtime: float,
+        handoff_path: Optional[Path] = None,
+    ) -> dict[str, bool]:
         operator_blocked = self._operator_blocks_handoff(handoff_mtime)
         pending_verify = self._handoff_verify_blocker_exists(handoff_mtime)
         verify_active = self._implement_handoff_verify_active()
+        completed_handoff = (
+            completed_implement_handoff_truth(
+                handoff_path or self.implement_handoff_path,
+                repo_root=self.repo_root,
+                work_root=self.watch_dir,
+                verify_root=self.verify_dir,
+                active_control_updated_at=handoff_mtime,
+            )
+            is not None
+        )
         return {
             "operator_blocked": operator_blocked,
             "pending_verify": pending_verify,
             "verify_active": verify_active,
-            "dispatchable": not operator_blocked and not pending_verify and not verify_active,
+            "completed_handoff": completed_handoff,
+            "dispatchable": (
+                not operator_blocked
+                and not pending_verify
+                and not verify_active
+                and not completed_handoff
+            ),
         }
 
     # ------------------------------------------------------------------
@@ -4058,12 +3045,12 @@ class WatcherCore:
         if not target:
             return False, "implement_target_missing"
         try:
-            pane_text = _capture_pane_text(target)
+            pane_text = _shared_capture_pane_text(target)
         except Exception:
             return False, "pane_capture_failed"
         if not pane_text.strip():
             return False, "pane_blank"
-        if not _pane_text_is_idle(pane_text):
+        if not _shared_pane_text_is_idle(pane_text):
             return False, "implement_lane_busy"
         return True, "implement_lane_idle"
 
@@ -4263,7 +3250,7 @@ class WatcherCore:
             self._last_implement_handoff_sig = handoff_sig
             status = self._read_status_from_path(handoff_path) or "missing"
             handoff_mtime = self._get_path_mtime(handoff_path)
-            dispatch_state = self._implement_handoff_dispatch_state(handoff_mtime)
+            dispatch_state = self._implement_handoff_dispatch_state(handoff_mtime, handoff_path)
             handoff_seq = handoff_control.control_seq if handoff_control is not None else -1
             if (
                 handoff_control is not None
@@ -4294,6 +3281,7 @@ class WatcherCore:
                             "current_turn_state": self._current_turn_state.value,
                             "current_turn_control_seq": self._turn_active_control_seq,
                             "dispatchable": dispatch_state["dispatchable"],
+                            "completed_handoff": dispatch_state["completed_handoff"],
                             "release_ready": release_ready,
                             "release_reason": release_reason,
                         },
@@ -4331,6 +3319,7 @@ class WatcherCore:
                         "operator_blocked": dispatch_state["operator_blocked"],
                         "pending_verify": dispatch_state["pending_verify"],
                         "verify_active": dispatch_state["verify_active"],
+                        "completed_handoff": dispatch_state["completed_handoff"],
                         "active_control": active_control.kind if active_control else "none",
                     },
                 )
@@ -4427,7 +3416,7 @@ class WatcherCore:
         if not implement_target:
             self._clear_implement_blocked_state("implement_target_missing")
             return False
-        implement_snapshot = _capture_pane_text(implement_target)
+        implement_snapshot = _shared_capture_pane_text(implement_target)
         handoff_path_rel = self._repo_relative(handoff_path)
         handoff_sha = self._get_path_sha256(handoff_path)
 
@@ -4516,11 +3505,11 @@ class WatcherCore:
             return False
         if _is_pane_dead(advisory_target):
             return False
-        if not _pane_text_is_idle(pane_snapshots["verify"]):
+        if not _shared_pane_text_is_idle(pane_snapshots["verify"]):
             return False
-        if not _pane_text_is_idle(pane_snapshots["advisory"]):
+        if not _shared_pane_text_is_idle(pane_snapshots["advisory"]):
             return False
-        if _pane_text_is_idle(pane_snapshots["implement"]):
+        if _shared_pane_text_is_idle(pane_snapshots["implement"]):
             return True
         return (
             self._pane_snapshot_stable_sec("implement", pane_snapshots["implement"])
@@ -4545,9 +3534,9 @@ class WatcherCore:
             return
 
         pane_snapshots = {
-            "implement": _capture_pane_text(self._prompt_pane_target("implement")),
-            "verify": _capture_pane_text(self._prompt_pane_target("verify")),
-            "advisory": _capture_pane_text(self._prompt_pane_target("advisory")),
+            "implement": _shared_capture_pane_text(self._prompt_pane_target("implement")),
+            "verify": _shared_capture_pane_text(self._prompt_pane_target("verify")),
+            "advisory": _shared_capture_pane_text(self._prompt_pane_target("advisory")),
         }
         signal = _extract_live_session_escalation(pane_snapshots["implement"])
         if signal is None:
@@ -4614,22 +3603,7 @@ class WatcherCore:
     # ------------------------------------------------------------------
     def _reset_job_for_new_round(self, job: JobState, job_id: str, reason: str) -> None:
         """현재 파일 내용이 바뀌었을 때 새 라운드로 재진입."""
-        job.round += 1
-        job.artifact_hash = ""
-        job.artifact_size = 0
-        job.artifact_mtime = 0.0
-        job.last_dispatch_at = 0.0
-        job.last_dispatch_slot = ""
-        job.feedback_baseline_sig = ""
-        job.verify_result = ""
-        job.verify_manifest_path = ""
-        job.verify_completed_at = 0.0
-        job.validation_score = -1.0
-        job.blocker_count = -1
-        self.sm._clear_dispatch_stall_state(job)
-        self.stabilizer.clear(job_id)
-        job.transition(JobStatus.STABILIZING, f"{reason}, round={job.round}")
-        job.save(self.state_dir)
+        self.sm.reset_job_for_new_round(job, job_id, reason)
         log.info("re-entered: job=%s round=%d (%s)", job_id, job.round, reason)
 
     # ------------------------------------------------------------------
@@ -4789,7 +3763,7 @@ class WatcherCore:
         active_verify_jobs = self._get_current_run_jobs(statuses={JobStatus.VERIFY_RUNNING})
         if active_verify_jobs:
             for job in active_verify_jobs:
-                self.sm.step(job)
+                self.sm.step_verify_close_chain(job)
             self._flush_pending_implement_handoff()
             return
 

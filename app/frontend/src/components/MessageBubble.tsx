@@ -400,6 +400,7 @@ export default function MessageBubble({
             )}
             {message.applied_preferences && message.applied_preferences.length > 0 && (
               <span
+                data-testid="applied-preferences-badge"
                 className="text-[10px] font-medium text-violet-600/70 bg-violet-50 px-2 py-0.5 rounded-full cursor-help"
                 title={message.applied_preferences.map(p => p.description).join('\n')}
               >

@@ -3800,6 +3800,69 @@ class RuntimeSupervisorTest(unittest.TestCase):
             self.assertEqual(status["runtime_state"], "RUNNING")
             self.assertIsNone(status["active_round"])
 
+    def test_write_status_clears_stale_verify_progress_during_operator_hibernate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            pipeline_dir = root / ".pipeline"
+            state_dir = pipeline_dir / "state"
+            state_dir.mkdir(parents=True, exist_ok=True)
+            (pipeline_dir / "operator_request.md").write_text(
+                "STATUS: needs_operator\n"
+                "CONTROL_SEQ: 188\n"
+                "REASON_CODE: idle_hibernate\n"
+                "OPERATOR_POLICY: internal_only\n"
+                "DECISION_CLASS: internal_only\n"
+                "DECISION_REQUIRED: wait for next control\n",
+                encoding="utf-8",
+            )
+            (state_dir / "turn_state.json").write_text(
+                json.dumps(
+                    {
+                        "state": "IDLE",
+                        "legacy_state": "IDLE",
+                        "entered_at": 20.0,
+                        "reason": "operator_request_gated_hibernate",
+                        "active_control_file": "",
+                        "active_control_seq": -1,
+                        "active_role": "",
+                        "active_lane": "",
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+            supervisor._runtime_started = True
+
+            with (
+                mock.patch.object(supervisor, "_watcher_status", return_value={"alive": True, "pid": 4242}),
+                mock.patch.object(supervisor.adapter, "session_exists", return_value=True),
+                mock.patch.object(
+                    supervisor,
+                    "_build_lane_statuses",
+                    return_value=(
+                        [
+                            {"name": "Claude", "state": "READY", "attachable": True, "pid": 11, "note": "prompt_visible"},
+                            {"name": "Codex", "state": "READY", "attachable": True, "pid": 12, "note": "prompt_visible"},
+                            {"name": "Gemini", "state": "READY", "attachable": True, "pid": 13, "note": "prompt_visible"},
+                        ],
+                        {"Claude": {}, "Codex": {}, "Gemini": {}},
+                    ),
+                ),
+                mock.patch("pipeline_runtime.supervisor.build_lane_read_models", return_value={}),
+                mock.patch.object(supervisor, "_build_artifacts", return_value={"latest_work": {}, "latest_verify": {}}),
+            ):
+                status = supervisor._write_status()
+
+            claude_hint = json.loads(supervisor._task_hint_path("Claude").read_text(encoding="utf-8"))
+            self.assertEqual(status["turn_state"]["state"], "IDLE")
+            self.assertEqual(status["turn_state"]["reason"], "operator_request_gated_hibernate")
+            self.assertEqual(status["progress"], {})
+            self.assertNotIn("progress_phase", status["lanes"][0])
+            self.assertFalse(claude_hint["active"])
+            self.assertEqual(claude_hint["inactive_reason"], "task_hint_cleared")
+
     def test_write_status_gates_slice_ambiguity_operator_stop_for_24h(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -4073,6 +4136,71 @@ class RuntimeSupervisorTest(unittest.TestCase):
             self.assertEqual(status["automation_next_action"], "verify_followup")
             self.assertEqual(gated_events[-1]["payload"]["reason"], PR_MERGE_GATE_REASON)
             self.assertEqual(gated_events[-1]["payload"]["routed_to"], "verify_followup")
+
+    def test_write_status_routes_compound_milestone_pr_merge_gate_to_followup_without_claude_working(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            pipeline_dir = root / ".pipeline"
+            state_dir = pipeline_dir / "state"
+            state_dir.mkdir(parents=True, exist_ok=True)
+            (pipeline_dir / "operator_request.md").write_text(
+                "STATUS: needs_operator\n"
+                "CONTROL_SEQ: 114\n"
+                "REASON_CODE: m28_direction + pr_merge_gate\n"
+                "OPERATOR_POLICY: internal_only\n"
+                "DECISION_CLASS: next_milestone_selection + branch_strategy\n"
+                "DECISION_REQUIRED: M28 scope OR PR merge first\n",
+                encoding="utf-8",
+            )
+            (state_dir / "turn_state.json").write_text(
+                json.dumps(
+                    {
+                        "state": "IDLE",
+                        "legacy_state": "IDLE",
+                        "entered_at": 20.0,
+                        "reason": "operator_request_gated_hibernate",
+                        "active_control_file": "",
+                        "active_control_seq": -1,
+                        "active_role": "",
+                        "active_lane": "",
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+            supervisor._runtime_started = True
+
+            with (
+                mock.patch.object(supervisor, "_watcher_status", return_value={"alive": True, "pid": 4242}),
+                mock.patch.object(supervisor.adapter, "session_exists", return_value=True),
+                mock.patch.object(
+                    supervisor,
+                    "_build_lane_statuses",
+                    return_value=(
+                        [
+                            {"name": "Claude", "state": "READY", "attachable": True, "pid": 11, "note": "prompt_visible"},
+                            {"name": "Codex", "state": "READY", "attachable": True, "pid": 12, "note": "prompt_visible"},
+                            {"name": "Gemini", "state": "READY", "attachable": True, "pid": 13, "note": "prompt_visible"},
+                        ],
+                        {"Claude": {}, "Codex": {}, "Gemini": {}},
+                    ),
+                ),
+                mock.patch("pipeline_runtime.supervisor.build_lane_read_models", return_value={}),
+                mock.patch.object(supervisor, "_build_artifacts", return_value={"latest_work": {}, "latest_verify": {}}),
+            ):
+                status = supervisor._write_status()
+
+            self.assertEqual(status["autonomy"]["mode"], "triage")
+            self.assertEqual(status["autonomy"]["reason_code"], PR_MERGE_GATE_REASON)
+            self.assertEqual(status["autonomy"]["decision_class"], "next_slice_selection")
+            self.assertEqual(status["automation_next_action"], "verify_followup")
+            self.assertEqual(status["turn_state"]["state"], "VERIFY_FOLLOWUP")
+            self.assertEqual(status["turn_state"]["active_lane"], "Codex")
+            self.assertEqual(status["progress"]["phase"], "next_control_pending")
+            self.assertNotIn("progress_phase", status["lanes"][0])
+            self.assertEqual(status["lanes"][0]["state"], "READY")
 
     def test_write_status_ignores_pr_merge_gate_after_pr_is_merged(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -4691,6 +4819,50 @@ class RuntimeSupervisorTest(unittest.TestCase):
             self.assertIsNotNone(marker)
             self.assertEqual(marker["control_seq"], 155)
             self.assertEqual(marker["reason"], "handoff_already_completed")
+
+    def test_duplicate_control_marker_accepts_verified_handoff_truth_without_raw_log(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            pipeline_dir = root / ".pipeline"
+            handoff_path = pipeline_dir / "implement_handoff.md"
+            work_path = root / "work" / "4" / "24" / "2026-04-24-slice.md"
+            verify_path = root / "verify" / "4" / "24" / "2026-04-24-slice-verify.md"
+            handoff_path.parent.mkdir(parents=True, exist_ok=True)
+            work_path.parent.mkdir(parents=True, exist_ok=True)
+            verify_path.parent.mkdir(parents=True, exist_ok=True)
+            handoff_path.write_text(
+                "STATUS: implement\nCONTROL_SEQ: 156\n\n- work/4/24/2026-04-24-slice.md\n",
+                encoding="utf-8",
+            )
+            handoff_sha = hashlib.sha256(handoff_path.read_bytes()).hexdigest()
+            work_path.write_text("# work\n", encoding="utf-8")
+            verify_path.write_text(
+                "STATUS: verified\nCONTROL_SEQ: 157\nBASED_ON_WORK: work/4/24/2026-04-24-slice.md\n",
+                encoding="utf-8",
+            )
+            now = time.time()
+            os.utime(handoff_path, (now - 20.0, now - 20.0))
+            os.utime(work_path, (now - 10.0, now - 10.0))
+            os.utime(verify_path, (now, now))
+
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+            marker = supervisor._duplicate_control_marker(
+                {
+                    "active_control_status": "implement",
+                    "active_control_file": ".pipeline/implement_handoff.md",
+                    "active_control_seq": 156,
+                    "active_control_updated_at": "1970-01-01T00:00:00Z",
+                }
+            )
+
+            self.assertIsNotNone(marker)
+            self.assertEqual(marker["control_seq"], 156)
+            self.assertEqual(marker["handoff_sha"], handoff_sha)
+            self.assertEqual(marker["reason"], "handoff_already_completed")
+            self.assertEqual(marker["source_event"], "artifact_truth_completed")
+            self.assertEqual(marker["work_path"], "work/4/24/2026-04-24-slice.md")
+            self.assertEqual(marker["verify_path"], "verify/4/24/2026-04-24-slice-verify.md")
 
     def test_write_status_surfaces_duplicate_handoff_from_canonical_blocked_triage_event(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

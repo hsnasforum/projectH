@@ -7,11 +7,15 @@ import mimetypes
 import os
 import re
 import time
+from base64 import b64encode
+from dataclasses import asdict
+from hashlib import sha1
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
+from controller.monitor import RuntimeMonitorStateManager
 from config.runtime_hosts import (
     browser_host_for_bind,
     resolve_bind_host,
@@ -29,15 +33,23 @@ from pipeline_gui.backend import (
 )
 from pipeline_gui.project import _session_name_for
 from pipeline_gui.setup_profile import resolve_project_runtime_adapter
+from pipeline_gui.token_queries import load_token_dashboard
 
 PROJECT_ROOT = Path(os.environ.get("PROJECT_ROOT", Path(__file__).resolve().parent.parent))
 CONTROLLER_DIR = Path(__file__).parent
 CONTROLLER_PORT = int(os.environ.get("CONTROLLER_PORT", "8780"))
+_MONITOR_STREAM_INTERVAL_SEC = 1.0
+_WEBSOCKET_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 _KNOWN_LANE_NAMES = ("Claude", "Codex", "Gemini")
 _DEFAULT_ROLE_OWNERS = {
     "implement": "Claude",
     "verify": "Codex",
     "advisory": "Gemini",
+}
+_USAGE_SOURCE_BY_AGENT = {
+    "Claude": "claude",
+    "Codex": "codex",
+    "Gemini": "gemini",
 }
 
 
@@ -59,6 +71,11 @@ def _controller_windows_fallback_host() -> str | None:
 
 CONTROLLER_HOST = _controller_bind_host()
 SESSION_NAME = _session_name_for(PROJECT_ROOT)
+_MONITOR_STATE_MANAGER = RuntimeMonitorStateManager(
+    PROJECT_ROOT,
+    agent_names=_KNOWN_LANE_NAMES,
+    source_by_agent=_USAGE_SOURCE_BY_AGENT,
+)
 
 
 def _runtime_role_metadata() -> dict:
@@ -262,9 +279,73 @@ def runtime_send_input(lane: str | None = None, *, text: str = "") -> tuple[dict
     }, HTTPStatus.OK
 
 
+def _now_epoch_ms() -> int:
+    return int(time.time() * 1000)
+
+
+def _load_dashboard_payload() -> tuple[dict, str]:
+    try:
+        return asdict(load_token_dashboard(PROJECT_ROOT, top_n=5)), ""
+    except Exception as exc:
+        return {
+            "display_day": "",
+            "collector_status": {"available": False, "phase": "error", "last_error": str(exc)},
+            "today_totals": {},
+            "agent_totals": [],
+            "top_jobs": [],
+        }, str(exc)
+
+
+def runtime_monitor_snapshot() -> dict:
+    runtime_status, _status = get_runtime_status()
+    dashboard_payload, usage_error = _load_dashboard_payload()
+    return _MONITOR_STATE_MANAGER.snapshot(
+        runtime_status=runtime_status,
+        dashboard_payload=dashboard_payload,
+        usage_error=usage_error,
+    )
+
+
+def runtime_agent_inspector(agent: str | None = None, *, lines: int = 160) -> tuple[dict, HTTPStatus]:
+    agent_name = str(agent or "").strip()
+    if agent_name not in _KNOWN_LANE_NAMES:
+        return {"ok": False, "error": "unknown agent"}, HTTPStatus.BAD_REQUEST
+    runtime_status, _status = get_runtime_status()
+    dashboard_payload, _usage_error = _load_dashboard_payload()
+    tail_text = backend_runtime_capture_tail(PROJECT_ROOT, SESSION_NAME, agent_name, lines=lines)
+    payload = _MONITOR_STATE_MANAGER.inspector_payload(
+        agent_name=agent_name,
+        runtime_status=runtime_status,
+        dashboard_payload=dashboard_payload,
+        tail_text=_normalize_capture_tail_text(tail_text),
+    )
+    return payload, HTTPStatus.OK
+
+
+def _websocket_accept_key(raw_key: str) -> str:
+    digest = sha1((raw_key + _WEBSOCKET_GUID).encode("ascii")).digest()
+    return b64encode(digest).decode("ascii")
+
+
+def _websocket_text_frame(payload: dict) -> bytes:
+    body = json.dumps(payload, ensure_ascii=False, default=str).encode("utf-8")
+    size = len(body)
+    if size < 126:
+        header = bytes([0x81, size])
+    elif size <= 0xFFFF:
+        header = bytes([0x81, 126]) + size.to_bytes(2, "big")
+    else:
+        header = bytes([0x81, 127]) + size.to_bytes(8, "big")
+    return header + body
+
+
 class ControllerHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
+
+        if parsed.path == "/ws/runtime/monitor":
+            self._serve_monitor_websocket()
+            return
 
         if parsed.path.startswith("/controller-assets/"):
             rel_path = parsed.path[len("/controller-assets/") :]
@@ -273,6 +354,22 @@ class ControllerHandler(BaseHTTPRequestHandler):
 
         if parsed.path == "/api/runtime/status":
             data, status = get_runtime_status()
+            self._json(data, status)
+            return
+
+        if parsed.path == "/api/runtime/monitor-snapshot":
+            self._json(runtime_monitor_snapshot())
+            return
+
+        if parsed.path == "/api/runtime/agent-inspector":
+            query = parse_qs(parsed.query or "")
+            agent = (query.get("agent") or [None])[0]
+            raw_lines = (query.get("lines") or ["160"])[0]
+            try:
+                lines = max(20, min(400, int(raw_lines)))
+            except ValueError:
+                lines = 160
+            data, status = runtime_agent_inspector(agent=agent, lines=lines)
             self._json(data, status)
             return
 
@@ -357,6 +454,26 @@ class ControllerHandler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-cache")
         self.end_headers()
         self.wfile.write(body)
+
+    def _serve_monitor_websocket(self) -> None:
+        upgrade = str(self.headers.get("Upgrade") or "").lower()
+        key = str(self.headers.get("Sec-WebSocket-Key") or "").strip()
+        if upgrade != "websocket" or not key:
+            self._json({"ok": False, "error": "websocket upgrade required"}, HTTPStatus.BAD_REQUEST)
+            return
+        self.send_response(HTTPStatus.SWITCHING_PROTOCOLS)
+        self.send_header("Upgrade", "websocket")
+        self.send_header("Connection", "Upgrade")
+        self.send_header("Sec-WebSocket-Accept", _websocket_accept_key(key))
+        self.end_headers()
+        self.close_connection = True
+        while True:
+            try:
+                self.wfile.write(_websocket_text_frame(runtime_monitor_snapshot()))
+                self.wfile.flush()
+                time.sleep(_MONITOR_STREAM_INTERVAL_SEC)
+            except OSError:
+                break
 
     def log_message(self, fmt, *args) -> None:
         pass

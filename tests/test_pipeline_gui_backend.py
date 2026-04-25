@@ -322,6 +322,31 @@ class TestPipelineStartLaunchGate(unittest.TestCase):
             resolve_file.assert_not_called()
             popen.assert_not_called()
 
+    def test_pipeline_start_blocks_when_doctor_preflight_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            active_path = project / ".pipeline" / "config" / "agent_profile.json"
+            active_path.parent.mkdir(parents=True, exist_ok=True)
+            active_path.write_text(
+                (
+                    '{"schema_version":1,"selected_agents":["Codex"],'
+                    '"role_bindings":{"implement":"Codex","verify":"Codex","advisory":""},'
+                    '"role_options":{"advisory_enabled":false,"operator_stop_enabled":true,"session_arbitration_enabled":false},'
+                    '"mode_flags":{"single_agent_mode":true,"self_verify_allowed":true,"self_advisory_allowed":false}}'
+                ),
+                encoding="utf-8",
+            )
+            with mock.patch(
+                "pipeline_gui.backend.start_preflight_failure_message",
+                return_value="pipeline doctor required preflight failed: AGENTS.md",
+            ), mock.patch("pipeline_gui.backend.resolve_project_runtime_file") as resolve_file, \
+                 mock.patch("pipeline_gui.backend.subprocess.Popen") as popen:
+                message = pipeline_start(project)
+            self.assertIn("실행 차단:", message)
+            self.assertIn("AGENTS.md", message)
+            resolve_file.assert_not_called()
+            popen.assert_not_called()
+
     def test_pipeline_start_allows_experimental_profile(self):
         with tempfile.TemporaryDirectory() as tmp:
             project = Path(tmp)
@@ -340,6 +365,7 @@ class TestPipelineStartLaunchGate(unittest.TestCase):
             script = project / "start-pipeline.sh"
             script.write_text("#!/bin/bash\n", encoding="utf-8")
             with mock.patch("pipeline_gui.backend.resolve_project_runtime_file", return_value=script), \
+                 mock.patch("pipeline_gui.backend.start_preflight_failure_message", return_value=""), \
                  mock.patch("pipeline_gui.backend.IS_WINDOWS", False), \
                  mock.patch("pipeline_gui.backend.subprocess.Popen") as popen:
                 message = pipeline_start(project)
@@ -368,6 +394,7 @@ class TestPipelineStartLaunchGate(unittest.TestCase):
             log_path.parent.mkdir(parents=True, exist_ok=True)
             log_path.write_text("stale\n", encoding="utf-8")
             with mock.patch("pipeline_gui.backend.resolve_project_runtime_file", return_value=script), \
+                 mock.patch("pipeline_gui.backend.start_preflight_failure_message", return_value=""), \
                  mock.patch("pipeline_gui.backend.IS_WINDOWS", True), \
                  mock.patch("pipeline_gui.backend._windows_to_wsl_mount", return_value="/home/test/project/.pipeline/gui-runtime/_data/start-pipeline.sh"), \
                  mock.patch("pipeline_gui.backend._wsl_to_windows_unc", side_effect=lambda path: Path(path)) as host_path, \

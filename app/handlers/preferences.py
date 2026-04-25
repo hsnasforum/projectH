@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from app.errors import WebApiError
+from core.contracts import CandidateFamily
 from core.delta_analysis import is_high_quality
 
 
@@ -17,6 +18,75 @@ def _jaccard_word_similarity(a: str, b: str) -> float:
     intersection = len(a_tokens & b_tokens)
     union = len(a_tokens | b_tokens)
     return intersection / union
+
+
+def _as_nonempty_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _adopted_correction_description(correction: dict[str, Any], fingerprint: str) -> str:
+    delta_summary = correction.get("delta_summary")
+    if isinstance(delta_summary, str):
+        summary = delta_summary.strip()
+        if summary:
+            return summary
+    if isinstance(delta_summary, dict):
+        for key in ("summary", "description", "statement"):
+            summary = _as_nonempty_text(delta_summary.get(key))
+            if summary:
+                return summary
+        replacements = delta_summary.get("replacements")
+        if isinstance(replacements, list):
+            for replacement in replacements:
+                if not isinstance(replacement, dict):
+                    continue
+                replacement_text = _as_nonempty_text(replacement.get("to"))
+                if replacement_text:
+                    return replacement_text
+
+    corrected_text = _as_nonempty_text(correction.get("corrected_text"))
+    if corrected_text:
+        return corrected_text
+    return fingerprint[:60]
+
+
+def _adopted_correction_source_refs(correction: dict[str, Any], fingerprint: str) -> dict[str, Any]:
+    correction_id = _as_nonempty_text(correction.get("correction_id")) or fingerprint
+    return {
+        "candidate_id": f"adopted-correction:{correction_id}",
+        "correction_id": correction_id,
+        "delta_fingerprint": fingerprint,
+        "source": "adopted_correction",
+        "artifact_id": _as_nonempty_text(correction.get("artifact_id")) or "",
+        "source_message_id": _as_nonempty_text(correction.get("source_message_id")) or "",
+        "session_id": _as_nonempty_text(correction.get("session_id")) or "",
+        "activated_at": _as_nonempty_text(correction.get("activated_at")) or "",
+    }
+
+
+def _preference_exists_for_fingerprint(preference_store: Any, fingerprint: str) -> bool:
+    find_by_fingerprint = getattr(preference_store, "find_by_fingerprint", None)
+    if callable(find_by_fingerprint):
+        existing = find_by_fingerprint(fingerprint)
+        if isinstance(existing, list):
+            return bool(existing)
+        return existing is not None
+
+    list_all = getattr(preference_store, "list_all", None)
+    if not callable(list_all):
+        return False
+    try:
+        preferences = list_all(limit=1000)
+    except TypeError:
+        preferences = list_all()
+    return any(
+        str(preference.get("delta_fingerprint") or "") == fingerprint
+        for preference in preferences
+        if isinstance(preference, dict)
+    )
 
 
 class PreferenceHandlerMixin:
@@ -105,11 +175,58 @@ class PreferenceHandlerMixin:
                 description_b = str(preference_b.get("description") or "").strip()
                 if _jaccard_word_similarity(description_a, description_b) > 0.7:
                     conflict_pair_count += 1
+        adopted_corrections = self.correction_store.find_adopted_corrections()
+        available_to_sync_count = 0
+        for correction in adopted_corrections:
+            fingerprint = _as_nonempty_text(correction.get("delta_fingerprint"))
+            if fingerprint is None:
+                continue
+            if not _preference_exists_for_fingerprint(self.preference_store, fingerprint):
+                available_to_sync_count += 1
         return {
             "total": len(all_prefs),
             "by_status": counts,
             "conflict_pair_count": conflict_pair_count,
+            "adopted_corrections_count": len(adopted_corrections),
+            "available_to_sync_count": available_to_sync_count,
         }
+
+    def sync_adopted_corrections_to_candidates(self) -> dict[str, Any]:
+        adopted_corrections = self.correction_store.find_adopted_corrections()
+        synced_count = 0
+        skipped_count = 0
+
+        for correction in adopted_corrections:
+            fingerprint = _as_nonempty_text(correction.get("delta_fingerprint"))
+            if fingerprint is None:
+                skipped_count += 1
+                continue
+            if _preference_exists_for_fingerprint(self.preference_store, fingerprint):
+                skipped_count += 1
+                continue
+
+            self.preference_store.record_reviewed_candidate_preference(
+                delta_fingerprint=fingerprint,
+                candidate_family=str(correction.get("pattern_family") or CandidateFamily.CORRECTION_REWRITE),
+                description=_adopted_correction_description(correction, fingerprint),
+                source_refs=_adopted_correction_source_refs(correction, fingerprint),
+                original_snippet=_as_nonempty_text(correction.get("original_text")),
+                corrected_snippet=_as_nonempty_text(correction.get("corrected_text")),
+            )
+            synced_count += 1
+
+        task_logger = getattr(self, "task_logger", None)
+        log = getattr(task_logger, "log", None)
+        if callable(log):
+            log(
+                session_id="system",
+                action="adopted_corrections_synced_to_candidates",
+                detail={
+                    "synced_count": synced_count,
+                    "skipped_count": skipped_count,
+                },
+            )
+        return {"ok": True, "synced_count": synced_count, "skipped_count": skipped_count}
 
     def activate_preference(self, payload: dict[str, Any]) -> dict[str, Any]:
         preference_id = self._normalize_optional_text(payload.get("preference_id"))

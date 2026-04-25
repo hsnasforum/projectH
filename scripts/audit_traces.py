@@ -20,6 +20,7 @@ def main() -> None:
     candidates = pref_store.get_candidates()
     active_prefs = pref_store.get_active_preferences()
     incomplete = correction_store.list_incomplete_corrections()
+    adopted = correction_store.find_adopted_corrections()
 
     print(json.dumps(summary, indent=2, ensure_ascii=False))
     total_feedback = summary["feedback_like_count"] + summary["feedback_dislike_count"]
@@ -47,6 +48,7 @@ def main() -> None:
     )
     print(
         f"\nIncomplete corrections (RECORDED/CONFIRMED/PROMOTED): {len(incomplete)}"
+        f"\nAdopted corrections (ACTIVE): {len(adopted)}"
     )
     if incomplete:
         for rec in incomplete[:5]:

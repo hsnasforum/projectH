@@ -204,6 +204,127 @@ class WrapperEmitterTest(unittest.TestCase):
             self.assertIn('"event_type": "DISPATCH_SEEN"', log_text)
             self.assertNotIn('"event_type": "TASK_ACCEPTED"', log_text)
 
+    def test_visible_busy_tail_emits_task_accepted_when_task_hint_arrives_after_output(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            task_hint_dir = root / "task-hints"
+            task_hint_dir.mkdir(parents=True, exist_ok=True)
+            hint_path = task_hint_dir / "claude.json"
+            hint_path.write_text(
+                json.dumps(
+                    {
+                        "lane": "Claude",
+                        "active": False,
+                        "job_id": "",
+                        "dispatch_id": "",
+                        "control_seq": -1,
+                        "attempt": 1,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            emitter = _WrapperEmitter(
+                wrapper_dir=root,
+                lane_name="Claude",
+                task_hint_dir=task_hint_dir,
+                child_pid=795,
+                send_child_bytes=lambda _data: None,
+            )
+
+            emitter.feed("Working (synthetic claude verify)\n", now=0.0)
+            hint_path.write_text(
+                json.dumps(
+                    {
+                        "lane": "Claude",
+                        "active": True,
+                        "job_id": "job-visible-busy",
+                        "dispatch_id": "dispatch-visible-busy",
+                        "control_seq": 352,
+                        "attempt": 1,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            emitter.tick(now=1.0)
+
+            wrapper_log = root / "claude.jsonl"
+            log_text = wrapper_log.read_text(encoding="utf-8")
+            self.assertIn('"event_type": "DISPATCH_SEEN"', log_text)
+            self.assertIn('"event_type": "TASK_ACCEPTED"', log_text)
+            self.assertIn('"dispatch_id": "dispatch-visible-busy"', log_text)
+
+    def test_ready_prompt_after_busy_tail_allows_task_done(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            task_hint_dir = root / "task-hints"
+            task_hint_dir.mkdir(parents=True, exist_ok=True)
+            (task_hint_dir / "claude.json").write_text(
+                json.dumps(
+                    {
+                        "lane": "Claude",
+                        "active": True,
+                        "job_id": "job-busy-then-ready",
+                        "dispatch_id": "dispatch-busy-then-ready",
+                        "control_seq": 353,
+                        "attempt": 1,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            emitter = _WrapperEmitter(
+                wrapper_dir=root,
+                lane_name="Claude",
+                task_hint_dir=task_hint_dir,
+                child_pid=796,
+                send_child_bytes=lambda _data: None,
+            )
+
+            emitter.feed("Working (synthetic claude verify)\n", now=0.0)
+            emitter.feed("Claude Code\n❯\n", now=3.0)
+            emitter.tick(now=5.0)
+
+            wrapper_log = root / "claude.jsonl"
+            log_text = wrapper_log.read_text(encoding="utf-8")
+            self.assertIn('"event_type": "TASK_ACCEPTED"', log_text)
+            self.assertIn('"event_type": "TASK_DONE"', log_text)
+            self.assertIn('"dispatch_id": "dispatch-busy-then-ready"', log_text)
+
+    def test_ready_prompt_without_trailing_newline_allows_task_done(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            task_hint_dir = root / "task-hints"
+            task_hint_dir.mkdir(parents=True, exist_ok=True)
+            (task_hint_dir / "claude.json").write_text(
+                json.dumps(
+                    {
+                        "lane": "Claude",
+                        "active": True,
+                        "job_id": "job-partial-ready",
+                        "dispatch_id": "dispatch-partial-ready",
+                        "control_seq": 354,
+                        "attempt": 1,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            emitter = _WrapperEmitter(
+                wrapper_dir=root,
+                lane_name="Claude",
+                task_hint_dir=task_hint_dir,
+                child_pid=797,
+                send_child_bytes=lambda _data: None,
+            )
+
+            emitter.feed("Working (synthetic claude verify)\n", now=0.0)
+            emitter.feed("Claude Code\n❯ ", now=3.0)
+            emitter.tick(now=5.0)
+
+            wrapper_log = root / "claude.jsonl"
+            log_text = wrapper_log.read_text(encoding="utf-8")
+            self.assertIn('"event_type": "TASK_ACCEPTED"', log_text)
+            self.assertIn('"event_type": "TASK_DONE"', log_text)
+            self.assertIn('"dispatch_id": "dispatch-partial-ready"', log_text)
+
     def test_codex_bullet_activity_emits_task_accepted(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -658,6 +779,7 @@ class SupervisorCliTest(unittest.TestCase):
                 patch.object(runtime_cli, "_reconcile_supervisors", return_value=1234),
                 patch.object(runtime_cli, "_stop_supervisor", return_value=0) as stop_supervisor,
                 patch.object(runtime_cli.time, "sleep", return_value=None),
+                patch.object(runtime_cli, "start_preflight_failure_message", return_value=""),
                 patch.object(runtime_cli, "RuntimeSupervisor", return_value=Mock(run_id="run-fresh")),
                 patch.object(runtime_cli.subprocess, "Popen", return_value=process) as popen,
                 patch.object(runtime_cli, "_current_run_matches", return_value=True),
@@ -667,6 +789,27 @@ class SupervisorCliTest(unittest.TestCase):
             self.assertEqual(code, 0)
             stop_supervisor.assert_called_once_with(args)
             popen.assert_called_once()
+
+    def test_spawn_supervisor_blocks_when_start_preflight_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project_root = Path(tmp)
+            args = Namespace(
+                project_root=str(project_root),
+                legacy_mode="",
+                mode="experimental",
+                session="aip-projectH",
+            )
+
+            with (
+                patch.object(runtime_cli, "_runtime_source_newer_than_supervisor_pidfile", return_value=False),
+                patch.object(runtime_cli, "_reconcile_supervisors", return_value=None),
+                patch.object(runtime_cli, "start_preflight_failure_message", return_value="pipeline doctor required preflight failed: AGENTS.md"),
+                patch.object(runtime_cli.subprocess, "Popen") as popen,
+            ):
+                code = runtime_cli._spawn_supervisor(args)
+
+            self.assertEqual(code, 1)
+            popen.assert_not_called()
 
     def test_spawn_supervisor_keeps_live_daemon_when_runtime_source_is_not_newer(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -733,7 +876,7 @@ class SupervisorCliTest(unittest.TestCase):
             wait_stop.assert_called_once_with(project_root, "aip-projectH")
             self.assertFalse(pid_path.exists())
 
-    def test_stop_supervisor_returns_failure_when_graceful_flush_never_arrives(self) -> None:
+    def test_stop_supervisor_returns_success_after_force_cleanup_when_supervisors_exit(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             project_root = Path(tmp)
             pid_path = project_root / ".pipeline" / "supervisor.pid"
@@ -750,13 +893,38 @@ class SupervisorCliTest(unittest.TestCase):
                 patch.object(runtime_cli, "_wait_for_stop_completion", return_value=False),
                 patch.object(runtime_cli, "_kill_pid", side_effect=killed.append),
                 patch.object(runtime_cli, "_wait_for_supervisors_exit", return_value=True),
+                patch.object(runtime_cli, "_orphan_runtime_needs_cleanup", return_value=False),
+                patch.object(runtime_cli, "_coerce_status_to_stopped") as coerce,
+            ):
+                code = runtime_cli._stop_supervisor(args)
+
+            self.assertEqual(code, 0)
+            self.assertEqual(signaled, [(111, signal.SIGTERM)])
+            self.assertEqual(killed, [111])
+            coerce.assert_called_once_with(project_root)
+            self.assertFalse(pid_path.exists())
+
+    def test_stop_supervisor_returns_failure_when_force_kill_cannot_exit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project_root = Path(tmp)
+            pid_path = project_root / ".pipeline" / "supervisor.pid"
+            pid_path.parent.mkdir(parents=True, exist_ok=True)
+            pid_path.write_text("111", encoding="utf-8")
+            args = Namespace(project_root=str(project_root), legacy_mode="", session="aip-projectH")
+
+            with (
+                patch.object(runtime_cli, "_list_supervisor_pids", side_effect=[[111], [111]]),
+                patch.object(runtime_cli, "_supervisor_running", return_value=111),
+                patch.object(runtime_cli, "_signal_pid"),
+                patch.object(runtime_cli, "_wait_for_stop_completion", return_value=False),
+                patch.object(runtime_cli, "_kill_pid"),
+                patch.object(runtime_cli, "_wait_for_supervisors_exit", return_value=False),
+                patch.object(runtime_cli, "_coerce_status_to_stopped") as coerce,
             ):
                 code = runtime_cli._stop_supervisor(args)
 
             self.assertEqual(code, 1)
-            self.assertEqual(signaled, [(111, signal.SIGTERM)])
-            self.assertEqual(killed, [111])
-            self.assertFalse(pid_path.exists())
+            coerce.assert_not_called()
 
     def test_stop_supervisor_cleans_orphan_runtime_when_supervisor_is_missing(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

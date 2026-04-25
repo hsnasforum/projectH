@@ -21,7 +21,8 @@
 ### Internal Operator Runtime Slice
 - outside the shipped browser release gate, internal pipeline tooling now uses a supervisor-owned run-scoped runtime surface (`status.json`, `events.jsonl`, `receipts/`)
 - `controller.server`, `pipeline_gui`, and `pipeline-launcher.py` now read runtime status as thin clients instead of using direct pane/log/file-scan status inference
-- duplicate/receipted `STATUS: implement` handoffs stay on the debug `compat.control_slots` surface only; canonical `control` drops back to `none` so launcher/controller do not show stale `implement` while every lane is already `READY`
+- duplicate/receipted `STATUS: implement` handoffs, plus handoffs whose referenced `/work` is already matched by a `STATUS: verified` `/verify`, stay on the debug `compat.control_slots` surface only; canonical `control` drops back to `none` so launcher/controller do not show stale `implement` while every lane is already `READY`, and watcher returns to verify follow-up for next-control cleanup instead of redispatching the completed handoff
+- CLI/GUI/TUI start paths now share the read-only doctor preflight for required launch checks, and forced stop cleanup returns success once supervisors are gone and status/orphan cleanup is complete
 - `tmux` remains available for attach/debug through `TmuxAdapter`, not as the upper-layer state authority
 - 오래 방치된 `operator_request.md`는 watcher가 Codex re-triage로 다시 넘기고, supervisor canonical `control` block은 그 재심사 동안 `needs_operator`를 숨겨 internal controller/launcher가 같은 stop에 고정되지 않게 합니다
 - `pr_merge_gate` 같은 실제 PR merge publication boundary는 PR merge 전에는 gate 후보로 숨기거나 verify follow-up에 반복 재전달하지 않고 active `needs_operator` / `pr_boundary`로 유지하며, 참조 PR이 이미 merged로 확인되면 `pr_merge_completed` recovery로 stale operator wait를 내립니다. control `HEAD`가 merged PR head와 다르면 `pr_merge_head_mismatch` recovery로 내려 새 PR/control 정정을 유도합니다
@@ -691,11 +692,112 @@
 
 - **Milestone 26 closed** (Axes 1–2): global candidate E2E test isolation complete; both default and SQLite Playwright configs now use per-run fresh SQLite DB
 
+### Milestone 27: Correction Adoption Tracking
+
+#### Guardrails
+- no schema changes; `find_adopted_corrections()` reads existing `status` + `activated_at` fields only
+- `scripts/audit_traces.py` output change is additive (one new line); no existing output removed
+
+#### Shipped Infrastructure (Axis 1, 2026-04-24)
+- Axis 1 (seq 107): `find_adopted_corrections()` added to `CorrectionStore` (JSON) and `SQLiteCorrectionStore`; `scripts/audit_traces.py` now prints `Adopted corrections (ACTIVE): N`
+
+#### Shipped Infrastructure (Axis 2, 2026-04-24)
+- Axis 2 (seq 110): `/api/preferences/audit` now includes `adopted_corrections_count`; `PreferencePanel` audit row shows `활성 교정 N개` when N > 0
+
+### Milestone 28: Structural Owner Bundle
+
+#### Guardrails
+- write/transition paths only; read-only display surfaces (e.g. _build_active_round) are out of scope
+- no changes to supervisor.py active_round selection (advisory confirmed read-surface cohesion)
+- `.pipeline/state/jobs/` subdirectory isolation: already shipped in schema.py + verify_fsm.py + watcher_core.py; no Axis needed
+
+#### Shipped Infrastructure (Axes 1–2, 2026-04-24)
+- Axis 1 (seq 117): `verify_fsm.StateMachine.step_verify_close_chain()` — VERIFY_RUNNING close chain single-owner in FSM; `WatcherCore._poll()` delegates to dedicated method; generic `step()` blocked by replay test
+- Axis 2 (seq 118): `verify_fsm.StateMachine.release_verify_lease_for_archive()` — lease release for archive-matching VERIFY_PENDING path moved from direct `watcher_core.lease.release()` to FSM delegation; direct call blocked by replay test
+
+- **Milestone 28 closed** (Axes 1–2): FSM single-owner for VERIFY_RUNNING close chain and lease release; advisory seq 120 confirmed Axis 3 not needed
+
+### Milestone 29: Reviewed-Memory Loop Refinement
+
+#### Guardrails
+- bridge는 handler layer에서만; storage layer (`correction_store.py`, `preference_store.py`) 변경 없음
+- preference 활성화·승인 흐름 변경 없음 (candidate 생성까지만)
+- UI 버튼은 `available_to_sync_count > 0`일 때만 노출 (이미 동기화된 경우 숨김)
+
+#### Shipped Infrastructure (Axes 1–3, 2026-04-24)
+- Axis 1 (seq 127): `PreferenceHandlerMixin.sync_adopted_corrections_to_candidates()` + `POST /api/corrections/sync-adopted-to-candidates` — adopted correction → preference candidate backend bridge
+- Axis 2 (seq 128): `PreferencePanel` `data-testid="sync-adopted-btn"` — 버튼 노출, 클릭 후 inline 피드백, audit reload
+- Axis 3 (seq 129): `get_preference_audit()` `available_to_sync_count` — 실제 동기화 가능 수 반환; 버튼 조건 교체
+
+- **Milestone 29 closed** (Axes 1–3): reviewed-memory loop 중 correction adoption → preference candidate 연결 완료
+
+### Milestone 30: Watcher Core Structural Decomposition
+
+#### Goal
+`watcher_core.py`의 legacy 부채 제거 및 순수 파싱 로직을 별도 모듈로 분리.
+
+#### Guardrails
+- `pipeline_runtime/` 수정 없음
+- `tests/test_watcher_core.py` 기존 테스트 계약 유지 (mock.patch target 포함)
+- 보존 함수 4개 (`_line_looks_like_input_prompt`, `_pane_text_has_gemini_ready_prompt`, `_pane_has_input_cursor`, `_pane_has_working_indicator`) 수정 없음
+
+#### Shipped Infrastructure (Axes 1–3, 2026-04-25)
+- Axis 1 (seq 136-137): pane-surface stub 7개 (`_capture_pane_text`, `wait_for_pane_settle`, 등) 제거; 내부 호출 `_shared_*`로 교체; 202 unit tests PASS
+- Axis 2 (seq 141-142): `_LegacyPatchableSharedCall` 프록시 및 `_install_legacy_patch_target` 7회 호출 제거; `tests/test_watcher_core.py` legacy patch target 112곳 → canonical `_shared_*` 마이그레이션; 202 unit tests PASS
+- Axis 3 (seq 144-145): 신호 추출 순수 함수 11개 + regex 상수 12개 → `watcher_signals.py` 신규 모듈 분리; `watcher_core.py` import 교체로 기존 `watcher_core.*` 이름 바인딩 유지; `tests/test_watcher_signals.py` 신규 10개 테스트; 202 + 10 tests PASS; `watcher_core.py` 5001 → 4608 lines
+
+- **Milestone 30 closed** (Axes 1–3): watcher_core legacy debt 제거 및 신호 추출 모듈 분리 완료
+
+### Milestone 31: E2E Infrastructure + Reviewed-Memory Loop Smoke
+
+#### Goal
+M28–M30 bundle release gate 통과 및 reviewed-memory loop end-to-end 검증.
+
+#### Guardrails
+- E2E webServer spawn fix는 Makefile + playwright.config.mjs에 한정
+- smoke test는 `e2e/tests/web-smoke.spec.mjs`에 1개 시나리오 추가
+
+#### Shipped Infrastructure (Axes 1–2, 2026-04-25)
+- Axis 1 (seq 148–151): E2E webServer spawn PermissionError 수정 — `e2e/playwright.config.mjs` `reuseExistingServer: true`, `Makefile` e2e-test pre-start server; M28–M30 bundle gate **146 E2E passed (6.0m)**, 216 unit tests OK
+- Axis 2 (seq 154–155): reviewed-memory loop E2E smoke — correction → candidate accept → sync UI → real preference activation → `[모의 응답, 선호 1건 반영]` prefix; **147 E2E passed (6.6m)**
+
+- **Milestone 31 closed** (Axes 1–2): release gate 통과 및 reviewed-memory loop end-to-end smoke 완료
+
+### Milestone 32: Watcher Core Structural Decomposition (Dispatch)
+
+#### Goal
+`watcher_core.py` dispatch/tmux 헬퍼를 기존 `watcher_dispatch.py`로 분리.
+
+#### Guardrails
+- `pipeline_runtime/`, `tests/test_watcher_core.py` 수정 없음 (mock.patch 계약 유지)
+- `watcher_dispatch.py` 기존 `DispatchIntent`, `WatcherDispatchQueue` 유지
+
+#### Shipped Infrastructure (Axes 1–2, 2026-04-25)
+- Axis 1 (seq 157–158): dispatch/tmux 헬퍼 13개 + 상수 3개 → `watcher_dispatch.py`; `watcher_core.py` re-export로 `mock.patch("watcher_core.tmux_send_keys")` 계약 유지; 216 unit tests OK
+- Axis 2 (seq 160–161): `_watcher_core_compat` shim + 9개 thin wrapper 제거; `CodexDispatchConfirmationTest` patch 대상 `watcher_dispatch.*`로 정규화; 216 unit tests OK; `watcher_core.py` 5001 → ~4360 lines (M30 시작 대비)
+
+- **Milestone 32 closed** (Axes 1–2): dispatch/tmux 구조 분리 및 compat shim 제거 완료
+
+### Milestone 33: Watcher Core Structural Decomposition (State + Stabilizer)
+
+#### Goal
+`watcher_core.py`에서 coordination state 클래스와 artifact 안정화 로직을 별도 모듈로 분리.
+
+#### Guardrails
+- `tests/test_watcher_core.py` 수정 없음 (`watcher_core.*` re-export 계약 유지)
+- `compute_file_sha256`, `StabilizeSnapshot`, `ArtifactStabilizer`는 Axis 2에서 처리
+
+#### Shipped Infrastructure (Axes 1–2, 2026-04-25)
+- Axis 1 (seq 163–164): `WatcherTurnState`, `LeaseData`, `ControlSignal`, `PaneLease`, `DedupeGuard`, `ManifestCollector` → `watcher_state.py` 신규 모듈; optional jsonschema import 포함; 216 unit tests OK
+- Axis 2 (seq 166–167): `compute_file_sha256`, `StabilizeSnapshot`, `ArtifactStabilizer` → `watcher_stabilizer.py` 신규 모듈; 216 unit tests OK; watcher 모듈 패밀리 5개 완성: `watcher_core`(3977 lines) / `watcher_state`(364) / `watcher_dispatch`(640) / `watcher_signals`(450) / `watcher_stabilizer`(63)
+
+- **Milestone 33 closed** (Axes 1–2): coordination state + artifact stabilizer 구조 분리 완료; watcher_core.py 5001 → 3977 lines (M30 시작 대비 -1024 lines)
+
 ## Next 3 Implementation Priorities
 
-1. **PR #32 merge**: feat/watcher-turn-state (M20 Axis 2 – M26 Axes 1–2) is open and awaiting operator merge approval. All shipped milestones M20–M26 are included.
-2. **Next milestone direction**: M20–M26 closed correction lifecycle, preference lifecycle, global-candidate review, lifecycle observability, preference audit UI, and E2E isolation. The next milestone should be defined via advisory to choose between new user-facing features or further infrastructure work.
-3. **Advisory stability**: Gemini advisory has timed out 4+ times; consider operator-directed M27 scope if advisory remains unavailable.
+1. **PR #33 merge**: feat/watcher-turn-state (M28–M33, seqs 115–167) is open as draft PR awaiting operator merge approval.
+2. **M34 direction**: M33 structural phase complete; next functional milestone direction — via advisory.
+3. **watcher_core re-export note**: `watcher_core.*` re-exports (WatcherTurnState, tmux_send_keys 등)는 test 계약 유지용. 향후 import 정리 시 관련 test mock 대상도 함께 정규화 필요.
 
 ## Do Not Pull Forward
 

@@ -309,6 +309,43 @@ class OperatorRequestHeaderSchemaTests(unittest.TestCase):
         self.assertEqual(marker["reason"], PR_MERGE_GATE_REASON)
         self.assertEqual(marker["routed_to"], "verify_followup")
 
+    def test_compound_milestone_pr_merge_gate_routes_to_verify_followup_backlog(self) -> None:
+        decision = classify_operator_candidate(
+            "STATUS: needs_operator\n"
+            "CONTROL_SEQ: 114\n"
+            "REASON_CODE: m28_direction + pr_merge_gate\n"
+            "OPERATOR_POLICY: internal_only\n"
+            "DECISION_CLASS: next_milestone_selection + branch_strategy\n"
+            "DECISION_REQUIRED: M28 scope OR PR merge first\n",
+            control_meta={
+                "status": "needs_operator",
+                "control_seq": 114,
+                "reason_code": "m28_direction + pr_merge_gate",
+                "operator_policy": "internal_only",
+                "decision_class": "next_milestone_selection + branch_strategy",
+                "decision_required": "M28 scope OR PR merge first",
+            },
+            idle_stable=True,
+            control_mtime=1_000.0,
+            now_ts=1_000.0,
+        )
+
+        marker = operator_gate_marker_from_decision(
+            decision,
+            control_file="operator_request.md",
+            control_seq=114,
+        )
+
+        self.assertEqual(decision["mode"], "triage")
+        self.assertEqual(decision["suppressed_mode"], "triage")
+        self.assertEqual(decision["routed_to"], "verify_followup")
+        self.assertEqual(decision["reason_code"], PR_MERGE_GATE_REASON)
+        self.assertEqual(decision["decision_class"], "next_slice_selection")
+        self.assertFalse(decision["operator_eligible"])
+        self.assertIsNotNone(marker)
+        self.assertEqual(marker["reason"], PR_MERGE_GATE_REASON)
+        self.assertEqual(marker["routed_to"], "verify_followup")
+
     def test_pr_merge_gate_is_recoverable_after_referenced_pr_is_completed(self) -> None:
         marker = evaluate_stale_operator_control(
             control_text=(
@@ -441,6 +478,55 @@ class OperatorRequestHeaderSchemaTests(unittest.TestCase):
                 self.assertEqual(decision["operator_policy"], "gate_24h")
                 self.assertEqual(decision["decision_class"], "release_gate")
                 self.assertTrue(decision["operator_eligible"])
+
+    def test_advisory_before_operator_milestone_direction_routes_to_verify_followup(self) -> None:
+        control_text = (
+            "STATUS: needs_operator\n"
+            "CONTROL_SEQ: 133\n"
+            "REASON_CODE: m30_direction_fresh_scoping\n"
+            "OPERATOR_POLICY: advisory_before_operator\n"
+            "DECISION_CLASS: next_milestone_selection\n"
+            "DECISION_REQUIRED: M30 direction — choose next milestone\n"
+            "BASED_ON_WORK: work/4/24/2026-04-24-m29-release-gate-milestones.md\n"
+            "BASED_ON_VERIFY: verify/4/24/2026-04-24-m29-release-gate-milestones.md\n"
+        )
+
+        self.assertEqual(normalize_reason_code("m30_direction_fresh_scoping"), "slice_ambiguity")
+        self.assertEqual(normalize_operator_policy("advisory_before_operator"), "gate_24h")
+
+        decision = classify_operator_candidate(
+            control_text,
+            control_meta={
+                "status": "needs_operator",
+                "control_seq": 133,
+                "reason_code": "m30_direction_fresh_scoping",
+                "operator_policy": "advisory_before_operator",
+                "decision_class": "next_milestone_selection",
+                "decision_required": "M30 direction — choose next milestone",
+                "based_on_work": "work/4/24/2026-04-24-m29-release-gate-milestones.md",
+                "based_on_verify": "verify/4/24/2026-04-24-m29-release-gate-milestones.md",
+            },
+            idle_stable=True,
+            control_mtime=1_000.0,
+            now_ts=1_000.0,
+        )
+        marker = operator_gate_marker_from_decision(
+            decision,
+            control_file="operator_request.md",
+            control_seq=133,
+        )
+
+        self.assertEqual(decision["mode"], "triage")
+        self.assertEqual(decision["suppressed_mode"], "triage")
+        self.assertEqual(decision["reason_code"], "slice_ambiguity")
+        self.assertEqual(decision["operator_policy"], "gate_24h")
+        self.assertEqual(decision["decision_class"], "next_slice_selection")
+        self.assertEqual(decision["classification_source"], "operator_policy")
+        self.assertEqual(decision["routed_to"], "verify_followup")
+        self.assertFalse(decision["operator_eligible"])
+        self.assertIsNotNone(marker)
+        assert marker is not None
+        self.assertEqual(marker["routed_to"], "verify_followup")
 
     def test_seq617_raw_operator_headers_normalize_to_canonical_metadata(self) -> None:
         self.assertEqual(

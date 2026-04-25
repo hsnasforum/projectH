@@ -103,6 +103,9 @@ Responsibilities:
 - That runtime surface is the run-scoped `status.json` / `events.jsonl` / `receipt` set plus the watcher-owned export-only `.pipeline/state/turn_state.json` mirror.
 - Thin clients should prefer canonical runtime payloads first and use the turn-state mirror only for current-turn labeling.
 - `turn_state.json` now carries legacy enum `state` together with `active_role` and `active_lane`, so swapped profiles can surface the actual bound owner lane instead of re-inferencing fixed `Claude` / `Codex` ownership from enum names alone.
+- Start surfaces share the read-only doctor preflight: CLI, GUI, and TUI launch paths block before supervisor spawn when required checks fail.
+- A `STATUS: implement` handoff that is already proven complete by matching `/work` plus `STATUS: verified` `/verify` truth is treated like a duplicate handoff: it remains visible in debug compatibility slots, but canonical `control` drops to `none` and watcher routing returns to verify follow-up for next-control cleanup.
+- Stop surfaces prefer graceful `STOPPED` flush, then forced supervisor cleanup; once the supervisor process is gone and status/orphan cleanup is complete, the stop command returns success instead of reporting a false failure.
 
 ## Current Runtime Entry
 

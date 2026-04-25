@@ -794,6 +794,16 @@ class SQLiteCorrectionStore:
             )
             return [self._row_to_dict(row) for row in rows]
 
+    def find_adopted_corrections(self) -> list[dict[str, Any]]:
+        with self._lock:
+            rows = self._db.fetchall(
+                "SELECT * FROM corrections WHERE status = ?",
+                (CorrectionStatus.ACTIVE,),
+            )
+            records = [self._row_to_dict(row) for row in rows]
+            records.sort(key=lambda r: r.get("activated_at") or "")
+            return records
+
     def find_recurring_patterns(self, *, session_id: str | None = None) -> list[dict[str, Any]]:
         """Return correction groups with recurrence_count >= 2, matching CorrectionStore contract."""
         if session_id:

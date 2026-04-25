@@ -33,7 +33,7 @@ export default defineConfig({
       + `python3 -m app.web --host 127.0.0.1 --port 8879'`
     ),
     url: "http://127.0.0.1:8879",
-    reuseExistingServer: false,
+    reuseExistingServer: true,
     timeout: 60_000,
   },
 });

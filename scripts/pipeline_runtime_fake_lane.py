@@ -108,10 +108,11 @@ def _render_work_note(control_seq: int, variability: int, payload_rel: str) -> s
     )
 
 
-def _render_verify_note(control_seq: int, route: str) -> str:
+def _render_verify_note(control_seq: int, route: str, work_ref: str = "") -> str:
+    work_line = f"- {work_ref}\n" if work_ref else "- 없음\n"
     return (
         "## 변경 파일\n"
-        "- 없음\n\n"
+        f"{work_line}\n"
         "## 사용 skill\n"
         "- 없음\n\n"
         "## 변경 이유\n"
@@ -213,8 +214,9 @@ def handle_prompt(
         except ValueError:
             control_seq = 1
         route = "advisory" if gemini_every > 0 and control_seq % gemini_every == 0 else "implement"
+        work_ref = _extract_field(prompt_text, "WORK")
         verify_path = _note_path(project_root, "verify", f"synthetic-verify-{control_seq:04d}")
-        written.append(_write_text(verify_path, _render_verify_note(control_seq, route)))
+        written.append(_write_text(verify_path, _render_verify_note(control_seq, route, work_ref)))
         if route == "advisory":
             written.append(_write_advisory_request(project_root, control_seq))
         else:

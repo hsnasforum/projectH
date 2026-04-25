@@ -1,93 +1,135 @@
 # Claude Project Memory
 
+## Purpose
+
+This is Claude's mid-sized root memory. Keep startup context smaller than the
+full policy docs, but preserve the operating boundaries that prevent unsafe
+operator stops, duplicate handoffs, and stalled automation.
+
 ## Current Contract
 
-- This repository is a local-first document assistant web MVP, not a generic chatbot starter.
-- Current shipped focus: local web shell, document summary/search/chat, approval-based save, evidence-backed web investigation, and the reviewed-memory loop through activation plus explicit stop.
-- Long-term north star: a teachable local personal agent under explicit approval. Do not present that future stage as shipped behavior.
+- `projectH` is a local-first document assistant web MVP.
+- Shipped focus: local web shell, document summary/search/chat,
+  approval-based save/reissue, evidence-backed web investigation, and the
+  reviewed-memory loop through visible review queue, activation, and explicit
+  stop.
+- Long-term north star: a teachable local personal agent under explicit
+  approval. Do not describe it as shipped behavior.
+- Frontier model releases such as GPT-5.5 are capability context only; they do
+  not change document-first scope, replaceable runtime posture, or
+  approval/operator boundaries.
 
-## Product Priorities
+## Role Binding
 
-1. local-first behavior
-2. approval-based safety
-3. practical document productivity
-4. teachability through correction / approval traces
-5. evidence and source transparency
-6. replaceable model / runtime / storage seams
+Claude follows `.pipeline/config/agent_profile.json`, not historical
+vendor-named filenames. In the current A profile Claude is usually the
+verify/handoff owner, but always trust the active binding.
 
-## Claude Runtime Role Contract
+Canonical role controls:
+- implement input: `.pipeline/implement_handoff.md`
+- advisory request: `.pipeline/advisory_request.md`
+- advisory response: `.pipeline/advisory_advice.md`
+- operator stop: `.pipeline/operator_request.md`
 
-- Claude follows the active role binding from `.pipeline/config/agent_profile.json`, not a vendor-named historical slot filename.
-- `.pipeline/implement_handoff.md` is the canonical implement control slot even when Claude is not the implement owner.
-- Historical aliases `.pipeline/claude_handoff.md`, `.pipeline/gemini_request.md`, and `.pipeline/gemini_advice.md` are read-only compatibility inputs for the same role-based controls, not separate control planes.
-- In the currently applied A profile, `implement=Codex`, `verify=Claude`, and `advisory=Gemini`, so Claude is the verification + handoff owner.
-- If Claude is bound to `verify`:
-  - read the newest relevant `work/` note first, then the same-day `verify/` note if one exists
-  - rerun the narrowest honest verification
-  - leave or update the persistent `/verify`
-  - write the next `.pipeline/implement_handoff.md`, `.pipeline/advisory_request.md`, or `.pipeline/operator_request.md` as needed
-- If Claude is bound to `implement`:
-  - implement only the exact slice in `.pipeline/implement_handoff.md` when it says `STATUS: implement`
-  - do not self-select the next slice
-  - do not write `.pipeline/advisory_request.md` or `.pipeline/operator_request.md`
-  - if the handoff is blocked, stale, already implemented, or otherwise not actionable, emit pane-local `STATUS: implement_blocked` with `BLOCK_REASON`, `BLOCK_REASON_CODE`, `REQUEST: verify_triage`, `ESCALATION_CLASS: verify_triage`, `HANDOFF`, `HANDOFF_SHA`, and `BLOCK_ID`, then stop
-  - stop after bounded edits plus the canonical `/work` closeout. Do not commit, push, publish a branch, or open a PR from the implement lane
-  - treat commit/push/PR creation as a large-bundle boundary only: recommend or request it only for an explicitly operator-approved release, soak, PR stabilization, or direct publish bundle, not for ordinary small/local slices
-  - if `REASON_CODE: commit_push_bundle_authorization` with `OPERATOR_POLICY: internal_only` is active, leave it for verify/handoff-owner publish follow-up; do not re-ask the operator from the implement lane
-- If Claude is not the active owner for a role, do not treat that role's control slot as executable input.
+Historical aliases are read-only compatibility inputs only:
+`.pipeline/claude_handoff.md`, `.pipeline/gemini_request.md`,
+`.pipeline/gemini_advice.md`.
 
-## Handoff Interpretation
+Newest valid control wins by `CONTROL_SEQ` first, `mtime` only as fallback.
+If `.pipeline` conflicts with persistent notes, trust the latest relevant
+`work/` and `verify/` records.
 
-- Newest valid control wins by `CONTROL_SEQ` first and `mtime` only as a fallback.
-- Which rolling slot is Claude execution input depends on the active role binding:
-  - implement owner -> `.pipeline/implement_handoff.md`
-  - verify/handoff owner -> latest `/work` + `/verify` pair, plus `.pipeline/advisory_advice.md` follow-up when opened
-  - advisory owner -> `.pipeline/advisory_request.md`
-- Older stale control files are not execution input once a newer valid control file exists.
-- If `.pipeline` disagrees with persistent notes, trust the latest `/work` and `/verify`.
-- If the latest `/work` and `/verify` already closed the same handoff SHA or exact slice, treat that handoff as blocked / already implemented instead of redoing it.
-- Automation completion target: do not call the user for ordinary next-step, ambiguity, stall, rollover, or recovery choices. Use implement / verify-handoff / advisory discussion first, grounded in `/work`, `/verify`, current docs, and runtime evidence.
-- `.pipeline/harness/implement.md`, `.pipeline/harness/verify.md`, `.pipeline/harness/advisory.md`, and `.pipeline/harness/council.md` are role protocols. They may appear in prompts as `ROLE_HARNESS` / `COUNCIL_HARNESS`, but they are not control slots or current truth.
-- `council.md` is not a fourth agent. Use it as a convergence protocol when blocked or ambiguous evidence must become one next control.
-- When opening `.pipeline/advisory_request.md` for advisory arbitration, keep the ask anchored to the named shipped docs/code paths first; do not send Gemini into `docs/superpowers/**`, `plandoc/**`, or other historical planning docs unless the current `/work` or `/verify` explicitly cites them as the evidence source.
-- If an operator stop is just a labeled choice set, such as lettered, numbered, inline parenthesized, or Korean `n안` options, that can be narrowed from current docs, milestones, and the latest `/work` + `/verify`, route it through advisory-first arbitration instead of waiting on the operator. Keep real safety, destructive, auth/credential, approval-record, and truth-sync blockers in the decision header as operator stops.
-- If watcher sends an operator-retriage follow-up, close it by writing exactly one newer control slot. Returning to an idle prompt without a new control lets watcher escalate the same gated request to `.pipeline/advisory_request.md` with `operator_retriage_no_next_control`.
-- Exception: if that follow-up is `commit_push_bundle_authorization + internal_only`, do not write an implement handoff for commit/push. Handle the scoped publish in the verify/handoff round, or escalate to advisory if you cannot execute it truthfully.
-- Exception: if that follow-up is `pr_creation_gate + gate_24h + release_gate`, create or reuse a draft PR in the verify/handoff round, record the PR URL in `/work`, then write the next control. If an older draft PR is already waiting for merge approval, keep that pending merge candidate stable by default and publish the new verified bundle as a stacked child branch/PR whose base is the parent branch; record the parent/child linkage in `/work`, then retarget the child to the repository default base branch after the parent merges. Do not hand PR creation to the implement lane.
-- Exception: if that follow-up is `pr_merge_gate + internal_only + merge_gate`, keep the PR merge approval pending as an operator backlog, do not merge it yourself, and write the next safe local control so automation can continue.
-- Mid-session lane replies are guidance for the current session, not a rewritten round-start handoff.
+`.pipeline/harness/*.md` are role protocols, not control slots.
+`.pipeline/session_arbitration_draft.md` is a watcher draft only. Treat
+`.pipeline/codex_feedback.md` and `.pipeline/gpt_prompt.md` as optional scratch,
+not current execution truth.
 
-## Default Engineering Rules
+## If Bound To Verify / Handoff
 
-- Prefer the smallest coherent reviewable change that closes real progress.
-- Reuse existing helpers, queries, scripts, prompts, and local patterns before adding near-copy code paths.
-- Do not hardcode current branch names, commit SHAs, `CONTROL_SEQ` values, pane ids, Korean display strings, exact operator prose, or one-off control-file bodies in runtime logic. Use shared parsers, schema helpers, fixtures, and status-label helpers.
-- Do not duplicate near-copy watcher/supervisor/launcher/controller logic. If the same truth is needed in two places, move it to the owning module or a shared helper.
-- Do not keep growing one function or file with unrelated branches. Extract parsing, labeling, control writing, lane-surface, or event-contract responsibilities when that makes the next fix smaller and clearer.
-- Keep writes explicit and approval-aware.
-- Do not widen scope from the current document-first MVP into generic web chatbot or autonomous tool-operation behavior.
-- If docs and implementation disagree, make docs match implementation or mark the gap as `TODO` / `OPEN QUESTION`.
+- Read newest relevant `work/` note, then same-day `verify/` if present.
+- Rerun the narrowest honest verification.
+- Leave or update `/verify` before writing the next control.
+- Write one exact `.pipeline/implement_handoff.md` when a slice is clear.
+- Write `.pipeline/advisory_request.md` for next-slice ambiguity, overlapping
+  candidates, or low-confidence tie-breaks.
+- Write `.pipeline/operator_request.md` only for real operator-only decisions,
+  approval/truth-sync blockers, immediate safety stops, or unresolved
+  post-advisory ambiguity.
+- Do not close a verification round with pane-only reasoning.
+- If an operator stop is just labeled choices that current docs/latest
+  `/work`/`/verify` can narrow, open advisory-first arbitration instead of
+  waiting for the user.
+- If watcher sends operator retriage, write exactly one newer control slot.
+  Returning idle with no control can trigger `operator_retriage_no_next_control`.
+- For active implement-owner side questions such as context exhaustion,
+  rollover, or continue-vs-switch, relay a short answer back to the lane and
+  keep the round-start implement handoff stable until the session boundary.
+- Approved publish follow-up belongs here, not in implement. Handle or
+  coordinate `commit_push_bundle_authorization + internal_only` and
+  `pr_creation_gate + gate_24h + release_gate` only after scoping the dirty
+  tree and leaving the action auditable.
+- Keep `pr_merge_gate`, destructive publication, auth/credential,
+  approval-record, and truth-sync blockers as operator boundaries.
 
-## Recursive Improvement
+## If Bound To Implement
 
-- 런타임/런처/워처 문제를 고칠 때 재귀개선은 "같은 종류의 다음 수정 범위를 더 작게 만드는 것"을 뜻합니다.
-- 같은 incident family가 다시 나왔으면 조건문을 하나 더 얹기보다, 그 incident의 owner인 boundary/helper/module을 먼저 고칩니다.
-- 새 incident family면 먼저 named incident, focused replay test, truthful runtime surface를 추가하고 그 다음 구현을 좁힙니다.
-- 재귀학습은 현재 단계에서 모델 학습이 아니라 repo-local operational learning입니다. `/work`/`/verify`, incident family, replay test, shared helper, runtime surface가 다음 판단을 더 작게 만드는 근거입니다.
-- 진화적 탐색은 current evidence와 milestone에 묶인 bounded candidate comparison입니다. broad random exploration이나 사용자가 고를 수밖에 없는 메뉴를 되돌리는 방식이 아닙니다.
-- `pipeline-launcher.py`나 controller/browser 쪽에 추가 추론을 얹어 runtime drift를 가리려 하지 않습니다. thin client는 계속 runtime truth를 읽는 쪽에 둡니다.
-- long soak 재실행은 기본 증명이 아닙니다. runtime contract 자체를 크게 바꾼 경우가 아니면 launcher live stability gate + incident replay를 우선합니다.
-- 수정이 끝났을 때 "다음 같은 버그가 나와도 어디를 고쳐야 하는지 더 분명해졌는가"를 기준으로 결과를 점검합니다.
+- Execute only the active `STATUS: implement` slice.
+- Do not self-select the next slice.
+- Stop after bounded edits plus canonical `/work` closeout.
+- Do not commit, push, publish branches/PRs, or merge from the implement lane.
+- If the handoff is blocked, stale, already implemented, or contradicted by
+  latest `/work` + `/verify`, emit pane-local `STATUS: implement_blocked` with
+  structured fields and stop.
+- The blocked sentinel should include `BLOCK_REASON`, `BLOCK_REASON_CODE`,
+  `REQUEST: verify_triage`, `ESCALATION_CLASS: verify_triage`, `HANDOFF`,
+  `HANDOFF_SHA`, and `BLOCK_ID` when available.
 
-## Verification Rules
+## Automation Bias
 
-- Run the narrowest relevant check first.
-- If a check was not run, say so explicitly.
-- Start with isolated Playwright reruns for selector drift, fixture drift, or single-scenario smoke changes. Use the broad browser suite only when the browser-visible contract widened, shared helpers changed, or a ready / release claim is being made.
-- `finalize-lite` is the implementation-side wrap-up skill for this repo. Use it to combine release-check truth, doc-sync review, and `/work` closeout readiness without adding commit/push/PR, `/verify`, or next-slice selection.
-- `onboard-lite` is the fast-orientation skill for unfamiliar repos or subsystems. Use it to gather real run/test entrypoints, required docs, and ownership boundaries before planning or implementation, not as a broad audit.
-- `next-slice-triage` is the verification-side slice-selection wrapper. Use it only after `/work` and `/verify` truth is already current, to narrow one exact next slice or choose `.pipeline/advisory_request.md` versus `.pipeline/operator_request.md` without rerunning verification.
-- Preferred order is: `onboard-lite` for orientation when needed -> implementation -> `finalize-lite` -> `round-handoff` when verification truth needs rerun -> `next-slice-triage` only after truth is current.
+- Do not call the user for ordinary next-step, ambiguity, stall, rollover, or
+  recovery choices.
+- Route ordinary ambiguity through verify/handoff and advisory first.
+- Keep real-risk actions as explicit operator boundaries: destructive writes,
+  credentials/auth, approval-record repair, truth-sync blockers, publication,
+  and merge execution.
+- Commit/push/PR creation belongs only to verified large-bundle publish
+  follow-up and never to ordinary small/local implementation slices.
+
+Turbo-lite wrapper order:
+- `onboard-lite` for unfamiliar repo/subsystem orientation
+- implementation
+- `finalize-lite` for implementation-side verification/doc-sync/`/work`
+  readiness
+- `round-handoff` when verification truth must be rerun and recorded
+- `next-slice-triage` only after `/work` and `/verify` truth is current
+
+Do not use a wrapper to absorb another wrapper's responsibility.
+
+## Engineering Rules
+
+- Prefer the smallest coherent reviewable change.
+- Reuse existing helpers, queries, scripts, prompts, and local patterns.
+- Do not hardcode branch names, commit SHAs, `CONTROL_SEQ`, pane ids, Korean UI
+  labels, exact operator prose, or one-off control bodies.
+- Do not duplicate watcher/supervisor/launcher/controller truth logic; move
+  shared truth to the owning helper and keep clients thin.
+- Keep behavior local-first, read-heavy, and approval-based.
+- If docs and implementation disagree, make docs match implementation or mark
+  `TODO` / `OPEN QUESTION`.
+- For repeated runtime incidents, improve the owning boundary, shared helper,
+  replay test, or runtime surface instead of adding another higher-layer
+  exception branch.
+- Do not widen from document-first MVP into generic web chatbot or autonomous
+  local tool operation.
+
+## Verification
+
+- Run the narrowest relevant check first and report skipped checks honestly.
+- For browser selector/fixture drift, start with the isolated Playwright
+  scenario.
+- Use broad browser/E2E only when the browser contract changed, shared browser
+  helpers changed, release/ready is being claimed, or isolated rerun suggests
+  wider drift.
 
 Common commands:
 - `python3 -m py_compile <files>`
@@ -96,19 +138,27 @@ Common commands:
 - `make e2e-test`
 - `git diff --check -- <paths>`
 
-## Scoped Rules
+## Read On Demand
 
-- Detailed pipeline/runtime rules live in `.claude/rules/pipeline-runtime.md`.
-- Detailed browser/E2E rules live in `.claude/rules/browser-e2e.md`.
-- Detailed doc-sync and operator-config sync rules live in `.claude/rules/doc-sync.md`.
-- Keep this top-level `CLAUDE.md` concise; move file-family detail into path-scoped rules instead of growing startup memory.
+- Pipeline/runtime details: `.pipeline/README.md`,
+  `.claude/rules/pipeline-runtime.md`, `.pipeline/harness/*.md`
+- Browser/E2E details: `.claude/rules/browser-e2e.md`
+- Doc-sync details: `.claude/rules/doc-sync.md`
+- Product truth: `docs/project-brief.md`, `docs/PRODUCT_SPEC.md`,
+  `docs/ARCHITECTURE.md`, `docs/ACCEPTANCE_CRITERIA.md`,
+  `docs/MILESTONES.md`, `docs/TASK_BACKLOG.md`
+- Latest truth: newest relevant `work/` and `verify/` notes
+
+Do not read `docs/superpowers/**`, `docs/recycle/**`, or `plandoc/**` unless
+the task, active control, latest notes, or user explicitly makes them current
+evidence.
+
+When docs must sync, use implementation truth. UI changes usually affect
+`README.md`, `docs/PRODUCT_SPEC.md`, and `docs/ACCEPTANCE_CRITERIA.md`;
+approval/session/schema changes usually affect `docs/ARCHITECTURE.md`; skill
+or agent changes must keep Codex/Claude mirrors aligned.
 
 ## Response Pattern
 
-- Respond to the user in Korean honorifics.
-- For meaningful work, summarize:
-  1. goal
-  2. files affected
-  3. change made
-  4. risk / open question
-  5. verification
+Respond to the user in Korean honorifics. For meaningful work, summarize goal,
+files affected, change made, remaining risk/open question, and verification.

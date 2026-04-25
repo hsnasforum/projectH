@@ -31,6 +31,7 @@
       <div class="tt-state"></div>
       <div class="tt-note"></div>
     </div>
+    <section class="operator-attention-board hidden" id="operator-attention-board" aria-live="assertive"></section>
     <div class="marquee-bar">
       <span class="marquee-badge">📢 NEWS</span>
       <div class="marquee-track"><span class="marquee-text" id="marquee-text">Welcome to the Pipeline Office ✿ 모두가 각자의 자리에서 즐겁게 일하는 중입니다.</span></div>
@@ -58,6 +59,23 @@
       <div class="log-modal-send-status" id="lm-send-status">숫자 선택이나 짧은 응답이 필요한 prompt가 뜨면 여기서 바로 보내실 수 있습니다.</div>
     </div>
   </div>
+
+  <!-- Agent Inspector Drawer -->
+  <aside class="agent-inspector" id="agent-inspector" aria-live="polite">
+    <div class="agent-inspector-header">
+      <div>
+        <div class="ai-kicker" id="ai-kicker">Agent Inspector</div>
+        <div class="ai-title" id="ai-title">—</div>
+      </div>
+      <button class="ai-close" id="ai-close" title="인스펙터 닫기">×</button>
+    </div>
+    <div class="agent-inspector-body" id="ai-body">
+      <div class="ai-empty">에이전트를 선택하면 세부 상태가 표시됩니다.</div>
+    </div>
+    <div class="agent-inspector-actions">
+      <button class="ai-action" id="ai-open-log">Terminal</button>
+    </div>
+  </aside>
 
   <!-- Sidebar -->
   <div class="sidebar">

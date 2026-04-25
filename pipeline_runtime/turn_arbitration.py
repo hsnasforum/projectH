@@ -145,6 +145,12 @@ def resolve_watcher_turn(inputs: WatcherTurnInputs) -> str:
     if inputs.advisory_advice_active:
         return TURN_VERIFY_FOLLOWUP
 
+    if (
+        operator_gate is not None
+        and str(operator_gate.get("routed_to") or "") == "hibernate"
+    ):
+        return TURN_IDLE
+
     if inputs.implement_handoff_active and (
         inputs.latest_work_needs_verify or inputs.implement_handoff_verify_active
     ):

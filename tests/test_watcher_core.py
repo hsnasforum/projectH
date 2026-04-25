@@ -8215,10 +8215,10 @@ class CodexDispatchConfirmationTest(unittest.TestCase):
             run_calls.append(list(cmd))
             return mock.Mock(stdout="", stderr=b"")
 
-        with mock.patch("watcher_core.subprocess.run", side_effect=_run), \
-             mock.patch("watcher_core._shared_capture_pane_text", side_effect=lambda _pane: next(snapshots)), \
-             mock.patch("watcher_core._pane_has_working_indicator", return_value=True), \
-             mock.patch("watcher_core.time.sleep", return_value=None):
+        with mock.patch("watcher_dispatch.subprocess.run", side_effect=_run), \
+             mock.patch("watcher_dispatch._shared_capture_pane_text", side_effect=lambda _pane: next(snapshots)), \
+             mock.patch("watcher_dispatch._pane_has_working_indicator", return_value=True), \
+             mock.patch("watcher_dispatch.time.sleep", return_value=None):
             result = watcher_core._dispatch_codex("%1", "ROLE: verify")
 
         self.assertTrue(result)
@@ -8234,11 +8234,11 @@ class CodexDispatchConfirmationTest(unittest.TestCase):
             itertools.repeat("processing view without prompt"),
         )
 
-        with mock.patch("watcher_core.subprocess.run") as run_mock, \
-             mock.patch("watcher_core._shared_capture_pane_text", side_effect=lambda _pane: next(snapshots)), \
-             mock.patch("watcher_core._pane_has_working_indicator", return_value=False), \
-             mock.patch("watcher_core._shared_pane_text_has_codex_activity", return_value=False), \
-             mock.patch("watcher_core.time.sleep", return_value=None):
+        with mock.patch("watcher_dispatch.subprocess.run") as run_mock, \
+             mock.patch("watcher_dispatch._shared_capture_pane_text", side_effect=lambda _pane: next(snapshots)), \
+             mock.patch("watcher_dispatch._pane_has_working_indicator", return_value=False), \
+             mock.patch("watcher_dispatch._shared_pane_text_has_codex_activity", return_value=False), \
+             mock.patch("watcher_dispatch.time.sleep", return_value=None):
             result = watcher_core._dispatch_codex("%1", "ROLE: verify")
 
         self.assertTrue(result)
@@ -8247,10 +8247,10 @@ class CodexDispatchConfirmationTest(unittest.TestCase):
     def test_dispatch_codex_returns_false_when_prompt_never_consumes(self) -> None:
         snapshots = itertools.repeat("› prompt pasted")
 
-        with mock.patch("watcher_core.subprocess.run") as run_mock, \
-             mock.patch("watcher_core._shared_capture_pane_text", side_effect=lambda _pane: next(snapshots)), \
-             mock.patch("watcher_core._shared_pane_text_has_codex_activity", return_value=False), \
-             mock.patch("watcher_core.time.sleep", return_value=None):
+        with mock.patch("watcher_dispatch.subprocess.run") as run_mock, \
+             mock.patch("watcher_dispatch._shared_capture_pane_text", side_effect=lambda _pane: next(snapshots)), \
+             mock.patch("watcher_dispatch._shared_pane_text_has_codex_activity", return_value=False), \
+             mock.patch("watcher_dispatch.time.sleep", return_value=None):
             result = watcher_core._dispatch_codex("%1", "ROLE: verify")
 
         self.assertFalse(result)
@@ -8262,10 +8262,10 @@ class CodexDispatchConfirmationTest(unittest.TestCase):
             "processing view without prompt",
         ])
 
-        with mock.patch("watcher_core.subprocess.run"), \
-             mock.patch("watcher_core._shared_capture_pane_text", side_effect=lambda _pane: next(snapshots)), \
-             mock.patch("watcher_core._pane_has_working_indicator", side_effect=[True]), \
-             mock.patch("watcher_core.time.sleep", return_value=None):
+        with mock.patch("watcher_dispatch.subprocess.run"), \
+             mock.patch("watcher_dispatch._shared_capture_pane_text", side_effect=lambda _pane: next(snapshots)), \
+             mock.patch("watcher_dispatch._pane_has_working_indicator", side_effect=[True]), \
+             mock.patch("watcher_dispatch.time.sleep", return_value=None):
             result = watcher_core._dispatch_codex("%1", "ROLE: verify")
 
         self.assertTrue(result)
@@ -8276,9 +8276,9 @@ class CodexDispatchConfirmationTest(unittest.TestCase):
             "❯ ROLE: verify\nWorking (synthetic claude verify)\nClaude Code\n❯",
         ])
 
-        with mock.patch("watcher_core.subprocess.run") as run_mock, \
-             mock.patch("watcher_core._shared_capture_pane_text", side_effect=lambda _pane: next(snapshots)), \
-             mock.patch("watcher_core.time.sleep", return_value=None):
+        with mock.patch("watcher_dispatch.subprocess.run") as run_mock, \
+             mock.patch("watcher_dispatch._shared_capture_pane_text", side_effect=lambda _pane: next(snapshots)), \
+             mock.patch("watcher_dispatch.time.sleep", return_value=None):
             result = watcher_core._dispatch_claude("%1", "ROLE: verify")
 
         self.assertTrue(result)
@@ -8290,9 +8290,9 @@ class CodexDispatchConfirmationTest(unittest.TestCase):
             "❯ ROLE: verify\nClaude Code\n❯",
         ])
 
-        with mock.patch("watcher_core.subprocess.run"), \
-             mock.patch("watcher_core._shared_capture_pane_text", side_effect=lambda _pane: next(snapshots)), \
-             mock.patch("watcher_core.time.sleep", return_value=None):
+        with mock.patch("watcher_dispatch.subprocess.run"), \
+             mock.patch("watcher_dispatch._shared_capture_pane_text", side_effect=lambda _pane: next(snapshots)), \
+             mock.patch("watcher_dispatch.time.sleep", return_value=None):
             result = watcher_core._dispatch_claude("%1", "ROLE: verify")
 
         self.assertTrue(result)
@@ -8303,9 +8303,9 @@ class CodexDispatchConfirmationTest(unittest.TestCase):
             itertools.repeat("❯ ROLE: verify"),
         )
 
-        with mock.patch("watcher_core.subprocess.run"), \
-             mock.patch("watcher_core._shared_capture_pane_text", side_effect=lambda _pane: next(snapshots)), \
-             mock.patch("watcher_core.time.sleep", return_value=None):
+        with mock.patch("watcher_dispatch.subprocess.run"), \
+             mock.patch("watcher_dispatch._shared_capture_pane_text", side_effect=lambda _pane: next(snapshots)), \
+             mock.patch("watcher_dispatch.time.sleep", return_value=None):
             result = watcher_core._dispatch_claude("%1", "ROLE: verify")
 
         self.assertFalse(result)
@@ -8320,8 +8320,8 @@ class CodexDispatchConfirmationTest(unittest.TestCase):
                 raise AssertionError("release should not be called when acquire fails")
 
         busy_lock = _BusyLock()
-        with mock.patch("watcher_core._dispatch_lock_for", return_value=busy_lock), \
-             mock.patch("watcher_core._wait_for_dispatch_window") as wait_window:
+        with mock.patch("watcher_dispatch._dispatch_lock_for", return_value=busy_lock), \
+             mock.patch("watcher_dispatch._wait_for_dispatch_window") as wait_window:
             result = watcher_core.tmux_send_keys("%1", "ROLE: verify", pane_type="codex")
 
         self.assertFalse(result)
@@ -8341,9 +8341,9 @@ class CodexDispatchConfirmationTest(unittest.TestCase):
                 self.released = True
 
         tracking_lock = _TrackingLock()
-        with mock.patch("watcher_core._dispatch_lock_for", return_value=tracking_lock), \
-             mock.patch("watcher_core._wait_for_dispatch_window", return_value=True), \
-             mock.patch("watcher_core._dispatch_codex", return_value=True) as dispatch_codex:
+        with mock.patch("watcher_dispatch._dispatch_lock_for", return_value=tracking_lock), \
+             mock.patch("watcher_dispatch._wait_for_dispatch_window", return_value=True), \
+             mock.patch("watcher_dispatch._dispatch_codex", return_value=True) as dispatch_codex:
             result = watcher_core.tmux_send_keys("%1", "ROLE: verify", pane_type="codex")
 
         self.assertTrue(result)
@@ -8364,9 +8364,9 @@ class CodexDispatchConfirmationTest(unittest.TestCase):
                 self.released = True
 
         tracking_lock = _TrackingLock()
-        with mock.patch("watcher_core._dispatch_lock_for", return_value=tracking_lock), \
-             mock.patch("watcher_core._wait_for_dispatch_window", return_value=True), \
-             mock.patch("watcher_core._dispatch_claude", return_value=False) as dispatch_claude:
+        with mock.patch("watcher_dispatch._dispatch_lock_for", return_value=tracking_lock), \
+             mock.patch("watcher_dispatch._wait_for_dispatch_window", return_value=True), \
+             mock.patch("watcher_dispatch._dispatch_claude", return_value=False) as dispatch_claude:
             result = watcher_core.tmux_send_keys("%1", "ROLE: implement", pane_type="claude")
 
         self.assertFalse(result)
@@ -8387,9 +8387,9 @@ class CodexDispatchConfirmationTest(unittest.TestCase):
                 self.released = True
 
         tracking_lock = _TrackingLock()
-        with mock.patch("watcher_core._dispatch_lock_for", return_value=tracking_lock), \
-             mock.patch("watcher_core._wait_for_dispatch_window", return_value=True), \
-             mock.patch("watcher_core._dispatch_gemini", return_value=False) as dispatch_gemini:
+        with mock.patch("watcher_dispatch._dispatch_lock_for", return_value=tracking_lock), \
+             mock.patch("watcher_dispatch._wait_for_dispatch_window", return_value=True), \
+             mock.patch("watcher_dispatch._dispatch_gemini", return_value=False) as dispatch_gemini:
             result = watcher_core.tmux_send_keys("%1", "ROLE: advisory", pane_type="gemini")
 
         self.assertFalse(result)
@@ -8405,11 +8405,11 @@ class CodexDispatchConfirmationTest(unittest.TestCase):
             "› prompt still visible",
         ])
 
-        with mock.patch("watcher_core.subprocess.run"), \
-             mock.patch("watcher_core._shared_capture_pane_text", side_effect=lambda _pane: next(snapshots)), \
-             mock.patch("watcher_core._shared_pane_text_has_input_cursor", return_value=True), \
-             mock.patch("watcher_core._shared_pane_text_has_gemini_activity", return_value=False), \
-             mock.patch("watcher_core.time.sleep", return_value=None):
+        with mock.patch("watcher_dispatch.subprocess.run"), \
+             mock.patch("watcher_dispatch._shared_capture_pane_text", side_effect=lambda _pane: next(snapshots)), \
+             mock.patch("watcher_dispatch._shared_pane_text_has_input_cursor", return_value=True), \
+             mock.patch("watcher_dispatch._shared_pane_text_has_gemini_activity", return_value=False), \
+             mock.patch("watcher_dispatch.time.sleep", return_value=None):
             result = watcher_core._dispatch_gemini("%1", "ROLE: advisory")
 
         self.assertFalse(result)

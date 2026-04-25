@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import logging
 import subprocess
-import sys
 import threading
 import time
 from dataclasses import dataclass
@@ -40,73 +39,6 @@ log = logging.getLogger(__name__)
 _DISPATCH_LOCKS_GUARD = threading.Lock()
 _DISPATCH_LOCKS: dict[str, threading.Lock] = {}
 _DISPATCH_LOCK_TIMEOUT_SEC = 30.0
-
-
-def _watcher_core_compat(name: str, default: Any) -> Any:
-    """Honor watcher_core re-export monkeypatches while keeping dispatch owned here."""
-    module = sys.modules.get("watcher_core")
-    if module is None:
-        return default
-    return getattr(module, name, default)
-
-
-def _capture_pane_text(pane_target: str) -> str:
-    return _watcher_core_compat("_shared_capture_pane_text", _shared_capture_pane_text)(pane_target)
-
-
-def _pane_text_has_input_cursor(text: str) -> bool:
-    return _watcher_core_compat(
-        "_shared_pane_text_has_input_cursor",
-        _shared_pane_text_has_input_cursor,
-    )(text)
-
-
-def _pane_text_has_codex_activity(text: str) -> bool:
-    return _watcher_core_compat(
-        "_shared_pane_text_has_codex_activity",
-        _shared_pane_text_has_codex_activity,
-    )(text)
-
-
-def _pane_text_has_gemini_activity(text: str) -> bool:
-    return _watcher_core_compat(
-        "_shared_pane_text_has_gemini_activity",
-        _shared_pane_text_has_gemini_activity,
-    )(text)
-
-
-def _pane_text_has_working_indicator(text: str) -> bool:
-    return _watcher_core_compat(
-        "_shared_pane_text_has_working_indicator",
-        _shared_pane_text_has_working_indicator,
-    )(text)
-
-
-def _pane_text_is_idle(text: str) -> bool:
-    return _watcher_core_compat("_shared_pane_text_is_idle", _shared_pane_text_is_idle)(text)
-
-
-def _text_matches_markers(text: str, markers: tuple[str, ...] | list[str]) -> bool:
-    return _watcher_core_compat("_shared_text_matches_markers", _shared_text_matches_markers)(text, markers)
-
-
-def _busy_markers_for_lane(lane_name: str) -> tuple[str, ...]:
-    return _watcher_core_compat("_shared_busy_markers_for_lane", _shared_busy_markers_for_lane)(lane_name)
-
-
-def _wait_for_pane_settle(
-    pane_target: str,
-    *,
-    timeout_sec: float,
-    quiet_sec: float,
-    poll_sec: float,
-) -> None:
-    _watcher_core_compat("_shared_wait_for_pane_settle", _shared_wait_for_pane_settle)(
-        pane_target,
-        timeout_sec=timeout_sec,
-        quiet_sec=quiet_sec,
-        poll_sec=poll_sec,
-    )
 
 
 @dataclass(frozen=True)
@@ -530,8 +462,8 @@ def _wait_for_input_ready(
     deadline = time.time() + timeout_sec
     ready_since: float | None = None
     while time.time() < deadline:
-        snapshot = _capture_pane_text(pane_target)
-        if _pane_text_has_input_cursor(snapshot):
+        snapshot = _shared_capture_pane_text(pane_target)
+        if _shared_pane_text_has_input_cursor(snapshot):
             if ready_since is None:
                 ready_since = time.time()
             elif time.time() - ready_since >= stable_sec:
@@ -551,10 +483,10 @@ def _wait_for_dispatch_window(
     Dispatch 직전 pane이 실제 입력을 받을 준비가 됐는지 기다린다.
     MCP 문자열 기반 장기 대기 대신, 고정된 짧은 readiness 확인만 수행한다.
     """
-    if _watcher_core_compat("_is_pane_dead", _is_pane_dead)(pane_target):
-        _watcher_core_compat("_respawn_pane", _respawn_pane)(pane_target)
+    if _is_pane_dead(pane_target):
+        _respawn_pane(pane_target)
 
-    if not _watcher_core_compat("_wait_for_input_ready", _wait_for_input_ready)(
+    if not _wait_for_input_ready(
         pane_target,
         timeout_sec=timeout_sec,
         poll_sec=0.5,
@@ -567,7 +499,7 @@ def _wait_for_dispatch_window(
         )
         return False
 
-    _wait_for_pane_settle(
+    _shared_wait_for_pane_settle(
         pane_target,
         timeout_sec=3.0,
         quiet_sec=0.75,
@@ -635,7 +567,7 @@ def tmux_send_keys(
     log.info("send-keys target=%s pane_type=%s dry_run=%s", pane_target, pane_type, dry_run)
     if dry_run:
         return True
-    dispatch_lock = _watcher_core_compat("_dispatch_lock_for", _dispatch_lock_for)(pane_target)
+    dispatch_lock = _dispatch_lock_for(pane_target)
     if not dispatch_lock.acquire(timeout=_DISPATCH_LOCK_TIMEOUT_SEC):
         log.warning(
             "send-keys skipped: pane dispatch busy target=%s pane_type=%s",
@@ -644,16 +576,16 @@ def tmux_send_keys(
         )
         return False
     try:
-        if not _watcher_core_compat("_wait_for_dispatch_window", _wait_for_dispatch_window)(
+        if not _wait_for_dispatch_window(
             pane_target,
             pane_type,
         ):
             return False
         if pane_type == "codex":
-            return _watcher_core_compat("_dispatch_codex", _dispatch_codex)(pane_target, command)
+            return _dispatch_codex(pane_target, command)
         if pane_type == "gemini":
-            return _watcher_core_compat("_dispatch_gemini", _dispatch_gemini)(pane_target, command)
-        return _watcher_core_compat("_dispatch_claude", _dispatch_claude)(pane_target, command)
+            return _dispatch_gemini(pane_target, command)
+        return _dispatch_claude(pane_target, command)
     except subprocess.CalledProcessError as e:
         log.error("send-keys failed: %s", e.stderr.decode().strip())
         return False
@@ -663,8 +595,8 @@ def tmux_send_keys(
 
 def _pane_has_working_indicator(pane_target: str) -> bool:
     """Check whether the recent pane output shows Codex has started working."""
-    text = _capture_pane_text(pane_target)
-    return _pane_text_has_working_indicator(text)
+    text = _shared_capture_pane_text(pane_target)
+    return _shared_pane_text_has_working_indicator(text)
 
 
 def _dispatch_codex(pane_target: str, command: str) -> bool:
@@ -674,24 +606,24 @@ def _dispatch_codex(pane_target: str, command: str) -> bool:
     Always paste-buffer into the running session — never re-launch codex.
     """
     log.info("dispatching codex prompt: chars=%d", len(command))
-    _watcher_core_compat("_clear_prompt_input_line", _clear_prompt_input_line)(pane_target)
+    _clear_prompt_input_line(pane_target)
     subprocess.run(["tmux", "set-buffer", command], check=True, capture_output=True)
     subprocess.run(["tmux", "paste-buffer", "-t", pane_target], check=True, capture_output=True)
-    pasted_snapshot = _capture_pane_text(pane_target)
+    pasted_snapshot = _shared_capture_pane_text(pane_target)
     time.sleep(1.0)
     for attempt in range(3):
         subprocess.run(["tmux", "send-keys", "-t", pane_target, "Enter"], check=True, capture_output=True)
         time.sleep(1.5)
-        snapshot = _capture_pane_text(pane_target)
-        if not _pane_text_has_input_cursor(snapshot):
+        snapshot = _shared_capture_pane_text(pane_target)
+        if not _shared_pane_text_has_input_cursor(snapshot):
             log.info("codex prompt consumed: attempt %d", attempt + 1)
             deadline = time.time() + 6.0
             while time.time() < deadline:
-                if _watcher_core_compat("_pane_has_working_indicator", _pane_has_working_indicator)(pane_target):
+                if _pane_has_working_indicator(pane_target):
                     log.info("codex working indicator detected")
                     return True
-                current_snapshot = _capture_pane_text(pane_target)
-                if current_snapshot != snapshot and _pane_text_has_codex_activity(current_snapshot):
+                current_snapshot = _shared_capture_pane_text(pane_target)
+                if current_snapshot != snapshot and _shared_pane_text_has_codex_activity(current_snapshot):
                     log.info("codex response activity detected after consume: attempt %d", attempt + 1)
                     return True
                 time.sleep(0.5)
@@ -699,7 +631,7 @@ def _dispatch_codex(pane_target: str, command: str) -> bool:
                 "codex dispatch consumed without immediate confirmation: defer acceptance to wrapper events"
             )
             return True
-        if snapshot != pasted_snapshot and _pane_text_has_codex_activity(snapshot):
+        if snapshot != pasted_snapshot and _shared_pane_text_has_codex_activity(snapshot):
             log.info("codex response activity detected: attempt %d", attempt + 1)
             return True
     log.info("codex prompt still visible or unconfirmed after retries")
@@ -708,23 +640,23 @@ def _dispatch_codex(pane_target: str, command: str) -> bool:
 
 def _dispatch_claude(pane_target: str, command: str) -> bool:
     """Dispatch to Claude pane via paste-buffer + Enter."""
-    _watcher_core_compat("_clear_prompt_input_line", _clear_prompt_input_line)(pane_target)
+    _clear_prompt_input_line(pane_target)
     subprocess.run(["tmux", "set-buffer", command], check=True, capture_output=True)
     subprocess.run(["tmux", "paste-buffer", "-t", pane_target], check=True, capture_output=True)
-    pasted_snapshot = _capture_pane_text(pane_target)
+    pasted_snapshot = _shared_capture_pane_text(pane_target)
     time.sleep(1.0)
     for attempt in range(3):
         subprocess.run(["tmux", "send-keys", "-t", pane_target, "Enter"], check=True, capture_output=True)
         time.sleep(1.5)
-        snapshot = _capture_pane_text(pane_target)
-        if not _pane_text_has_input_cursor(snapshot):
+        snapshot = _shared_capture_pane_text(pane_target)
+        if not _shared_pane_text_has_input_cursor(snapshot):
             log.info("claude prompt consumed: attempt %d", attempt + 1)
             return True
         if snapshot != pasted_snapshot:
-            if _text_matches_markers(snapshot, _busy_markers_for_lane("Claude")):
+            if _shared_text_matches_markers(snapshot, _shared_busy_markers_for_lane("Claude")):
                 log.info("claude busy output detected after dispatch: attempt %d", attempt + 1)
                 return True
-            if _pane_text_is_idle(snapshot):
+            if _shared_pane_text_is_idle(snapshot):
                 log.info("claude ready output detected after dispatch: attempt %d", attempt + 1)
                 return True
     log.info("claude prompt still visible or unconfirmed after retries")
@@ -733,19 +665,19 @@ def _dispatch_claude(pane_target: str, command: str) -> bool:
 
 def _dispatch_gemini(pane_target: str, command: str) -> bool:
     """Dispatch to Gemini pane via paste-buffer + Enter."""
-    _watcher_core_compat("_clear_prompt_input_line", _clear_prompt_input_line)(pane_target)
+    _clear_prompt_input_line(pane_target)
     subprocess.run(["tmux", "set-buffer", command], check=True, capture_output=True)
     subprocess.run(["tmux", "paste-buffer", "-t", pane_target], check=True, capture_output=True)
-    pasted_snapshot = _capture_pane_text(pane_target)
+    pasted_snapshot = _shared_capture_pane_text(pane_target)
     time.sleep(1.0)
     for attempt in range(3):
         subprocess.run(["tmux", "send-keys", "-t", pane_target, "Enter"], check=True, capture_output=True)
         time.sleep(1.5)
-        snapshot = _capture_pane_text(pane_target)
-        if not _pane_text_has_input_cursor(snapshot):
+        snapshot = _shared_capture_pane_text(pane_target)
+        if not _shared_pane_text_has_input_cursor(snapshot):
             log.info("gemini prompt consumed: attempt %d", attempt + 1)
             return True
-        if snapshot != pasted_snapshot and _pane_text_has_gemini_activity(snapshot):
+        if snapshot != pasted_snapshot and _shared_pane_text_has_gemini_activity(snapshot):
             log.info("gemini response activity detected: attempt %d", attempt + 1)
             return True
     log.info("gemini prompt still visible or unconfirmed after retries")

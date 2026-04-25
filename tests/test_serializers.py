@@ -94,6 +94,30 @@ class SerializerReviewQueueQualityTest(unittest.TestCase):
         self.assertIsNone(items[0]["quality_info"]["avg_similarity_score"])
         self.assertIsNone(items[0]["quality_info"]["is_high_quality"])
 
+    def test_build_review_queue_items_includes_recent_context_turns(self) -> None:
+        serializer = _Serializer({"artifact-quality": []})
+        long_user_text = "긴 사용자 맥락 " + ("x" * 600)
+        messages = [
+            {"message_id": "msg-old", "role": "user", "text": "오래된 맥락"},
+            {"message_id": "msg-context-1", "role": "assistant", "text": "첫 번째 최근 답변"},
+            {"message_id": "msg-context-2", "role": "user", "corrected_text": long_user_text},
+            {"message_id": "msg-context-3", "role": "assistant", "content": "세 번째 최근 답변"},
+            _review_queue_message(),
+        ]
+
+        items = serializer._build_review_queue_items(messages)
+
+        self.assertEqual(len(items), 1)
+        self.assertEqual(
+            items[0]["context_turns"],
+            [
+                {"role": "assistant", "text": "첫 번째 최근 답변", "message_id": "msg-context-1"},
+                {"role": "user", "text": long_user_text[:500], "message_id": "msg-context-2"},
+                {"role": "assistant", "text": "세 번째 최근 답변", "message_id": "msg-context-3"},
+            ],
+        )
+        self.assertLessEqual(len(items[0]["context_turns"][1]["text"]), 500)
+
 
 if __name__ == "__main__":
     unittest.main()

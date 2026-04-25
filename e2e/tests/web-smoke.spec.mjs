@@ -11721,6 +11721,46 @@ test("quality-info original_snippet and corrected_snippet present in review queu
   expect(item.corrected_snippet.length).toBeLessThanOrEqual(400);
 });
 
+test("review queue item includes context_turns and panel renders conversation context", async ({ page }) => {
+  const sessionId = buildSessionId("rq-context");
+  const contextPrompt = `review queue context prompt ${sessionId}`;
+  const { sessionPayload, sourceMessageId } = await createQualityReviewQueueItem(
+    page,
+    sessionId,
+    "대화 맥락을 보고 판단할 수 있도록 간결하게 고쳤습니다.",
+    contextPrompt
+  );
+  const reviewItems = sessionPayload.session?.review_queue_items ?? [];
+  const item = reviewItems.find(
+    (candidate) => candidate.is_global !== true && candidate.source_message_id === sourceMessageId
+  );
+  expect(item).toBeTruthy();
+  expect(Object.prototype.hasOwnProperty.call(item, "context_turns")).toBeTruthy();
+  expect(Array.isArray(item.context_turns)).toBeTruthy();
+  expect(item.context_turns.length).toBeGreaterThan(0);
+  expect(item.context_turns.length).toBeLessThanOrEqual(3);
+  const userContextTurn = item.context_turns.find(
+    (turn) => turn.role === "user" && turn.text.includes(contextPrompt)
+  );
+  expect(userContextTurn).toBeTruthy();
+  expect(userContextTurn.text.length).toBeLessThanOrEqual(500);
+
+  const sessionTitle = sessionPayload.session?.title ?? sessionId;
+  await page.goto("/app-preview");
+  const sessionButton = page.locator("button", { hasText: sessionTitle }).first();
+  await expect(sessionButton).toBeVisible({ timeout: 10_000 });
+  await sessionButton.click();
+
+  const reviewBadge = page.getByTestId("review-queue-badge");
+  await expect(reviewBadge).toBeVisible({ timeout: 10_000 });
+  await reviewBadge.click();
+
+  const contextBox = page.getByTestId("review-context-turns").first();
+  await expect(contextBox).toBeVisible({ timeout: 5_000 });
+  await expect(contextBox).toContainText("대화 맥락");
+  await expect(contextBox).toContainText(contextPrompt);
+});
+
 test("quality-info global candidate appears in review queue after cross-session recurrence", async ({ page }) => {
   await page.goto("/");
   const recurringCorrectedText = "전역 반복 패턴 교정 결과입니다.";

@@ -4448,6 +4448,48 @@ class SerializerMixin:
         self,
         messages: list[dict[str, Any]],
     ) -> list[dict[str, Any]]:
+        context_turns_limit = 3
+        context_text_max = 500
+
+        def _message_id_key(message: dict[str, Any]) -> str:
+            return str(message.get("message_id") or message.get("source_message_id") or "").strip().casefold()
+
+        def _extract_context_turns(source_message_id: str) -> list[dict[str, Any]]:
+            source_key = str(source_message_id or "").strip().casefold()
+            if not source_key:
+                return []
+            source_index = next(
+                (
+                    index
+                    for index, message in enumerate(messages)
+                    if isinstance(message, dict) and _message_id_key(message) == source_key
+                ),
+                None,
+            )
+            if source_index is None or source_index == 0:
+                return []
+
+            context_turns: list[dict[str, Any]] = []
+            for context_message in messages[max(0, source_index - context_turns_limit):source_index]:
+                if not isinstance(context_message, dict):
+                    continue
+                role = str(context_message.get("role") or "").strip()
+                text = str(
+                    context_message.get("text")
+                    or context_message.get("corrected_text")
+                    or context_message.get("content")
+                    or ""
+                ).strip()
+                if not role or not text:
+                    continue
+                message_id = str(context_message.get("message_id") or "").strip() or None
+                context_turns.append({
+                    "role": role,
+                    "text": text[:context_text_max],
+                    "message_id": message_id,
+                })
+            return context_turns
+
         review_queue_items: list[dict[str, Any]] = []
         for message in messages:
             if not isinstance(message, dict):
@@ -4538,6 +4580,7 @@ class SerializerMixin:
                     "delta_summary": delta_summary,
                     "original_snippet": original_snippet,
                     "corrected_snippet": corrected_snippet,
+                    "context_turns": _extract_context_turns(source_message_id),
                     "is_global": False,
                 }
             )
@@ -4655,6 +4698,7 @@ class SerializerMixin:
                     "corrected_snippet": (
                         str(first_correction.get("corrected_text") or "")[:400] or None
                     ) if isinstance(first_correction, dict) else None,
+                    "context_turns": [],
                     "is_global": True,
                 })
         except Exception:

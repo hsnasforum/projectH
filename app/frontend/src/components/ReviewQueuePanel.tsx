@@ -40,6 +40,18 @@ function summarizeDelta(item: ReviewQueueItem): string | null {
   return null;
 }
 
+function contextRoleLabel(role: string): string {
+  if (role === "user") return "사용자";
+  if (role === "assistant") return "응답";
+  return role || "맥락";
+}
+
+function contextRoleClass(role: string): string {
+  if (role === "user") return "border-sky-400/20 bg-sky-500/10 text-sky-300";
+  if (role === "assistant") return "border-white/10 bg-white/5 text-sidebar-muted";
+  return "border-violet-400/20 bg-violet-500/10 text-violet-300";
+}
+
 export default function ReviewQueuePanel({ items, sessionId, onReview }: Props) {
   const [editDrafts, setEditDrafts] = useState<Record<string, string | null>>({});
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
@@ -58,6 +70,12 @@ export default function ReviewQueuePanel({ items, sessionId, onReview }: Props) 
           const statementDraft = editDrafts[item.candidate_id] ?? item.statement;
           const isExpanded = expandedItems.has(item.candidate_id);
           const hasEvidenceDetail = Boolean(item.original_snippet && item.corrected_snippet);
+          const contextTurns = (item.context_turns ?? []).filter((turn) => (
+            typeof turn.role === "string" &&
+            turn.role.trim() &&
+            typeof turn.text === "string" &&
+            turn.text.trim()
+          ));
           return (
             <li
               key={`${item.source_message_id}:${item.candidate_id}`}
@@ -93,6 +111,30 @@ export default function ReviewQueuePanel({ items, sessionId, onReview }: Props) 
                 <p className="mb-2 truncate text-[11px] text-sidebar-muted">
                   {deltaSummaryText}
                 </p>
+              )}
+              {contextTurns.length > 0 && (
+                <div
+                  data-testid="review-context-turns"
+                  className="mb-2 space-y-1 border-l border-white/10 pl-2 text-[11px] leading-snug"
+                >
+                  <p className="font-medium text-sidebar-muted">대화 맥락</p>
+                  {contextTurns.map((turn, index) => (
+                    <div
+                      key={turn.message_id ?? `${item.candidate_id}:context:${index}`}
+                      data-testid="review-context-turn"
+                      className="flex min-w-0 gap-1.5"
+                    >
+                      <span
+                        className={`mt-0.5 h-fit shrink-0 rounded-full border px-1.5 py-0.5 text-[10px] font-medium ${contextRoleClass(turn.role.trim())}`}
+                      >
+                        {contextRoleLabel(turn.role.trim())}
+                      </span>
+                      <p className="min-w-0 flex-1 whitespace-pre-wrap break-words text-sidebar-muted line-clamp-3">
+                        {turn.text.trim()}
+                      </p>
+                    </div>
+                  ))}
+                </div>
               )}
               {hasEvidenceDetail && (
                 <button

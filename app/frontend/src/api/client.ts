@@ -259,6 +259,11 @@ export interface ReviewQueueItem {
   } | null;
   original_snippet?: string | null;
   corrected_snippet?: string | null;
+  context_turns?: Array<{
+    role: string;
+    text: string;
+    message_id?: string | null;
+  }> | null;
   is_global?: boolean | null;
 }
 

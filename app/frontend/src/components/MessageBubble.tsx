@@ -1,5 +1,7 @@
 import { useState, useRef, useEffect, useMemo, type ReactNode } from "react";
 import { marked } from "marked";
+import { fetchPreferences, pausePreference, updatePreferenceDescription } from "../api/client";
+import type { PreferenceRecord } from "../api/client";
 import type { Message } from "../types";
 import LinkChip from "./LinkChip";
 
@@ -72,6 +74,11 @@ export default function MessageBubble({
   const [showRejectNote, setShowRejectNote] = useState(false);
   const [rejectNote, setRejectNote] = useState("");
   const [rejected, setRejected] = useState(false);
+  const [prefPopoverOpen, setPrefPopoverOpen] = useState(false);
+  const [fullPreferences, setFullPreferences] = useState<PreferenceRecord[]>([]);
+  const [editingPrefId, setEditingPrefId] = useState<string | null>(null);
+  const [editDescription, setEditDescription] = useState("");
+  const prefBadgeRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
@@ -81,6 +88,26 @@ export default function MessageBubble({
       textareaRef.current.style.height = textareaRef.current.scrollHeight + "px";
     }
   }, [editing]);
+
+  useEffect(() => {
+    if (!prefPopoverOpen) return;
+    const handler = (event: MouseEvent) => {
+      if (prefBadgeRef.current && !prefBadgeRef.current.contains(event.target as Node)) {
+        setPrefPopoverOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [prefPopoverOpen]);
+
+  useEffect(() => {
+    if (!prefPopoverOpen) return;
+    fetchPreferences()
+      .then((payload) => {
+        setFullPreferences(payload.preferences ?? []);
+      })
+      .catch(() => {});
+  }, [prefPopoverOpen]);
 
   const isSearchOnly = !isUser
     && (message.search_results?.length ?? 0) > 0
@@ -101,6 +128,30 @@ export default function MessageBubble({
 
   const cancelEdit = () => {
     setEditing(false);
+  };
+
+  const pauseAppliedPreference = async (fingerprint: string) => {
+    try {
+      const preferencesPayload = await fetchPreferences();
+      const preferenceId = preferencesPayload.preferences.find(
+        (pref) => pref.delta_fingerprint === fingerprint,
+      )?.preference_id ?? fingerprint;
+      await pausePreference(preferenceId);
+    } finally {
+      setPrefPopoverOpen(false);
+    }
+  };
+
+  const savePreferenceDescription = async (preference: PreferenceRecord, description: string) => {
+    const trimmed = description.trim();
+    if (!trimmed) return;
+    const result = await updatePreferenceDescription(preference.preference_id, trimmed);
+    setFullPreferences((preferences) => preferences.map((pref) => (
+      pref.preference_id === preference.preference_id
+        ? { ...pref, ...result.preference, description: result.preference?.description ?? trimmed }
+        : pref
+    )));
+    setEditingPrefId(null);
   };
 
   return (
@@ -399,13 +450,116 @@ export default function MessageBubble({
               </span>
             )}
             {message.applied_preferences && message.applied_preferences.length > 0 && (
-              <span
-                data-testid="applied-preferences-badge"
-                className="text-[10px] font-medium text-violet-600/70 bg-violet-50 px-2 py-0.5 rounded-full cursor-help"
-                title={message.applied_preferences.map(p => p.description).join('\n')}
-              >
-                선호 {message.applied_preferences.length}건 반영
-              </span>
+              <div ref={prefBadgeRef} className="relative inline-flex">
+                <button
+                  type="button"
+                  data-testid="applied-preferences-badge"
+                  aria-haspopup="dialog"
+                  aria-expanded={prefPopoverOpen}
+                  onClick={() => setPrefPopoverOpen((open) => !open)}
+                  className="text-[10px] font-medium text-violet-600/70 bg-violet-50 px-2 py-0.5 rounded-full cursor-pointer hover:bg-violet-100 transition-colors"
+                  title={message.applied_preferences.map((pref) => pref.description).join("\n")}
+                >
+                  선호 {message.applied_preferences.length}건 반영
+                </button>
+                {prefPopoverOpen && (
+                  <div
+                    data-testid="applied-preferences-popover"
+                    className="absolute left-0 top-full mt-1 z-20 w-64 rounded-lg border border-stone-200 bg-white p-2 text-left shadow-lg"
+                    onClick={(event) => event.stopPropagation()}
+                  >
+                    {message.applied_preferences.map((pref) => {
+                      const fullPref = fullPreferences.find(
+                        (preference) => preference.delta_fingerprint === pref.fingerprint,
+                      );
+                      const isEditing = editingPrefId === pref.fingerprint;
+                      const displayDescription = fullPref?.description ?? pref.description;
+                      return (
+                        <div
+                          key={pref.fingerprint || pref.description}
+                          className="flex flex-col gap-1 border-b border-stone-100 px-1 py-1 text-[11px] last:border-0"
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            {isEditing ? (
+                              <input
+                                data-testid="pref-description-input"
+                                className="flex-1 rounded border border-violet-300 px-1 py-0.5 text-[11px] focus:outline-none"
+                                value={editDescription}
+                                onChange={(event) => setEditDescription(event.target.value)}
+                                autoFocus
+                              />
+                            ) : (
+                              <span className="min-w-0 flex-1 truncate text-stone-700" title={displayDescription}>
+                                {displayDescription}
+                              </span>
+                            )}
+                            <div className="flex shrink-0 gap-1">
+                              {isEditing ? (
+                                <>
+                                  <button
+                                    type="button"
+                                    data-testid="pref-description-save"
+                                    onClick={async () => {
+                                      if (fullPref) {
+                                        await savePreferenceDescription(fullPref, editDescription);
+                                      } else {
+                                        setEditingPrefId(null);
+                                      }
+                                    }}
+                                    className="rounded border border-violet-200 px-1.5 py-0.5 text-[10px] text-violet-600"
+                                  >
+                                    저장
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setEditingPrefId(null)}
+                                    className="rounded border border-stone-200 px-1.5 py-0.5 text-[10px] text-stone-400"
+                                  >
+                                    취소
+                                  </button>
+                                </>
+                              ) : (
+                                <button
+                                  type="button"
+                                  data-testid="pref-description-edit"
+                                  onClick={() => {
+                                    setEditingPrefId(pref.fingerprint);
+                                    setEditDescription(displayDescription);
+                                  }}
+                                  className="rounded border border-stone-200 px-1.5 py-0.5 text-[10px] text-stone-400 hover:text-stone-600"
+                                >
+                                  편집
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                data-testid="preference-pause-btn"
+                                onClick={async (event) => {
+                                  event.stopPropagation();
+                                  await pauseAppliedPreference(pref.fingerprint);
+                                }}
+                                className="whitespace-nowrap rounded border border-stone-200 px-1.5 py-0.5 text-[10px] text-stone-500 hover:border-stone-300 hover:text-stone-700"
+                              >
+                                일시중지
+                              </button>
+                            </div>
+                          </div>
+                          {fullPref?.original_snippet && (
+                            <div className="pl-1 text-[10px] text-stone-400" data-testid="pref-original-snippet">
+                              <span className="font-medium">원본: </span>{fullPref.original_snippet}
+                            </div>
+                          )}
+                          {fullPref?.corrected_snippet && (
+                            <div className="pl-1 text-[10px] text-violet-500" data-testid="pref-corrected-snippet">
+                              <span className="font-medium">교정: </span>{fullPref.corrected_snippet}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
             )}
           </div>
         )}

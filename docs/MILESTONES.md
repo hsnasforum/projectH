@@ -793,10 +793,40 @@ M28–M30 bundle release gate 통과 및 reviewed-memory loop end-to-end 검증.
 
 - **Milestone 33 closed** (Axes 1–2): coordination state + artifact stabilizer 구조 분리 완료; watcher_core.py 5001 → 3977 lines (M30 시작 대비 -1024 lines)
 
+### Milestone 34: Applied Preference Loop Visibility
+
+#### Goal
+chat 응답에 적용된 선호가 브라우저 새로고침 후에도 badge로 유지되도록 복원 경로 수정.
+
+#### Guardrails
+- backend preference store 스키마 변경 없음
+- applied_preference_ids → applied_preferences 복원은 read-path만 변경
+
+#### Shipped Infrastructure (Axes 1–2, 2026-04-25)
+- Axis 1 (seq 172–173): `_serialize_session`에서 `applied_preference_ids` fingerprint → preference descriptions 복원; `MessageBubble.tsx` `data-testid="applied-preferences-badge"` 추가; E2E 시나리오 147에 badge assertion 추가
+- Axis 2 (seq 175–176): M28–M34 bundle release gate **148 E2E passed (7.5m)**, 229 unit tests OK; Makefile stale-server kill 추가
+
+- **Milestone 34 closed** (Axes 1–2): applied preference badge 복원 완료; 브라우저 새로고침 후에도 badge 표시
+
+### Milestone 35: Interactive Applied Preference Management
+
+#### Goal
+applied-preferences badge를 클릭 가능한 interactive button으로 전환; popover에서 직접 선호를 관리(일시중지, description 편집, snippet 확인).
+
+#### Guardrails
+- backend `pausePreference`, `updatePreferenceDescription`, `fetchPreferences` API 기구현 재사용
+- E2E 시나리오는 DB 누적 상태에 내성 있는 functional flow assertion으로 설계
+
+#### Shipped Infrastructure (Axes 1–2, 2026-04-25)
+- Axis 1 (seq 179–183): badge span → interactive button; popover 내 preference 목록 + `preference-pause-btn`; 외부 클릭 닫기; E2E 시나리오 148 추가 (badge click → popover → pause → status paused); **148 E2E passed (7.5m)**
+- Axis 2 (seq 185–186): popover 내 `original_snippet`/`corrected_snippet` 표시 (`pref-original-snippet`, `pref-corrected-snippet`); description inline edit (`pref-description-edit`, 저장/취소); `fetchPreferences` on popover open; **148 E2E passed (7.5m)**, 229 unit tests OK
+
+- **Milestone 35 closed** (Axes 1–2): applied preference badge interactive 관리 완료
+
 ## Next 3 Implementation Priorities
 
-1. **PR #33 merge**: feat/watcher-turn-state (M28–M33, seqs 115–167) is open as draft PR awaiting operator merge approval.
-2. **M34 direction**: M33 structural phase complete; next functional milestone direction — via advisory.
+1. **New PR (feat/watcher-turn-state)**: M34–M35 기능 작업(seqs 172–186)을 포함한 새 PR 생성 후 operator merge 결정 대기. PR #33은 2026-04-25 main에 merge됨.
+2. **M36 direction**: M35 완료; 다음 기능 milestone 방향 — via advisory.
 3. **watcher_core re-export note**: `watcher_core.*` re-exports (WatcherTurnState, tmux_send_keys 등)는 test 계약 유지용. 향후 import 정리 시 관련 test mock 대상도 함께 정규화 필요.
 
 ## Do Not Pull Forward

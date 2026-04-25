@@ -362,6 +362,68 @@ test.describe("controller office smoke", () => {
     await expect(page.locator("#lm-name")).toHaveText("Claude");
   });
 
+  test("controller labels commit push doc-sync operator attention without a lane", async ({ page }) => {
+    await disableRuntimeMonitor(page);
+    let statusRequests = 0;
+    await page.route("**/api/runtime/status", (route) => {
+      statusRequests += 1;
+      return route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({
+          runtime_state: "RUNNING",
+          project_root: "/tmp/projectH",
+          automation_health: "needs_operator",
+          automation_reason_code: "m37_commit_push_milestones_doc_sync",
+          automation_next_action: "operator_required",
+          role_owners: { implement: "Codex", verify: "Claude", advisory: "Gemini" },
+          lanes: [
+            { name: "Codex", state: "ready", note: "waiting" },
+            { name: "Claude", state: "ready", note: "waiting" },
+            { name: "Gemini", state: "ready", note: "waiting" },
+          ],
+          control: {
+            active_control_file: ".pipeline/operator_request.md",
+            active_control_status: "needs_operator",
+            active_control_seq: 216,
+          },
+          autonomy: {
+            mode: "needs_operator",
+            reason_code: "m37_commit_push_milestones_doc_sync",
+            decision_required: "M37 Axis 2 커밋 + push + MILESTONES.md doc-sync 승인",
+            operator_policy: "immediate_publish",
+            operator_eligible: true,
+          },
+          turn_state: { state: "IDLE", active_role: "", active_lane: "" },
+          watcher: { alive: true },
+          active_round: { state: "IDLE" },
+          artifacts: {},
+        }),
+      });
+    });
+
+    await page.goto("/controller");
+    const board = page.locator("#operator-attention-board");
+    await expect(board).toBeVisible();
+    await expect(board).toContainText("커밋/푸시 문서 동기화 승인 필요");
+    await expect(board).toContainText("m37_commit_push_milestones_doc_sync");
+    await expect(board).toContainText("Repository / release gate");
+    await expect(board).toContainText("M37 Axis 2 커밋 + push + MILESTONES.md doc-sync 승인");
+    await expect(board).toContainText("operator_request.md · #216");
+    await expect(board).toContainText("runtime status가 커밋/푸시 및 문서 동기화 승인 경계를 보고했습니다.");
+    await expect(page.locator("#operator-attention-open-log")).toBeDisabled();
+
+    const attention = await page.evaluate(() => window.getOperatorAttentionDebug());
+    expect(attention.tone).toBe("operator");
+    expect(attention.laneName).toBe("");
+    expect(attention.targetLabel).toBe("Repository / release gate");
+
+    await page.evaluate(() => window.testSetRuntimeMonitorConnected(true));
+    const requestsBeforeRefresh = statusRequests;
+    await page.locator("#operator-attention-refresh").click();
+    await expect.poll(() => statusRequests).toBeGreaterThan(requestsBeforeRefresh);
+    await expect(page.locator("#event-list")).toContainText("Operator attention refreshed");
+  });
+
   test("controller shows active verify owner as working even when lane snapshot is ready", async ({
     page,
   }) => {

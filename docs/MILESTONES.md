@@ -838,9 +838,25 @@ pause 동작이 UI 상태 변경에서 끝나지 않고 실제 applied preferenc
 
 - **Milestone 36 closed** (Axes 1–2): preference pause의 기능적 억제 효과 및 세션 재로드 영속성 검증 완료
 
+### Milestone 37: Infrastructure Hardening + Preference Lifecycle Closure
+
+#### Goal
+SQLite migration rollout을 종결하고, preference resume/reject lifecycle 및 누적 DB 환경에서도 안정적인 reviewed-memory E2E assertion을 확보.
+
+#### Guardrails
+- M37 Axis 2는 E2E assertion 및 fixture cleanup 범위에 한정
+- 누적 active preference cap 환경에서도 동작하는 count-agnostic assertion 유지
+- release/publish 작업은 operator approval boundary를 통과한 뒤 수행
+
+#### Shipped Infrastructure (Axes 1–2, 2026-04-25/26)
+- Axis 1 (seq 204–205): `migrate_json_to_sqlite` 호출에 sessions/artifacts/preferences dirs 전달 완성; backlog truth-sync. 30 SQLite tests OK.
+- Axis 2 (seq 207–213): preference resume/reject lifecycle E2E (시나리오 149) + count-agnostic fix (시나리오 147/148). 149 E2E passed (13.5m).
+
+- **Milestone 37 closed** (Axes 1–2): SQLite 전체 마이그레이션 완성 + preference lifecycle (pause/resume/reject) E2E closure 완료
+
 ## Next 3 Implementation Priorities
 
-1. **M37 direction**: M36 완료; 다음 milestone 방향 — via advisory. (resume/reject lifecycle, 새 기능, 또는 기술 부채 중 선택)
+1. **M38 direction**: M37 완료 이후 다음 milestone 방향 확정 필요 — advisory는 Test Infrastructure Robustness / E2E 실행 환경 안정화를 권고했으며, 구현은 다음 control에서 확정
 2. **watcher_core re-export note**: `watcher_core.*` re-exports (WatcherTurnState, tmux_send_keys 등)는 test 계약 유지용. 향후 import 정리 시 관련 test mock 대상도 함께 정규화 필요.
 3. **E2E 환경 개선 note**: `make e2e-test`는 기존 서버 존재 시에만 안정적. 향후 start-server.sh healthcheck wrapper로 개선 가능.
 

@@ -216,6 +216,8 @@ export interface PreferenceRecord {
     avg_similarity_score: number | null;
     is_high_quality: boolean | null;
   } | null;
+  review_reason_note?: string | null;
+  source_session_title?: string | null;
   activated_at: string | null;
   created_at: string;
   updated_at: string;

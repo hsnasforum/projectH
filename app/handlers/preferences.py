@@ -67,6 +67,22 @@ def _adopted_correction_source_refs(correction: dict[str, Any], fingerprint: str
     }
 
 
+def _preference_review_source_ref(preference: dict[str, Any]) -> dict[str, Any] | None:
+    refs = preference.get("reviewed_candidate_source_refs")
+    if isinstance(refs, list):
+        dict_refs = [ref for ref in refs if isinstance(ref, dict)]
+        for ref in reversed(dict_refs):
+            if _as_nonempty_text(ref.get("reason_note")) or _as_nonempty_text(ref.get("session_title")):
+                return ref
+        if dict_refs:
+            return dict_refs[-1]
+
+    source_refs = preference.get("source_refs")
+    if isinstance(source_refs, dict):
+        return source_refs
+    return None
+
+
 def _preference_exists_for_fingerprint(preference_store: Any, fingerprint: str) -> bool:
     find_by_fingerprint = getattr(preference_store, "find_by_fingerprint", None)
     if callable(find_by_fingerprint):
@@ -126,6 +142,14 @@ class PreferenceHandlerMixin:
             else:
                 quality_info = {"avg_similarity_score": None, "is_high_quality": None}
             pref_copy["quality_info"] = quality_info
+            source_ref = _preference_review_source_ref(pref_copy)
+            if source_ref is not None:
+                review_reason_note = _as_nonempty_text(source_ref.get("reason_note"))
+                source_session_title = _as_nonempty_text(source_ref.get("session_title"))
+                if review_reason_note:
+                    pref_copy["review_reason_note"] = review_reason_note
+                if source_session_title:
+                    pref_copy["source_session_title"] = source_session_title
             enriched.append(pref_copy)
 
         active_preferences = [

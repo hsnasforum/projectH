@@ -155,6 +155,19 @@ class SerializerReviewQueueQualityTest(unittest.TestCase):
             },
         )
 
+    def test_build_review_queue_items_includes_source_session_metadata(self) -> None:
+        serializer = _Serializer({"artifact-quality": []})
+
+        items = serializer._build_review_queue_items(
+            [_review_queue_message()],
+            session_id="session-123",
+            session_title="문서 요약 세션",
+        )
+
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["source_session_id"], "session-123")
+        self.assertEqual(items[0]["source_session_title"], "문서 요약 세션")
+
     def test_build_review_queue_items_includes_global_evidence_summary(self) -> None:
         serializer = _Serializer(
             {},

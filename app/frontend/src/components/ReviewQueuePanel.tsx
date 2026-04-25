@@ -81,6 +81,7 @@ export default function ReviewQueuePanel({ items, sessionId, onReview }: Props) 
             turn.text.trim()
           ));
           const evidenceSummary = item.evidence_summary;
+          const sourceSessionTitle = item.source_session_title?.trim();
           return (
             <li
               key={`${item.source_message_id}:${item.candidate_id}`}
@@ -115,6 +116,11 @@ export default function ReviewQueuePanel({ items, sessionId, onReview }: Props) 
               {deltaSummaryText && (
                 <p className="mb-2 truncate text-[11px] text-sidebar-muted">
                   {deltaSummaryText}
+                </p>
+              )}
+              {sourceSessionTitle && (
+                <p data-testid="review-source-session" className="mb-2 truncate text-[11px] text-sidebar-muted">
+                  세션: {sourceSessionTitle}
                 </p>
               )}
               {evidenceSummary && (

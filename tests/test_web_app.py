@@ -5709,6 +5709,8 @@ class WebAppServiceTest(unittest.TestCase):
                         "promotion_eligibility": "eligible_for_review",
                         "artifact_id": artifact_id,
                         "source_message_id": source_message_id,
+                        "source_session_id": payload["session"]["review_queue_items"][0]["source_session_id"],
+                        "source_session_title": payload["session"]["review_queue_items"][0]["source_session_title"],
                         "supporting_artifact_ids": [artifact_id],
                         "supporting_source_message_ids": [source_message_id],
                         "supporting_signal_refs": approved_source_message["session_local_candidate"]["supporting_signal_refs"],

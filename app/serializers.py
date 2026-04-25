@@ -298,7 +298,13 @@ class SerializerMixin:
             ]
         else:
             localized.pop("recurrence_aggregate_candidates", None)
-        localized["review_queue_items"] = self._build_review_queue_items(localized_messages)
+        session_id = str(session.get("session_id") or "").strip() or None
+        session_title = str(session.get("title") or "").strip() or None
+        localized["review_queue_items"] = self._build_review_queue_items(
+            localized_messages,
+            session_id=session_id,
+            session_title=session_title,
+        )
         localized["pending_approvals"] = [
             self._serialize_approval(approval)
             for approval in session.get("pending_approvals", [])
@@ -4447,6 +4453,9 @@ class SerializerMixin:
     def _build_review_queue_items(
         self,
         messages: list[dict[str, Any]],
+        *,
+        session_id: str | None = None,
+        session_title: str | None = None,
     ) -> list[dict[str, Any]]:
         context_turns_limit = 3
         context_text_max = 500
@@ -4597,6 +4606,8 @@ class SerializerMixin:
                     "promotion_eligibility": durable_candidate["promotion_eligibility"],
                     "artifact_id": artifact_id,
                     "source_message_id": source_message_id,
+                    "source_session_id": session_id,
+                    "source_session_title": session_title,
                     "supporting_artifact_ids": supporting_artifact_ids,
                     "supporting_source_message_ids": supporting_source_message_ids,
                     "supporting_signal_refs": supporting_signal_refs,
@@ -4719,6 +4730,8 @@ class SerializerMixin:
                     "promotion_eligibility": "eligible_for_review",
                     "artifact_id": first_correction.get("artifact_id", "") if isinstance(first_correction, dict) else "",
                     "source_message_id": "global",
+                    "source_session_id": session_id,
+                    "source_session_title": session_title,
                     "supporting_artifact_ids": supporting_artifact_ids,
                     "supporting_source_message_ids": [],
                     "supporting_signal_refs": [],

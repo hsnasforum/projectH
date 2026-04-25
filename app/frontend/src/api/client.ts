@@ -242,6 +242,8 @@ export interface ReviewQueueItem {
   promotion_eligibility: string;
   artifact_id: string;
   source_message_id: string;
+  source_session_id?: string | null;
+  source_session_title?: string | null;
   supporting_artifact_ids: string[];
   supporting_source_message_ids: string[];
   supporting_signal_refs: Record<string, unknown>[];

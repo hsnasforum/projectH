@@ -11965,3 +11965,104 @@ test("활성 교정이 있으면 동기화 버튼이 보이고 클릭 시 후보
   expect(syncRequests).toBe(1);
   await expect.poll(() => auditRequests).toBeGreaterThanOrEqual(2);
 });
+
+test("reviewed-memory loop: sync 후 활성화하면 이후 채팅 응답에 선호 반영 prefix가 붙습니다", async ({ page }) => {
+  const sessionId = buildSessionId("reviewed-memory-loop");
+  const preferenceStatement = `reviewed-memory loop accepted preference ${sessionId}`;
+  const { sessionPayload, sourceMessageId } = await createQualityReviewQueueItem(
+    page,
+    sessionId,
+    `검증용 수정본입니다. ${sessionId} 선호 후보로 남깁니다.`,
+    `reviewed memory loop seed ${sessionId}`
+  );
+  const reviewItem = (sessionPayload.session?.review_queue_items ?? []).find(
+    (item) => item.is_global !== true && item.source_message_id === sourceMessageId
+  );
+  expect(reviewItem).toBeTruthy();
+  const matchingConfirmationRef = (reviewItem.supporting_confirmation_refs ?? []).find(
+    (ref) => ref.candidate_id === reviewItem.candidate_id && typeof ref.candidate_updated_at === "string"
+  );
+  const candidateUpdatedAt = matchingConfirmationRef?.candidate_updated_at ?? reviewItem.updated_at;
+
+  const reviewResponse = await page.request.post("/api/candidate-review", {
+    data: {
+      session_id: sessionId,
+      message_id: sourceMessageId,
+      candidate_id: reviewItem.candidate_id,
+      candidate_updated_at: candidateUpdatedAt,
+      review_action: "accept",
+      statement: preferenceStatement,
+    },
+  });
+  const reviewBody = await reviewResponse.text();
+  expect(reviewResponse.ok(), reviewBody).toBeTruthy();
+
+  const preferencesResponse = await page.request.get("/api/preferences");
+  const preferencesBody = await preferencesResponse.text();
+  expect(preferencesResponse.ok(), preferencesBody).toBeTruthy();
+  const preferencesPayload = JSON.parse(preferencesBody);
+  const preference = (preferencesPayload.preferences ?? []).find(
+    (pref) => pref.description === preferenceStatement
+  );
+  expect(preference, preferencesBody).toBeTruthy();
+  expect(preference.status).toBe("candidate");
+
+  let auditRequests = 0;
+  let syncRequests = 0;
+  await page.route(/\/api\/preferences\/audit$/, async (route) => {
+    auditRequests += 1;
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: true,
+        audit: {
+          total: 1,
+          by_status: { active: 0, candidate: 1 },
+          conflict_pair_count: 0,
+          adopted_corrections_count: 1,
+          available_to_sync_count: syncRequests === 0 ? 1 : 0,
+        },
+      }),
+    });
+  });
+  await page.route(/\/api\/corrections\/sync-adopted-to-candidates$/, async (route) => {
+    syncRequests += 1;
+    expect(route.request().method()).toBe("POST");
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ ok: true, synced_count: 1, skipped_count: 0 }),
+    });
+  });
+
+  await page.goto("/app-preview");
+  const syncButton = page.getByTestId("sync-adopted-btn");
+  await expect(syncButton).toBeVisible({ timeout: 10_000 });
+
+  await syncButton.click();
+
+  await expect(page.getByTestId("sync-adopted-status")).toHaveText("1개 동기화됨");
+  await expect(syncButton).toBeHidden();
+  expect(syncRequests).toBe(1);
+  await expect.poll(() => auditRequests).toBeGreaterThanOrEqual(2);
+
+  const activateResponse = await page.request.post("/api/preferences/activate", {
+    data: { preference_id: preference.preference_id },
+  });
+  const activateBody = await activateResponse.text();
+  expect(activateResponse.ok(), activateBody).toBeTruthy();
+  const activatePayload = JSON.parse(activateBody);
+  expect(activatePayload.preference?.status).toBe("active");
+
+  await page.getByRole("button", { name: /설정/ }).click();
+  await page.getByLabel("프로바이더").selectOption("mock");
+
+  await page.getByPlaceholder(/메시지를 입력하세요/).fill("활성화된 선호가 반영되는지 확인해 주세요.");
+  await page.getByTitle("전송").click();
+
+  await expect(
+    page.locator("main").getByText("[모의 응답, 선호 1건 반영]", { exact: false }).first()
+  ).toBeVisible({ timeout: 10_000 });
+  await expect(page.locator("main").getByText("선호 1건 반영").first()).toBeVisible();
+});

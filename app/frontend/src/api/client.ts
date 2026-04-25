@@ -264,6 +264,12 @@ export interface ReviewQueueItem {
     text: string;
     message_id?: string | null;
   }> | null;
+  evidence_summary?: {
+    artifact_count: number;
+    signal_count: number;
+    confirmation_count: number;
+    recurring_session_count: number;
+  } | null;
   is_global?: boolean | null;
 }
 

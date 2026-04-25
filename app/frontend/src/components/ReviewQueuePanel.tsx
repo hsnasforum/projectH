@@ -52,6 +52,10 @@ function contextRoleClass(role: string): string {
   return "border-violet-400/20 bg-violet-500/10 text-violet-300";
 }
 
+function pluralCount(label: string, count: number): string {
+  return `${label} ${count}개`;
+}
+
 export default function ReviewQueuePanel({ items, sessionId, onReview }: Props) {
   const [editDrafts, setEditDrafts] = useState<Record<string, string | null>>({});
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
@@ -76,6 +80,7 @@ export default function ReviewQueuePanel({ items, sessionId, onReview }: Props) 
             typeof turn.text === "string" &&
             turn.text.trim()
           ));
+          const evidenceSummary = item.evidence_summary;
           return (
             <li
               key={`${item.source_message_id}:${item.candidate_id}`}
@@ -111,6 +116,27 @@ export default function ReviewQueuePanel({ items, sessionId, onReview }: Props) 
                 <p className="mb-2 truncate text-[11px] text-sidebar-muted">
                   {deltaSummaryText}
                 </p>
+              )}
+              {evidenceSummary && (
+                <div
+                  data-testid="review-evidence-summary"
+                  className="mb-2 flex flex-wrap gap-1 text-[10px] font-medium text-sidebar-muted"
+                >
+                  <span className="rounded-full border border-white/10 bg-white/5 px-1.5 py-0.5">
+                    {pluralCount("아티팩트", evidenceSummary.artifact_count)}
+                  </span>
+                  <span className="rounded-full border border-white/10 bg-white/5 px-1.5 py-0.5">
+                    {pluralCount("신호", evidenceSummary.signal_count)}
+                  </span>
+                  <span className="rounded-full border border-white/10 bg-white/5 px-1.5 py-0.5">
+                    {pluralCount("확인", evidenceSummary.confirmation_count)}
+                  </span>
+                  {evidenceSummary.recurring_session_count > 1 && (
+                    <span className="rounded-full border border-amber-400/20 bg-amber-500/10 px-1.5 py-0.5 text-amber-300">
+                      {evidenceSummary.recurring_session_count}개 세션 반복
+                    </span>
+                  )}
+                </div>
               )}
               {contextTurns.length > 0 && (
                 <div

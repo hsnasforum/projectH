@@ -4490,6 +4490,29 @@ class SerializerMixin:
                 })
             return context_turns
 
+        def _parse_recurring_session_count(promotion_basis: Any) -> int:
+            normalized = str(promotion_basis or "").strip()
+            if not normalized.startswith("cross_session_recurrence:"):
+                return 0
+            try:
+                return max(0, int(normalized.split(":", 1)[1]))
+            except (IndexError, ValueError):
+                return 0
+
+        def _build_evidence_summary(
+            *,
+            supporting_artifact_ids: list[Any],
+            supporting_signal_refs: list[Any],
+            supporting_confirmation_refs: list[Any],
+            promotion_basis: Any,
+        ) -> dict[str, int]:
+            return {
+                "artifact_count": len(supporting_artifact_ids),
+                "signal_count": len([ref for ref in supporting_signal_refs if isinstance(ref, dict)]),
+                "confirmation_count": len([ref for ref in supporting_confirmation_refs if isinstance(ref, dict)]),
+                "recurring_session_count": _parse_recurring_session_count(promotion_basis),
+            }
+
         review_queue_items: list[dict[str, Any]] = []
         for message in messages:
             if not isinstance(message, dict):
@@ -4548,6 +4571,18 @@ class SerializerMixin:
                     original_snippet = original_text[:400]
                     corrected_snippet = corrected_text[:400]
                     break
+            supporting_artifact_ids = list(durable_candidate["supporting_artifact_ids"])
+            supporting_source_message_ids = list(durable_candidate["supporting_source_message_ids"])
+            supporting_signal_refs = [
+                dict(ref)
+                for ref in durable_candidate.get("supporting_signal_refs", [])
+                if isinstance(ref, dict)
+            ]
+            supporting_confirmation_refs = [
+                dict(ref)
+                for ref in durable_candidate.get("supporting_confirmation_refs", [])
+                if isinstance(ref, dict)
+            ]
 
             review_queue_items.append(
                 {
@@ -4562,18 +4597,10 @@ class SerializerMixin:
                     "promotion_eligibility": durable_candidate["promotion_eligibility"],
                     "artifact_id": artifact_id,
                     "source_message_id": source_message_id,
-                    "supporting_artifact_ids": list(durable_candidate["supporting_artifact_ids"]),
-                    "supporting_source_message_ids": list(durable_candidate["supporting_source_message_ids"]),
-                    "supporting_signal_refs": [
-                        dict(ref)
-                        for ref in durable_candidate.get("supporting_signal_refs", [])
-                        if isinstance(ref, dict)
-                    ],
-                    "supporting_confirmation_refs": [
-                        dict(ref)
-                        for ref in durable_candidate.get("supporting_confirmation_refs", [])
-                        if isinstance(ref, dict)
-                    ],
+                    "supporting_artifact_ids": supporting_artifact_ids,
+                    "supporting_source_message_ids": supporting_source_message_ids,
+                    "supporting_signal_refs": supporting_signal_refs,
+                    "supporting_confirmation_refs": supporting_confirmation_refs,
                     "created_at": durable_candidate["created_at"],
                     "updated_at": durable_candidate["updated_at"],
                     "quality_info": quality_info,
@@ -4581,6 +4608,12 @@ class SerializerMixin:
                     "original_snippet": original_snippet,
                     "corrected_snippet": corrected_snippet,
                     "context_turns": _extract_context_turns(source_message_id),
+                    "evidence_summary": _build_evidence_summary(
+                        supporting_artifact_ids=supporting_artifact_ids,
+                        supporting_signal_refs=supporting_signal_refs,
+                        supporting_confirmation_refs=supporting_confirmation_refs,
+                        promotion_basis=durable_candidate["promotion_basis"],
+                    ),
                     "is_global": False,
                 }
             )
@@ -4668,6 +4701,12 @@ class SerializerMixin:
                         else None
                     ),
                 }
+                supporting_artifact_ids = [
+                    correction.get("artifact_id", "")
+                    for correction in corrections
+                    if isinstance(correction, dict) and correction.get("artifact_id")
+                ]
+                promotion_basis = f"cross_session_recurrence:{pattern.get('recurrence_count', 0)}"
                 review_queue_items.append({
                     "item_type": "global_candidate",
                     "candidate_id": f"global:{fp}",
@@ -4676,15 +4715,11 @@ class SerializerMixin:
                     "statement": statement,
                     "derived_from": {"normalized_delta_fingerprint": fp, "record_type": "global_recurrence"},
                     "derived_at": pattern.get("last_seen_at", ""),
-                    "promotion_basis": f"cross_session_recurrence:{pattern.get('recurrence_count', 0)}",
+                    "promotion_basis": promotion_basis,
                     "promotion_eligibility": "eligible_for_review",
                     "artifact_id": first_correction.get("artifact_id", "") if isinstance(first_correction, dict) else "",
                     "source_message_id": "global",
-                    "supporting_artifact_ids": [
-                        correction.get("artifact_id", "")
-                        for correction in corrections
-                        if isinstance(correction, dict) and correction.get("artifact_id")
-                    ],
+                    "supporting_artifact_ids": supporting_artifact_ids,
                     "supporting_source_message_ids": [],
                     "supporting_signal_refs": [],
                     "supporting_confirmation_refs": [],
@@ -4699,6 +4734,12 @@ class SerializerMixin:
                         str(first_correction.get("corrected_text") or "")[:400] or None
                     ) if isinstance(first_correction, dict) else None,
                     "context_turns": [],
+                    "evidence_summary": _build_evidence_summary(
+                        supporting_artifact_ids=supporting_artifact_ids,
+                        supporting_signal_refs=[],
+                        supporting_confirmation_refs=[],
+                        promotion_basis=promotion_basis,
+                    ),
                     "is_global": True,
                 })
         except Exception:

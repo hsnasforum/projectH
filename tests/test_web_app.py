@@ -5729,6 +5729,7 @@ class WebAppServiceTest(unittest.TestCase):
                         "original_snippet": payload["session"]["review_queue_items"][0]["original_snippet"],
                         "corrected_snippet": payload["session"]["review_queue_items"][0]["corrected_snippet"],
                         "context_turns": payload["session"]["review_queue_items"][0]["context_turns"],
+                        "evidence_summary": payload["session"]["review_queue_items"][0]["evidence_summary"],
                         "is_global": False,
                     }
                 ],

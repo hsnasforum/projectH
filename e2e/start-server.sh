@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -u
+set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -76,8 +77,9 @@ for _ in $(seq 1 "$WAIT_SECONDS"); do
 		break
 	fi
 	if ! kill -0 "$SERVER_PID" 2>/dev/null; then
-		wait "$SERVER_PID" 2>/dev/null
-		echo "[e2e] app.web server exited before becoming healthy" >&2
+		server_status=0
+		wait "$SERVER_PID" 2>/dev/null || server_status=$?
+		echo "[e2e] app.web server exited before becoming healthy (exit ${server_status})" >&2
 		exit 1
 	fi
 	sleep 1

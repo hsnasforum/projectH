@@ -856,7 +856,7 @@ SQLite migration rollout을 종결하고, preference resume/reject lifecycle 및
 
 ## Next 3 Implementation Priorities
 
-1. **M38 direction**: M37 완료 이후 다음 milestone 방향 확정 필요 — advisory는 Test Infrastructure Robustness / E2E 실행 환경 안정화를 권고했으며, 구현은 다음 control에서 확정
+1. **M38 Axis 1 완료 / Axis 2 진행**: `e2e/start-server.sh` healthcheck wrapper 구현 (commit `da6d27e`); auto-start 경로 **150 passed** 확인; existing-server 재사용 경로 로직 검증 완료, sandbox 환경 제약으로 full E2E 미실행(non-sandbox 환경 확인 필요). Axis 2는 `start-server.sh` 하드닝(`set -e`) + doc closure 범위.
 2. **watcher_core re-export note**: `watcher_core.*` re-exports (WatcherTurnState, tmux_send_keys 등)는 test 계약 유지용. 향후 import 정리 시 관련 test mock 대상도 함께 정규화 필요.
 3. **E2E 환경 개선 note**: `make e2e-test`는 `e2e/start-server.sh` healthcheck wrapper를 통해 healthy smoke 서버를 재사용하거나, 서버가 없으면 isolated mock `app.web` 서버를 자동 시작/정리한다. 다음 검증 lane에서 no-server/existing-server 두 경로를 release gate truth로 확인 필요.
 

@@ -63,7 +63,14 @@ def compute_correction_delta(
 
 
 def is_high_quality(similarity_score: float) -> bool:
-    """Return True for correction deltas in the meaningful edit range."""
+    """Return True for meaningful, non-trivial preference deltas.
+
+    ``similarity_score`` is a ``SequenceMatcher`` ratio from 0.0 to 1.0.
+    The lower bound excludes near-zero matches that are likely noise or
+    unrelated text. The upper bound excludes near-identical matches that are
+    trivially unchanged. The 0.05-0.98 window keeps substantive edits that are
+    still close enough to represent a useful preference signal.
+    """
     return 0.05 <= similarity_score <= 0.98
 
 

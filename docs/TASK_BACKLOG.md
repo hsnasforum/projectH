@@ -140,6 +140,7 @@
 126. `web-search history card header badges` general label+progress-only composition Playwright smoke coverage (general answer-mode + empty count-summary + non-empty progress summary composed into history-card `.meta` exactly `일반 검색 · 일반 진행: 커뮤니티 단서가 단일 출처 상태로 남아 있습니다.`, label followed only by the progress-only segment, no `사실 검증` / `혼합 지표:` / `일반 지표:` / `설명 카드` / `최신 확인` absent segment leak inside `.meta`, no leading/trailing separator artifact in the composed line)
 127. History-card entity-card `다시 불러오기` click reload → browser composer (`#user-text` + `submit-request`) plain follow-up (`이 결과 한 문장으로 요약해줘`) Playwright smoke coverage (`/api/chat/stream` POST payload omits `load_web_search_record_id` after the click reload, `#claim-coverage-box` visible with `#claim-coverage-text` containing the stored entity-card `장르` / `[단일 출처]` slot, history-card `.meta` exactly `사실 검증 단일 출처 1 · 단일 출처 상태 1건.` retained across the plain follow-up)
 128. History-card latest-update `다시 불러오기` click reload → browser composer (`#user-text` + `submit-request`) plain follow-up (`이 결과 한 문장으로 요약해줘`) Playwright smoke coverage (`/api/chat/stream` POST payload omits `load_web_search_record_id` after the click reload, `#claim-coverage-box` hidden, history-card `.meta` count `0` retained across the plain follow-up)
+129. M47: Preference Reliability Signal completed 2026-04-26 — Axis 1 adds the per-card `신뢰도 높음` badge through `is_highly_reliable` (high quality + at least 3 applies + correction rate below 15%), and Axis 2 adds the active-only `highly_reliable_active_count` panel header aggregate. Publication is still pending for the M46+M47 A1+A2 local bundle (21 files) until PR #38 / PR #39 receive operator merge approval.
 
 ## Current Phase In Progress
 
@@ -147,6 +148,12 @@
 2. Prefer multi-source agreement over single-source noise
 3. Reinvestigate weak or unresolved slots more effectively
 4. Distinguish strong facts, single-source facts, and unresolved slots more clearly
+
+## M48 Direction Candidates
+
+1. Candidate A: conflict detection improvement — weight conflict severity by `is_highly_reliable` so highly reliable preferences can make conflicts more visible without changing approval boundaries.
+2. Candidate B: cross-session preference schema design — approval-gated durable preference direction aligned with the teachable local personal agent north star; this is not shipped behavior.
+3. M48 Axis 1 should be confirmed through advisory in the next session before implementation starts.
 
 ## Internal Operator Tooling Follow-Up
 

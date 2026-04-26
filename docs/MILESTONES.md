@@ -904,10 +904,24 @@ Preference 관리 뷰에서 각 선호도가 어떤 세션에서, 어떤 결정 
 #### Shipped Infrastructure (Axis 1, 2026-04-26)
 - **Milestone 41 closed** (Axis 1): `session_title`/`reason_note`를 global + durable ACCEPT preference `source_refs`에 저장; `list_preferences_payload`에서 `review_reason_note`/`source_session_title` top-level 노출; `PreferencePanel`에 audit block 표시 (commit `19dcb94`).
 
+### Milestone 42: Preference Status Management UI
+
+#### Goal
+PreferencePanel에서 status별 필터 탭을 제공해 candidate/active/paused 선호를
+구분해서 볼 수 있게 한다.
+
+#### Guardrails
+- A1-γ (same-session prompt injection)는 이번 Milestone 범위 밖
+- 기존 activate/pause/reject 버튼 동작 변경 없이 UI 레이어만 추가
+- browser E2E는 sandbox 제약으로 unit test + TypeScript 타입 체크로 대체
+
+#### Shipped Infrastructure (Axis 1, 2026-04-26)
+- **Axis 1 shipped**: `list_preferences_payload`에 `paused_count`를 추가하고, `PreferencePanel`에 전체/후보/활성/일시중지 status 필터 탭과 탭별 count 표시를 추가.
+
 ## Next 3 Implementation Priorities
 
-1. **M41 완료**: M41 Preference Auditability & Visibility (Axis 1) 완료. M42 방향: 다음 advisory에서 확정.
-2. **watcher_core re-export note**: `watcher_core.*` re-exports (WatcherTurnState, tmux_send_keys 등)는 test 계약 유지용. 향후 import 정리 시 관련 test mock 대상도 함께 정규화 필요.
+1. **M42 Axis 1**: Preference Status Management UI는 `paused_count` payload와 PreferencePanel status 필터 탭으로 candidate/active/paused 선호를 구분 표시한다. A1-γ same-session prompt injection은 범위 밖이다.
+2. **watcher_core re-export note 완료(85c5210)**: `watcher_core.*` re-exports (WatcherTurnState, tmux_send_keys 등)는 test 계약 유지용으로 정리 완료됨.
 3. **E2E 환경 개선 note**: `make e2e-test`는 `e2e/start-server.sh` healthcheck wrapper를 통해 healthy smoke 서버를 재사용하거나, 서버가 없으면 isolated mock `app.web` 서버를 자동 시작/정리한다. 다음 검증 lane에서 no-server/existing-server 두 경로를 release gate truth로 확인 필요.
 
 ## Do Not Pull Forward

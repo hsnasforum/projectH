@@ -105,6 +105,8 @@ Long term, projectH aims to become a **teachable local personal agent** with dur
 - summary source-type label (`문서 요약`, `선택 결과 요약`) in quick meta and transcript meta
 - response origin badge (`WEB`, answer-mode badge, verification label, source-role trust badges) for web investigation responses
 - applied-preferences badge (`선호 N건 반영`) on assistant messages when `applied_preferences` is non-empty, with tooltip showing preference descriptions
+  반영 배지 클릭 시 팝오버에서 각 선호의 설명과 함께 현재 상태(active 제외)와
+  마지막 전환 이유(`last_transition_reason`)를 표시한다.
 - claim coverage panel with status tags (`[교차 확인]`, `[정보 상충]`, `[단일 출처]`, `[미확인]`), actionable hints for weak or unresolved slots, source role with trust level labels, a color-coded fact-strength summary bar, and a dedicated plain-language focus-slot reinvestigation explanation (reinforced / regressed / still single-source / still unresolved / or remains in an explicit `정보 상충` state) for web investigation responses
 
 ### Approval Points
@@ -343,6 +345,8 @@ Service tests (`tests/test_web_app.py`) and Python smoke tests (`tests/test_smok
 - summary span / applied-range panel
 - response origin badge with separate answer-mode badge for web investigation (`설명 카드` / `최신 확인`), source-role trust labels, and verification strength tags in origin detail
 - applied-preferences badge (`선호 N건 반영`) on assistant messages when `applied_preferences` is non-empty, with tooltip showing preference descriptions
+  반영 배지 클릭 시 팝오버에서 각 선호의 설명과 함께 현재 상태(active 제외)와
+  마지막 전환 이유(`last_transition_reason`)를 표시한다.
 - preference audit trace block in `PreferencePanel` when a reviewed-candidate preference exposes `source_session_title` or `review_reason_note`, rendering them as `출처 세션` and `결정 사유` without implying automatic activation; the panel also keeps rejected preferences hidden and adds 전체/후보/활성/일시중지 status filter tabs with counts
 - Preference 상태 전환(activate / pause / reject) 시 사용자는 선택적 이유 메모를 입력할 수 있다. 이유는 서버 task log에 `transition_reason`으로 기록된다. 이유 입력을 취소하면 전환이 중단된다.
 - 마지막으로 기록된 이유는 `last_transition_reason`으로 payload에 포함되며, PreferencePanel 항목 아래에 "전환 이유: …"로 표시된다.

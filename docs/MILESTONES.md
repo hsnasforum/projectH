@@ -943,10 +943,27 @@ activate / pause / reject 상태 전환 시 사용자가 선택적 이유 메모
 - `PreferenceRecord.last_transition_reason?: string | null` TypeScript 타입 추가.
 - `PreferencePanel`이 `last_transition_reason`이 있을 때 "전환 이유: …"를 항목 아래에 표시.
 
+### Milestone 44: Applied Preference Transparency
+
+#### Goal
+assistant 응답의 `applied_preferences` popover에서 반영된 선호의 현재 상태와
+전환 이유를 직접 표시해 사용자가 어떤 선호가 반영됐는지 더 명확히 알 수 있게 한다.
+
+#### Guardrails
+- preference store 스키마, 서버 payload shape 변경 없음
+- `applied_preferences` 배지 카운트 동작 변경 없음
+- browser E2E는 sandbox 제약으로 TypeScript 타입 체크로 대체
+
+#### Shipped Infrastructure (Axis 1, 2026-04-26)
+- `applied_preferences` popover 항목에 `fullPref.status`가 `"active"` 아닐 때
+  status 배지 표시 (`"paused"` → `일시중지`).
+- `fullPref.last_transition_reason`이 있을 때 `이유: ...` 표시.
+- `app/frontend/src/components/MessageBubble.tsx` 단일 파일, 서버 변경 없음.
+
 ## Next 3 Implementation Priorities
 
 1. **E2E 환경 개선 완료**: `e2e/start-server.sh` healthcheck wrapper no-server / existing-server 두 경로가 정적 감사(09c806d)로 확인됨. operator가 검증 수준을 release gate로 인정(Q1 Option A, operator_request 263). B1 gate closed (2026-04-26).
-2. **M43 완료**: M43 Axis 1 (transition_reason 기록) + Axis 2 (last_transition_reason 표시) 모두 shipped. M44 방향은 다음 advisory에서 확정.
+2. **M44 완료**: M44 Axis 1 (applied preference transparency — popover status 배지 + 전환 이유 표시) shipped. M45 방향은 다음 advisory에서 확정.
 
 ## Do Not Pull Forward
 

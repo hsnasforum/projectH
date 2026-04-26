@@ -286,6 +286,8 @@ export interface PreferencesPayload {
   active_count: number;
   candidate_count: number;
   paused_count: number;
+  total_applied?: number | null;
+  total_corrected?: number | null;
 }
 
 export async function fetchPreferences(): Promise<PreferencesPayload> {

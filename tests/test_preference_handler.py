@@ -64,8 +64,11 @@ class _PreferenceStore:
 
 
 class _SessionStore:
+    def __init__(self, summary: dict[str, Any] | None = None) -> None:
+        self._summary = summary or {"per_preference_stats": {}}
+
     def get_global_audit_summary(self) -> dict[str, Any]:
-        return {"per_preference_stats": {}}
+        return self._summary
 
 
 class _CorrectionStore:
@@ -89,9 +92,10 @@ class _PreferenceService(PreferenceHandlerMixin):
         self,
         preferences: list[dict[str, Any]],
         adopted_corrections: list[dict[str, Any]] | None = None,
+        audit_summary: dict[str, Any] | None = None,
     ) -> None:
         self.preference_store = _PreferenceStore(preferences)
-        self.session_store = _SessionStore()
+        self.session_store = _SessionStore(audit_summary)
         self.correction_store = _CorrectionStore(adopted_corrections or [])
         self.task_logger = _TaskLogger()
 
@@ -188,6 +192,73 @@ class PreferenceHandlerTest(unittest.TestCase):
             ["pref-active-a"],
         )
         self.assertFalse(by_id["pref-candidate"]["conflict_info"]["has_conflict"])
+
+    def test_list_preferences_payload_aggregates_active_reliability_totals(self) -> None:
+        no_active_service = _PreferenceService(
+            [
+                {
+                    "preference_id": "pref-candidate-only",
+                    "delta_fingerprint": "fingerprint-candidate-only",
+                    "description": "후보만 있는 선호",
+                    "status": "candidate",
+                },
+            ],
+            audit_summary={
+                "per_preference_stats": {
+                    "fingerprint-candidate-only": {
+                        "applied_count": 7,
+                        "corrected_count": 3,
+                    },
+                },
+            },
+        )
+
+        no_active_payload = no_active_service.list_preferences_payload()
+
+        self.assertEqual(no_active_payload["total_applied"], 0)
+        self.assertEqual(no_active_payload["total_corrected"], 0)
+
+        mixed_service = _PreferenceService(
+            [
+                {
+                    "preference_id": "pref-active-a",
+                    "delta_fingerprint": "fingerprint-active-a",
+                    "description": "첫 활성 선호",
+                    "status": "active",
+                },
+                {
+                    "preference_id": "pref-active-b",
+                    "delta_fingerprint": "fingerprint-active-b",
+                    "description": "둘째 활성 선호",
+                    "status": "active",
+                },
+                {
+                    "preference_id": "pref-paused",
+                    "delta_fingerprint": "fingerprint-paused",
+                    "description": "일시중지 선호",
+                    "status": "paused",
+                },
+                {
+                    "preference_id": "pref-candidate",
+                    "delta_fingerprint": "fingerprint-candidate",
+                    "description": "후보 선호",
+                    "status": "candidate",
+                },
+            ],
+            audit_summary={
+                "per_preference_stats": {
+                    "fingerprint-active-a": {"applied_count": 2, "corrected_count": 1},
+                    "fingerprint-active-b": {"applied_count": 5, "corrected_count": 4},
+                    "fingerprint-paused": {"applied_count": 11, "corrected_count": 9},
+                    "fingerprint-candidate": {"applied_count": 13, "corrected_count": 8},
+                },
+            },
+        )
+
+        mixed_payload = mixed_service.list_preferences_payload()
+
+        self.assertEqual(mixed_payload["total_applied"], 7)
+        self.assertEqual(mixed_payload["total_corrected"], 5)
 
     def test_get_preference_audit_returns_counts(self) -> None:
         service = _PreferenceService([

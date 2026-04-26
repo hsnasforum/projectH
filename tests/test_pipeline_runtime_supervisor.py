@@ -2562,7 +2562,7 @@ class RuntimeSupervisorTest(unittest.TestCase):
             self.assertEqual(status["automation_health"], "attention")
             self.assertEqual(status["automation_reason_code"], "dispatch_stall")
             self.assertEqual(status["automation_incident_family"], "dispatch_stall")
-            self.assertEqual(status["automation_next_action"], "verify_followup")
+            self.assertEqual(status["automation_next_action"], "advisory_followup")
             self.assertEqual(status["active_round"]["state"], "VERIFY_PENDING")
             self.assertEqual(status["active_round"]["note"], "waiting_task_accept_after_dispatch")
             self.assertEqual(status["active_round"]["dispatch_stage"], "task_accept_missing")
@@ -2788,7 +2788,7 @@ class RuntimeSupervisorTest(unittest.TestCase):
             self.assertEqual(status["automation_health"], "attention")
             self.assertEqual(status["automation_reason_code"], "post_accept_completion_stall")
             self.assertEqual(status["automation_incident_family"], "completion_stall")
-            self.assertEqual(status["automation_next_action"], "verify_followup")
+            self.assertEqual(status["automation_next_action"], "advisory_followup")
             self.assertEqual(status["active_round"]["state"], "VERIFY_PENDING")
             self.assertEqual(status["active_round"]["note"], "waiting_task_done_after_accept")
             self.assertEqual(status["active_round"]["completion_stage"], "task_done_missing")
@@ -3074,6 +3074,60 @@ class RuntimeSupervisorTest(unittest.TestCase):
             codex = next(lane for lane in lanes if lane["name"] == "Codex")
             self.assertEqual(claude["state"], "READY")
             self.assertEqual(claude["note"], "prompt_visible")
+            self.assertEqual(codex["state"], "READY")
+            self.assertEqual(codex["note"], "prompt_visible")
+
+    def test_active_dispatch_seen_codex_ready_tail_after_completed_background_wait_stays_ready(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root, implement="Codex", verify="Claude", advisory="Gemini")
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+            codex_tail = (
+                "• Waited for background terminal\n"
+                "────────────────────────────────────────\n"
+                "• 구현 완료했습니다.\n\n"
+                "› Write tests for @filename\n"
+                "  gpt-5.5 xhigh · ~/code/projectH\n"
+            )
+            with (
+                mock.patch.object(
+                    supervisor.adapter,
+                    "lane_health",
+                    side_effect=lambda lane_name: {
+                        "alive": True,
+                        "pid": {"Claude": 11, "Codex": 12, "Gemini": 13}.get(lane_name),
+                        "attachable": True,
+                        "pane_id": "%1",
+                    },
+                ),
+                mock.patch.object(
+                    supervisor.adapter,
+                    "capture_tail",
+                    side_effect=lambda lane_name, lines=80: codex_tail if lane_name == "Codex" else "",
+                ),
+            ):
+                lanes, _models = supervisor._build_lane_statuses(
+                    wrapper_models={
+                        "Codex": {
+                            "state": "READY",
+                            "note": "dispatch_seen seq 299",
+                            "seen_task": {"job_id": "job-299", "control_seq": 299, "attempt": 1},
+                            "last_event_at": "2026-04-26T10:17:32.987127Z",
+                            "last_heartbeat_at": "2026-04-26T10:25:29.072266Z",
+                        },
+                    },
+                    active_lane="Codex",
+                    active_round=None,
+                    turn_state={
+                        "state": "IMPLEMENT_ACTIVE",
+                        "active_role": "implement",
+                        "active_lane": "Codex",
+                        "active_control_seq": 299,
+                        "reason": "implement_handoff_updated",
+                    },
+                    control={"active_control_status": "implement", "active_control_seq": 299},
+                )
+            codex = next(lane for lane in lanes if lane["name"] == "Codex")
             self.assertEqual(codex["state"], "READY")
             self.assertEqual(codex["note"], "prompt_visible")
 
@@ -4003,6 +4057,68 @@ class RuntimeSupervisorTest(unittest.TestCase):
             self.assertEqual(status["autonomy"]["reason_code"], "slice_ambiguity")
             self.assertEqual(status["autonomy"]["operator_policy"], "gate_24h")
             self.assertTrue(status["autonomy"]["suppress_operator_until"])
+            self.assertEqual(len(gated_events), 1)
+            self.assertEqual(gated_events[0]["payload"]["reason"], "slice_ambiguity")
+
+    def test_write_status_gates_next_direction_after_launcher_close(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            pipeline_dir = root / ".pipeline"
+            state_dir = pipeline_dir / "state"
+            state_dir.mkdir(parents=True, exist_ok=True)
+            (pipeline_dir / "operator_request.md").write_text(
+                "STATUS: needs_operator\n"
+                "CONTROL_SEQ: 290\n"
+                "REASON_CODE: next_direction_after_launcher_close\n"
+                "OPERATOR_POLICY: direction_selection_after_feature_complete\n"
+                "DECISION_CLASS: milestone_direction\n"
+                "DECISION_REQUIRED: confirm next priority — M44 publish, M45 start, or runtime hardening\n",
+                encoding="utf-8",
+            )
+
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+            supervisor._runtime_started = True
+
+            with (
+                mock.patch.object(supervisor, "_watcher_status", return_value={"alive": True, "pid": 4242}),
+                mock.patch.object(supervisor.adapter, "session_exists", return_value=True),
+                mock.patch.object(
+                    supervisor,
+                    "_build_lane_statuses",
+                    return_value=(
+                        [
+                            {"name": "Claude", "state": "READY", "attachable": True, "pid": 11, "note": ""},
+                            {"name": "Codex", "state": "READY", "attachable": True, "pid": 12, "note": ""},
+                            {"name": "Gemini", "state": "READY", "attachable": True, "pid": 13, "note": ""},
+                        ],
+                        {"Claude": {}, "Codex": {}, "Gemini": {}},
+                    ),
+                ),
+                mock.patch("pipeline_runtime.supervisor.build_lane_read_models", return_value={}),
+                mock.patch.object(supervisor, "_build_artifacts", return_value={"latest_work": {}, "latest_verify": {}}),
+                mock.patch.object(supervisor._pr_merge_status_cache, "control_resolution", return_value=PrMergeGateResolution()),
+            ):
+                status = supervisor._write_status()
+                supervisor._record_status_events(status)
+
+            events = [
+                json.loads(line)
+                for line in supervisor.events_path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            gated_events = [event for event in events if event.get("event_type") == "control_operator_gated"]
+
+            self.assertEqual(status["control"]["active_control_status"], "none")
+            self.assertEqual(status["compat"]["control_slots"]["active"]["status"], "needs_operator")
+            self.assertEqual(status["autonomy"]["mode"], "triage")
+            self.assertEqual(status["autonomy"]["block_reason"], "slice_ambiguity")
+            self.assertEqual(status["autonomy"]["reason_code"], "slice_ambiguity")
+            self.assertEqual(status["autonomy"]["operator_policy"], "gate_24h")
+            self.assertEqual(status["autonomy"]["decision_class"], "next_slice_selection")
+            self.assertEqual(status["automation_health"], "attention")
+            self.assertEqual(status["automation_reason_code"], "slice_ambiguity")
+            self.assertEqual(status["automation_next_action"], "advisory_followup")
             self.assertEqual(len(gated_events), 1)
             self.assertEqual(gated_events[0]["payload"]["reason"], "slice_ambiguity")
 

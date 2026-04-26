@@ -996,13 +996,18 @@ class SessionStore:
                 "operator_rolled_back_count": 0,
                 "operator_failed_count": 0,
             }
-            def count_feedback(feedback: Any) -> None:
+            negative_feedback_labels = {"unclear", "incorrect", "dislike"}
+
+            def feedback_label(feedback: Any) -> str:
                 if not isinstance(feedback, dict):
-                    return
-                label = str(feedback.get("label") or "").strip().lower()
+                    return ""
+                return str(feedback.get("label") or "").strip().lower()
+
+            def count_feedback(feedback: Any) -> None:
+                label = feedback_label(feedback)
                 if label in {"helpful", "like"}:
                     summary["feedback_like_count"] += 1
-                elif label in {"unclear", "incorrect", "dislike"}:
+                elif label in negative_feedback_labels:
                     summary["feedback_dislike_count"] += 1
 
             for path in sorted(self.base_dir.glob("*.json")):
@@ -1024,6 +1029,9 @@ class SessionStore:
                             str(msg.get("artifact_kind") or "") == "grounded_brief"
                             and msg.get("corrected_text") is not None
                         )
+                        has_negative_feedback = (
+                            feedback_label(msg.get("feedback")) in negative_feedback_labels
+                        )
                         if is_personalized_correction:
                             summary["personalized_correction_count"] += 1
                         for pref_id in msg["applied_preference_ids"]:
@@ -1031,7 +1039,7 @@ class SessionStore:
                                 pref_id, {"applied_count": 0, "corrected_count": 0}
                             )
                             pstats["applied_count"] += 1
-                            if is_personalized_correction:
+                            if is_personalized_correction or has_negative_feedback:
                                 pstats["corrected_count"] += 1
                     count_feedback(msg.get("feedback"))
                 count_feedback(data.get("feedback"))

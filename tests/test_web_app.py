@@ -5709,6 +5709,8 @@ class WebAppServiceTest(unittest.TestCase):
                         "promotion_eligibility": "eligible_for_review",
                         "artifact_id": artifact_id,
                         "source_message_id": source_message_id,
+                        "source_session_id": payload["session"]["review_queue_items"][0]["source_session_id"],
+                        "source_session_title": payload["session"]["review_queue_items"][0]["source_session_title"],
                         "supporting_artifact_ids": [artifact_id],
                         "supporting_source_message_ids": [source_message_id],
                         "supporting_signal_refs": approved_source_message["session_local_candidate"]["supporting_signal_refs"],
@@ -5728,6 +5730,8 @@ class WebAppServiceTest(unittest.TestCase):
                         "delta_summary": payload["session"]["review_queue_items"][0]["delta_summary"],
                         "original_snippet": payload["session"]["review_queue_items"][0]["original_snippet"],
                         "corrected_snippet": payload["session"]["review_queue_items"][0]["corrected_snippet"],
+                        "context_turns": payload["session"]["review_queue_items"][0]["context_turns"],
+                        "evidence_summary": payload["session"]["review_queue_items"][0]["evidence_summary"],
                         "is_global": False,
                     }
                 ],
@@ -6045,6 +6049,7 @@ class WebAppServiceTest(unittest.TestCase):
                     "candidate_id": candidate["candidate_id"],
                     "candidate_updated_at": candidate["updated_at"],
                     "review_action": "accept",
+                    "reason_note": "이 교정 방향을 선호 후보로 남깁니다.",
                 }
             )
 
@@ -6063,9 +6068,103 @@ class WebAppServiceTest(unittest.TestCase):
             ref = pref_record["reviewed_candidate_source_refs"][0]
             self.assertEqual(ref["candidate_id"], candidate["candidate_id"])
             self.assertEqual(ref["session_id"], "pref-candidate-session")
+            self.assertEqual(ref["reason_note"], "이 교정 방향을 선호 후보로 남깁니다.")
+            self.assertTrue(ref["session_title"])
+            self.assertEqual(pref_record["review_reason_note"], "이 교정 방향을 선호 후보로 남깁니다.")
+            self.assertEqual(pref_record["source_session_title"], ref["session_title"])
 
             log_text = (tmp_path / "task_log.jsonl").read_text(encoding="utf-8")
             self.assertIn("preference_candidate_recorded", log_text)
+
+    def test_submit_global_candidate_review_source_refs_include_optional_reason_note(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                corrections_dir=str(tmp_path / "corrections"),
+                preferences_dir=str(tmp_path / "preferences"),
+                model_provider="mock",
+            )
+            service = WebAppService(settings=settings)
+
+            accepted_correction = service.correction_store.record_correction(
+                artifact_id="artifact-global-accept",
+                session_id="global-source-session-a",
+                source_message_id="msg-global-accept",
+                original_text="원본 문장입니다. 불필요한 설명이 많습니다.",
+                corrected_text="핵심만 남긴 문장입니다.",
+            )
+            rejected_correction = service.correction_store.record_correction(
+                artifact_id="artifact-global-reject",
+                session_id="global-source-session-b",
+                source_message_id="msg-global-reject",
+                original_text="프로젝트 범위는 자동 로그인입니다.",
+                corrected_text="프로젝트 범위는 문서 요약입니다.",
+            )
+            self.assertIsNotNone(accepted_correction)
+            self.assertIsNotNone(rejected_correction)
+            accepted_fingerprint = str(accepted_correction["delta_fingerprint"])
+            rejected_fingerprint = str(rejected_correction["delta_fingerprint"])
+            self.assertNotEqual(accepted_fingerprint, rejected_fingerprint)
+
+            accept_payload = service.submit_candidate_review(
+                {
+                    "session_id": "global-review-rationale-session",
+                    "message_id": "global",
+                    "candidate_id": f"global:{accepted_fingerprint}",
+                    "candidate_updated_at": accepted_correction["updated_at"],
+                    "review_action": "accept",
+                    "reason_note": "반복 교정 근거가 명확해 수락합니다.",
+                }
+            )
+            reject_payload = service.submit_candidate_review(
+                {
+                    "session_id": "global-review-rationale-session",
+                    "message_id": "global",
+                    "candidate_id": f"global:{rejected_fingerprint}",
+                    "candidate_updated_at": rejected_correction["updated_at"],
+                    "review_action": "reject",
+                }
+            )
+
+            self.assertTrue(accept_payload["ok"])
+            self.assertTrue(reject_payload["ok"])
+            accepted_pref = service.preference_store.find_by_fingerprint(accepted_fingerprint)
+            rejected_pref = service.preference_store.find_by_fingerprint(rejected_fingerprint)
+            self.assertIsNotNone(accepted_pref)
+            self.assertIsNotNone(rejected_pref)
+            accepted_ref = accepted_pref["reviewed_candidate_source_refs"][0]
+            rejected_ref = rejected_pref["reviewed_candidate_source_refs"][0]
+            self.assertEqual(accepted_ref["reason_note"], "반복 교정 근거가 명확해 수락합니다.")
+            self.assertEqual(accepted_ref["session_title"], "global-review-rationale-session")
+            self.assertEqual(accepted_ref["review_action"], "accept")
+            self.assertNotIn("reason_note", rejected_ref)
+            self.assertEqual(rejected_ref["session_title"], "global-review-rationale-session")
+            self.assertEqual(rejected_ref["review_action"], "reject")
+            self.assertEqual(rejected_pref["status"], "rejected")
+            pref_payload = service.list_preferences_payload()
+            accepted_payload_pref = [
+                pref for pref in pref_payload["preferences"]
+                if pref.get("delta_fingerprint") == accepted_fingerprint
+            ][0]
+            rejected_payload_pref = [
+                pref for pref in pref_payload["preferences"]
+                if pref.get("delta_fingerprint") == rejected_fingerprint
+            ][0]
+            self.assertEqual(
+                accepted_payload_pref["review_reason_note"],
+                "반복 교정 근거가 명확해 수락합니다.",
+            )
+            self.assertEqual(
+                accepted_payload_pref["source_session_title"],
+                "global-review-rationale-session",
+            )
+            self.assertNotIn("review_reason_note", rejected_payload_pref)
+            self.assertEqual(
+                rejected_payload_pref["source_session_title"],
+                "global-review-rationale-session",
+            )
 
     def test_list_preferences_payload_includes_reliability_stats(self) -> None:
         with TemporaryDirectory() as tmp_dir:

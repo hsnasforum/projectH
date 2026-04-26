@@ -215,6 +215,8 @@ export default function PreferencePanel() {
             const isDetailExpanded = expandedItems.has(pref.preference_id);
             const isDescriptionEditing = editDescriptions[pref.preference_id] !== undefined;
             const descriptionDraft = editDescriptions[pref.preference_id] ?? pref.description;
+            const reviewReasonNote = pref.review_reason_note?.trim();
+            const sourceSessionTitle = pref.source_session_title?.trim();
             return (
               <div
                 key={pref.preference_id}
@@ -311,6 +313,24 @@ export default function PreferencePanel() {
                     </button>
                   )}
                 </div>
+
+                {(reviewReasonNote || sourceSessionTitle) && (
+                  <div
+                    data-testid="pref-audit-trace"
+                    className="mb-1.5 space-y-0.5 rounded bg-white/5 px-1.5 py-1 text-[10px] leading-snug text-sidebar-muted"
+                  >
+                    {sourceSessionTitle && (
+                      <p className="truncate">
+                        <span className="font-medium text-sidebar-muted/80">출처 세션:</span> {sourceSessionTitle}
+                      </p>
+                    )}
+                    {reviewReasonNote && (
+                      <p className="line-clamp-2">
+                        <span className="font-medium text-sidebar-muted/80">결정 사유:</span> {reviewReasonNote}
+                      </p>
+                    )}
+                  </div>
+                )}
 
                 {/* Promotion reason (delta summary) */}
                 {pref.delta_summary && (

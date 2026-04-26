@@ -823,11 +823,92 @@ applied-preferences badge를 클릭 가능한 interactive button으로 전환; p
 
 - **Milestone 35 closed** (Axes 1–2): applied preference badge interactive 관리 완료
 
+### Milestone 36: Preference Pause Lifecycle Verification
+
+#### Goal
+pause 동작이 UI 상태 변경에서 끝나지 않고 실제 applied preference 카운트를 줄이며, 브라우저 새로고침 후에도 영속됨을 E2E로 검증.
+
+#### Guardrails
+- backend/frontend 로직 변경 없음 — E2E assertion 확장만
+- accumulated DB 환경에서도 동작하는 count 기반 assertion (N-1) 사용
+
+#### Shipped Infrastructure (Axes 1–2, 2026-04-25)
+- Axis 1 (seq 192–193): pause 후 두 번째 chat → badge count N-1 확인 (148 E2E passed, 8.7m)
+- Axis 2 (seq 195–196): page.reload() 후 세 번째 chat → count N-1 유지 확인 (148 E2E passed, 12.2m); PR #34 merge됨
+
+- **Milestone 36 closed** (Axes 1–2): preference pause의 기능적 억제 효과 및 세션 재로드 영속성 검증 완료
+
+### Milestone 37: Infrastructure Hardening + Preference Lifecycle Closure
+
+#### Goal
+SQLite migration rollout을 종결하고, preference resume/reject lifecycle 및 누적 DB 환경에서도 안정적인 reviewed-memory E2E assertion을 확보.
+
+#### Guardrails
+- M37 Axis 2는 E2E assertion 및 fixture cleanup 범위에 한정
+- 누적 active preference cap 환경에서도 동작하는 count-agnostic assertion 유지
+- release/publish 작업은 operator approval boundary를 통과한 뒤 수행
+
+#### Shipped Infrastructure (Axes 1–2, 2026-04-25/26)
+- Axis 1 (seq 204–205): `migrate_json_to_sqlite` 호출에 sessions/artifacts/preferences dirs 전달 완성; backlog truth-sync. 30 SQLite tests OK.
+- Axis 2 (seq 207–213): preference resume/reject lifecycle E2E (시나리오 149) + count-agnostic fix (시나리오 147/148). 149 E2E passed (13.5m).
+
+- **Milestone 37 closed** (Axes 1–2): SQLite 전체 마이그레이션 완성 + preference lifecycle (pause/resume/reject) E2E closure 완료
+
+### Milestone 38: Test Infrastructure Robustness
+
+#### Goal
+`make e2e-test`가 서버 기동 상태와 무관하게 안정적으로 동작하도록 E2E 실행 환경 isolation을 구현하고 wrapper를 강화한다.
+
+#### Guardrails
+- 기존 Playwright 시나리오 수정 없이 서버 관리 레이어만 변경
+- existing-server 재사용 경로 로직 검증; full E2E는 sandbox 제약으로 non-sandbox 확인 필요
+
+#### Shipped Infrastructure (Axes 1–2, 2026-04-26)
+- **Milestone 38 closed** (Axes 1–2): `e2e/start-server.sh` healthcheck wrapper 구현 (Axis 1, commit `da6d27e`, 150 passed); `set -e` 하드닝 + doc closure (Axis 2, commit `082f33e`).
+
+### Milestone 39: Review Evidence Enrichment
+
+#### Goal
+운영자가 review queue 후보를 판단할 때 필요한 정성적 대화 맥락과 정량적 증거 강도를 함께 제공한다.
+
+#### Guardrails
+- 기존 `ReviewQueueItem` 필드 제거/수정 없이 additive 확장만 허용
+- browser E2E는 sandbox 제약으로 unit test + TypeScript 타입 체크로 대체
+
+#### Shipped Infrastructure (Axes 1–2, 2026-04-26)
+- **Milestone 39 closed** (Axes 1–2): `context_turns` 직렬화 — 직전 3턴 대화 맥락 (Axis 1, commit `774dbe1`); `evidence_summary` 직렬화 — artifact/signal/confirmation/recurring session 카운트 (Axis 2, commit `c33af44`).
+
+### Milestone 40: Review Auditability
+
+#### Goal
+운영자가 review queue 후보를 판단할 때 출처 세션과 결정 사유를 함께 확인해 감사 추적이 가능하게 한다.
+
+#### Guardrails
+- 기존 `ReviewQueueItem` 필드 제거/수정 없이 additive 확장만 허용
+- durable candidate path의 `candidate_review_record`는 이미 `reason_note`를 처리하므로 수정 불필요
+- browser E2E는 sandbox 제약으로 unit test + TypeScript 타입 체크로 대체
+
+#### Shipped Infrastructure (Axes 1–2, 2026-04-26)
+- **Milestone 40 closed** (Axes 1–2): `source_session_id`/`source_session_title` 직렬화 — review queue 항목에 출처 세션 연결 (Axis 1, commit `c660ae6`); `reason_note` UI 입력 + global `source_refs` 저장 — 결정 사유 감사 추적 (Axis 2, commit `1526d64`).
+
+### Milestone 41: Preference Auditability & Visibility
+
+#### Goal
+Preference 관리 뷰에서 각 선호도가 어떤 세션에서, 어떤 결정 사유로 생성됐는지 운영자가 직접 확인할 수 있게 한다.
+
+#### Guardrails
+- 기존 `PreferenceRecord` 필드 제거/수정 없이 additive 확장만 허용
+- preference store 스키마 직접 수정 없이 기존 source_refs 저장 구조 활용
+- browser E2E는 sandbox 제약으로 unit test + TypeScript 타입 체크로 대체
+
+#### Shipped Infrastructure (Axis 1, 2026-04-26)
+- **Milestone 41 closed** (Axis 1): `session_title`/`reason_note`를 global + durable ACCEPT preference `source_refs`에 저장; `list_preferences_payload`에서 `review_reason_note`/`source_session_title` top-level 노출; `PreferencePanel`에 audit block 표시 (commit `19dcb94`).
+
 ## Next 3 Implementation Priorities
 
-1. **New PR (feat/watcher-turn-state)**: M34–M35 기능 작업(seqs 172–186)을 포함한 새 PR 생성 후 operator merge 결정 대기. PR #33은 2026-04-25 main에 merge됨.
-2. **M36 direction**: M35 완료; 다음 기능 milestone 방향 — via advisory.
-3. **watcher_core re-export note**: `watcher_core.*` re-exports (WatcherTurnState, tmux_send_keys 등)는 test 계약 유지용. 향후 import 정리 시 관련 test mock 대상도 함께 정규화 필요.
+1. **M41 완료**: M41 Preference Auditability & Visibility (Axis 1) 완료. M42 방향: 다음 advisory에서 확정.
+2. **watcher_core re-export note**: `watcher_core.*` re-exports (WatcherTurnState, tmux_send_keys 등)는 test 계약 유지용. 향후 import 정리 시 관련 test mock 대상도 함께 정규화 필요.
+3. **E2E 환경 개선 note**: `make e2e-test`는 `e2e/start-server.sh` healthcheck wrapper를 통해 healthy smoke 서버를 재사용하거나, 서버가 없으면 isolated mock `app.web` 서버를 자동 시작/정리한다. 다음 검증 lane에서 no-server/existing-server 두 경로를 release gate truth로 확인 필요.
 
 ## Do Not Pull Forward
 

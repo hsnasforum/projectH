@@ -9,16 +9,37 @@ from app.serializers import SerializerMixin
 
 
 class _CorrectionStore:
-    def __init__(self, corrections_by_artifact: dict[str, list[dict[str, Any]]]) -> None:
+    def __init__(
+        self,
+        corrections_by_artifact: dict[str, list[dict[str, Any]]],
+        recurring_patterns: list[dict[str, Any]] | None = None,
+    ) -> None:
         self._corrections_by_artifact = corrections_by_artifact
+        self._recurring_patterns = recurring_patterns or []
 
     def find_by_artifact(self, artifact_id: str) -> list[dict[str, Any]]:
         return self._corrections_by_artifact.get(artifact_id, [])
 
+    def find_recurring_patterns(self) -> list[dict[str, Any]]:
+        return self._recurring_patterns
+
+
+class _PreferenceStore:
+    def list_all(self, limit: int = 200) -> list[dict[str, Any]]:
+        return []
+
+    def find_by_fingerprint(self, delta_fingerprint: str) -> dict[str, Any] | None:
+        return None
+
 
 class _Serializer(SerializerMixin):
-    def __init__(self, corrections_by_artifact: dict[str, list[dict[str, Any]]]) -> None:
-        self.correction_store = _CorrectionStore(corrections_by_artifact)
+    def __init__(
+        self,
+        corrections_by_artifact: dict[str, list[dict[str, Any]]],
+        recurring_patterns: list[dict[str, Any]] | None = None,
+    ) -> None:
+        self.correction_store = _CorrectionStore(corrections_by_artifact, recurring_patterns)
+        self.preference_store = _PreferenceStore()
 
     def _normalize_optional_text(self, raw_value: Any) -> str | None:
         if not isinstance(raw_value, str):
@@ -93,6 +114,96 @@ class SerializerReviewQueueQualityTest(unittest.TestCase):
         self.assertEqual(len(items), 1)
         self.assertIsNone(items[0]["quality_info"]["avg_similarity_score"])
         self.assertIsNone(items[0]["quality_info"]["is_high_quality"])
+
+    def test_build_review_queue_items_includes_recent_context_turns(self) -> None:
+        serializer = _Serializer({"artifact-quality": []})
+        long_user_text = "긴 사용자 맥락 " + ("x" * 600)
+        messages = [
+            {"message_id": "msg-old", "role": "user", "text": "오래된 맥락"},
+            {"message_id": "msg-context-1", "role": "assistant", "text": "첫 번째 최근 답변"},
+            {"message_id": "msg-context-2", "role": "user", "corrected_text": long_user_text},
+            {"message_id": "msg-context-3", "role": "assistant", "content": "세 번째 최근 답변"},
+            _review_queue_message(),
+        ]
+
+        items = serializer._build_review_queue_items(messages)
+
+        self.assertEqual(len(items), 1)
+        self.assertEqual(
+            items[0]["context_turns"],
+            [
+                {"role": "assistant", "text": "첫 번째 최근 답변", "message_id": "msg-context-1"},
+                {"role": "user", "text": long_user_text[:500], "message_id": "msg-context-2"},
+                {"role": "assistant", "text": "세 번째 최근 답변", "message_id": "msg-context-3"},
+            ],
+        )
+        self.assertLessEqual(len(items[0]["context_turns"][1]["text"]), 500)
+
+    def test_build_review_queue_items_includes_evidence_summary(self) -> None:
+        serializer = _Serializer({"artifact-quality": []})
+
+        items = serializer._build_review_queue_items([_review_queue_message()])
+
+        self.assertEqual(len(items), 1)
+        self.assertEqual(
+            items[0]["evidence_summary"],
+            {
+                "artifact_count": 1,
+                "signal_count": 1,
+                "confirmation_count": 1,
+                "recurring_session_count": 0,
+            },
+        )
+
+    def test_build_review_queue_items_includes_source_session_metadata(self) -> None:
+        serializer = _Serializer({"artifact-quality": []})
+
+        items = serializer._build_review_queue_items(
+            [_review_queue_message()],
+            session_id="session-123",
+            session_title="문서 요약 세션",
+        )
+
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["source_session_id"], "session-123")
+        self.assertEqual(items[0]["source_session_title"], "문서 요약 세션")
+
+    def test_build_review_queue_items_includes_global_evidence_summary(self) -> None:
+        serializer = _Serializer(
+            {},
+            recurring_patterns=[
+                {
+                    "delta_fingerprint": "sha256:global-evidence",
+                    "pattern_family": "correction_rewrite",
+                    "recurrence_count": 3,
+                    "first_seen_at": "2026-04-23T00:00:00+00:00",
+                    "last_seen_at": "2026-04-23T00:02:00+00:00",
+                    "corrections": [
+                        {
+                            "artifact_id": "artifact-a",
+                            "original_text": "원본 A",
+                            "corrected_text": "교정 A",
+                            "delta_summary": {"replacements": [{"from": "원본", "to": "교정"}]},
+                        },
+                        {"artifact_id": "artifact-b", "original_text": "원본 B", "corrected_text": "교정 B"},
+                    ],
+                }
+            ],
+        )
+
+        items = serializer._build_review_queue_items([])
+
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["item_type"], "global_candidate")
+        self.assertEqual(
+            items[0]["evidence_summary"],
+            {
+                "artifact_count": 2,
+                "signal_count": 0,
+                "confirmation_count": 0,
+                "recurring_session_count": 3,
+            },
+        )
 
 
 if __name__ == "__main__":

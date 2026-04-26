@@ -133,6 +133,8 @@ class AggregateHandlerMixin:
             fingerprint = str(candidate_id or "").removeprefix("global:").strip()
             if not fingerprint:
                 raise WebApiError(400, "글로벌 후보 fingerprint를 확인할 수 없습니다.")
+            session = self.session_store.get_session(session_id)
+            session_title = str(session.get("title") or "").strip() or None
             if review_action == CandidateReviewAction.ACCEPT:
                 corrections = self.correction_store.find_by_fingerprint(fingerprint)
                 original_snippet, corrected_snippet = _first_correction_snippets(corrections)
@@ -165,6 +167,8 @@ class AggregateHandlerMixin:
                         "source_message_id": "global",
                         "review_action": review_action,
                         "session_id": session_id,
+                        **({"reason_note": reason_note} if reason_note else {}),
+                        **({"session_title": session_title} if session_title else {}),
                     },
                     original_snippet=original_snippet,
                     corrected_snippet=corrected_snippet,
@@ -183,6 +187,8 @@ class AggregateHandlerMixin:
                         "source_message_id": "global",
                         "review_action": review_action,
                         "session_id": session_id,
+                        **({"reason_note": reason_note} if reason_note else {}),
+                        **({"session_title": session_title} if session_title else {}),
                     },
                     status=PreferenceStatus.REJECTED,
                 )
@@ -209,6 +215,7 @@ class AggregateHandlerMixin:
             raise WebApiError(400, "현재 durable candidate 정보가 필요합니다.")
 
         session = self.session_store.get_session(session_id)
+        session_title = str(session.get("title") or "").strip() or None
         source_message = None
         for message in reversed(session.get("messages", [])):
             if str(message.get("message_id") or "").strip() != message_id:
@@ -330,6 +337,8 @@ class AggregateHandlerMixin:
                             "source_message_id": str(source_message.get("message_id") or ""),
                             "review_action": review_action,
                             "session_id": session_id,
+                            **({"reason_note": reason_note} if reason_note else {}),
+                            **({"session_title": session_title} if session_title else {}),
                         },
                         avg_similarity_score=avg_similarity_score,
                         original_snippet=original_snippet,

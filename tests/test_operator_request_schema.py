@@ -604,6 +604,168 @@ class OperatorRequestHeaderSchemaTests(unittest.TestCase):
         self.assertEqual(decision["decision_class"], "release_gate")
         self.assertFalse(decision["operator_eligible"])
 
+    def test_legacy_milestone_commit_push_doc_sync_routes_to_internal_followup(self) -> None:
+        self.assertEqual(
+            normalize_reason_code("m37_commit_push_milestones_doc_sync"),
+            COMMIT_PUSH_BUNDLE_AUTHORIZATION_REASON,
+        )
+        self.assertEqual(
+            normalize_operator_policy("pr_creation_gate + commit_push_bundle_authorization"),
+            "internal_only",
+        )
+        self.assertEqual(normalize_decision_class("publication"), "release_gate")
+
+        decision = classify_operator_candidate(
+            "STATUS: needs_operator\n"
+            "CONTROL_SEQ: 216\n"
+            "REASON_CODE: m37_commit_push_milestones_doc_sync\n"
+            "OPERATOR_POLICY: pr_creation_gate + commit_push_bundle_authorization\n"
+            "DECISION_CLASS: publication\n"
+            "DECISION_REQUIRED: M37 Axis 2 commit + push + MILESTONES.md doc-sync approval\n",
+            control_meta={
+                "status": "needs_operator",
+                "control_seq": 216,
+                "reason_code": "m37_commit_push_milestones_doc_sync",
+                "operator_policy": "pr_creation_gate + commit_push_bundle_authorization",
+                "decision_class": "publication",
+                "decision_required": "M37 Axis 2 commit + push + MILESTONES.md doc-sync approval",
+            },
+            idle_stable=True,
+            now_ts=1_000.0,
+        )
+
+        self.assertEqual(decision["mode"], "triage")
+        self.assertEqual(decision["suppressed_mode"], "triage")
+        self.assertEqual(decision["routed_to"], "verify_followup")
+        self.assertEqual(
+            decision["reason_code"],
+            COMMIT_PUSH_BUNDLE_AUTHORIZATION_REASON,
+        )
+        self.assertEqual(decision["operator_policy"], "internal_only")
+        self.assertEqual(decision["decision_class"], "release_gate")
+        self.assertEqual(decision["classification_source"], "operator_policy")
+        self.assertFalse(decision["operator_eligible"])
+
+    def test_b1_dirty_tree_release_gate_routes_to_internal_followup(self) -> None:
+        self.assertEqual(
+            normalize_reason_code("b1_release_gate_commit_authorization_dirty_tree"),
+            COMMIT_PUSH_BUNDLE_AUTHORIZATION_REASON,
+        )
+        self.assertEqual(
+            normalize_operator_policy("commit_push_bundle_authorization + pr_creation_gate"),
+            "internal_only",
+        )
+        self.assertEqual(
+            normalize_decision_class("commit_publish_authorization"),
+            "release_gate",
+        )
+
+        decision = classify_operator_candidate(
+            "STATUS: needs_operator\n"
+            "CONTROL_SEQ: 248\n"
+            "REASON_CODE: b1_release_gate_commit_authorization_dirty_tree\n"
+            "OPERATOR_POLICY: commit_push_bundle_authorization + pr_creation_gate\n"
+            "DECISION_CLASS: commit_publish_authorization\n"
+            "DECISION_REQUIRED: commit_scope + e2e_gate + pr_creation\n"
+            "BASED_ON_WORK: work/4/26/2026-04-26-m42-deep-doc-bundle.md\n"
+            "BASED_ON_VERIFY: verify/4/26/2026-04-26-m42-deep-doc-bundle.md\n",
+            control_meta={
+                "status": "needs_operator",
+                "control_seq": 248,
+                "reason_code": "b1_release_gate_commit_authorization_dirty_tree",
+                "operator_policy": "commit_push_bundle_authorization + pr_creation_gate",
+                "decision_class": "commit_publish_authorization",
+                "decision_required": "commit_scope + e2e_gate + pr_creation",
+                "based_on_work": "work/4/26/2026-04-26-m42-deep-doc-bundle.md",
+                "based_on_verify": "verify/4/26/2026-04-26-m42-deep-doc-bundle.md",
+            },
+            idle_stable=True,
+            now_ts=1_000.0,
+        )
+
+        marker = operator_gate_marker_from_decision(
+            decision,
+            control_file="operator_request.md",
+            control_seq=248,
+        )
+
+        self.assertEqual(decision["mode"], "triage")
+        self.assertEqual(decision["suppressed_mode"], "triage")
+        self.assertEqual(decision["routed_to"], "verify_followup")
+        self.assertEqual(
+            decision["reason_code"],
+            COMMIT_PUSH_BUNDLE_AUTHORIZATION_REASON,
+        )
+        self.assertEqual(decision["operator_policy"], "internal_only")
+        self.assertEqual(decision["decision_class"], "release_gate")
+        self.assertEqual(decision["classification_source"], "operator_policy")
+        self.assertFalse(decision["operator_eligible"])
+        self.assertIsNotNone(marker)
+        assert marker is not None
+        self.assertEqual(marker["routed_to"], "verify_followup")
+
+    def test_compound_pr_creation_gate_policy_routes_to_verify_followup(self) -> None:
+        self.assertEqual(
+            normalize_operator_policy("pr_creation_gate + gate_24h + release_gate"),
+            "gate_24h",
+        )
+        self.assertEqual(
+            normalize_decision_class("publication release_gate"),
+            "release_gate",
+        )
+
+        decision = classify_operator_candidate(
+            "STATUS: needs_operator\n"
+            f"REASON_CODE: {PR_CREATION_GATE_REASON}\n"
+            "OPERATOR_POLICY: pr_creation_gate + gate_24h + release_gate\n"
+            "DECISION_CLASS: publication release_gate\n"
+            "DECISION_REQUIRED: create draft PR for verified release bundle\n",
+            control_meta={
+                "status": "needs_operator",
+                "reason_code": PR_CREATION_GATE_REASON,
+                "operator_policy": "pr_creation_gate + gate_24h + release_gate",
+                "decision_class": "publication release_gate",
+                "decision_required": "create draft PR for verified release bundle",
+            },
+            idle_stable=True,
+            control_mtime=1_000.0,
+            now_ts=1_000.0,
+        )
+
+        self.assertEqual(decision["mode"], "triage")
+        self.assertEqual(decision["suppressed_mode"], "triage")
+        self.assertEqual(decision["routed_to"], "verify_followup")
+        self.assertEqual(decision["reason_code"], PR_CREATION_GATE_REASON)
+        self.assertEqual(decision["operator_policy"], "gate_24h")
+        self.assertEqual(decision["decision_class"], "release_gate")
+        self.assertEqual(decision["classification_source"], "operator_policy")
+        self.assertFalse(decision["operator_eligible"])
+
+    def test_unknown_release_gate_metadata_still_fails_closed(self) -> None:
+        decision = classify_operator_candidate(
+            "STATUS: needs_operator\n"
+            "REASON_CODE: m37_publish_bundle_unknown\n"
+            "OPERATOR_POLICY: publication_review\n"
+            "DECISION_CLASS: publication\n"
+            "DECISION_REQUIRED: approve unknown publication boundary\n",
+            control_meta={
+                "status": "needs_operator",
+                "reason_code": "m37_publish_bundle_unknown",
+                "operator_policy": "publication_review",
+                "decision_class": "publication",
+                "decision_required": "approve unknown publication boundary",
+            },
+            idle_stable=True,
+            now_ts=1_000.0,
+        )
+
+        self.assertEqual(decision["mode"], "needs_operator")
+        self.assertEqual(decision["routed_to"], "operator")
+        self.assertEqual(decision["operator_policy"], "immediate_publish")
+        self.assertEqual(decision["decision_class"], "release_gate")
+        self.assertEqual(decision["classification_source"], "metadata_fallback")
+        self.assertTrue(decision["operator_eligible"])
+
     def test_operator_request_writer_rejects_random_decision_class(self) -> None:
         with self.assertRaisesRegex(ValueError, "unsupported decision_class"):
             validate_operator_request_headers(
@@ -621,11 +783,17 @@ class OperatorRequestHeaderSchemaTests(unittest.TestCase):
         if not live_file.exists():
             self.skipTest("operator_request.md not present")
         header = _parse_operator_request_header(live_file.read_text(encoding="utf-8"))
-        reason_code = header.get("REASON_CODE", "")
+        reason_code = normalize_reason_code(header.get("REASON_CODE", ""))
         if reason_code not in SUPPORTED_REASON_CODES:
             self.skipTest(f"Live file drift detected: REASON_CODE={reason_code!r}")
-        self.assertIn(header.get("OPERATOR_POLICY", ""), SUPPORTED_OPERATOR_POLICIES)
-        self.assertIn(header.get("DECISION_CLASS", ""), SUPPORTED_DECISION_CLASSES)
+        self.assertIn(
+            normalize_operator_policy(header.get("OPERATOR_POLICY", "")),
+            SUPPORTED_OPERATOR_POLICIES,
+        )
+        self.assertIn(
+            normalize_decision_class(header.get("DECISION_CLASS", "")),
+            SUPPORTED_DECISION_CLASSES,
+        )
 
 
 if __name__ == "__main__":

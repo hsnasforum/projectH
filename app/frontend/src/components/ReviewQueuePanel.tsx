@@ -10,6 +10,7 @@ interface Props {
     candidateUpdatedAt: string,
     action: "accept" | "defer" | "reject",
     statement?: string,
+    reasonNote?: string,
   ) => void;
 }
 
@@ -40,8 +41,25 @@ function summarizeDelta(item: ReviewQueueItem): string | null {
   return null;
 }
 
+function contextRoleLabel(role: string): string {
+  if (role === "user") return "사용자";
+  if (role === "assistant") return "응답";
+  return role || "맥락";
+}
+
+function contextRoleClass(role: string): string {
+  if (role === "user") return "border-sky-400/20 bg-sky-500/10 text-sky-300";
+  if (role === "assistant") return "border-white/10 bg-white/5 text-sidebar-muted";
+  return "border-violet-400/20 bg-violet-500/10 text-violet-300";
+}
+
+function pluralCount(label: string, count: number): string {
+  return `${label} ${count}개`;
+}
+
 export default function ReviewQueuePanel({ items, sessionId, onReview }: Props) {
   const [editDrafts, setEditDrafts] = useState<Record<string, string | null>>({});
+  const [reasonDrafts, setReasonDrafts] = useState<Record<string, string>>({});
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
 
   if (items.length === 0) return null;
@@ -58,6 +76,16 @@ export default function ReviewQueuePanel({ items, sessionId, onReview }: Props) 
           const statementDraft = editDrafts[item.candidate_id] ?? item.statement;
           const isExpanded = expandedItems.has(item.candidate_id);
           const hasEvidenceDetail = Boolean(item.original_snippet && item.corrected_snippet);
+          const contextTurns = (item.context_turns ?? []).filter((turn) => (
+            typeof turn.role === "string" &&
+            turn.role.trim() &&
+            typeof turn.text === "string" &&
+            turn.text.trim()
+          ));
+          const evidenceSummary = item.evidence_summary;
+          const sourceSessionTitle = item.source_session_title?.trim();
+          const reasonDraft = reasonDrafts[item.candidate_id] ?? "";
+          const reasonNote = reasonDraft.trim() || undefined;
           return (
             <li
               key={`${item.source_message_id}:${item.candidate_id}`}
@@ -94,6 +122,56 @@ export default function ReviewQueuePanel({ items, sessionId, onReview }: Props) 
                   {deltaSummaryText}
                 </p>
               )}
+              {sourceSessionTitle && (
+                <p data-testid="review-source-session" className="mb-2 truncate text-[11px] text-sidebar-muted">
+                  세션: {sourceSessionTitle}
+                </p>
+              )}
+              {evidenceSummary && (
+                <div
+                  data-testid="review-evidence-summary"
+                  className="mb-2 flex flex-wrap gap-1 text-[10px] font-medium text-sidebar-muted"
+                >
+                  <span className="rounded-full border border-white/10 bg-white/5 px-1.5 py-0.5">
+                    {pluralCount("아티팩트", evidenceSummary.artifact_count)}
+                  </span>
+                  <span className="rounded-full border border-white/10 bg-white/5 px-1.5 py-0.5">
+                    {pluralCount("신호", evidenceSummary.signal_count)}
+                  </span>
+                  <span className="rounded-full border border-white/10 bg-white/5 px-1.5 py-0.5">
+                    {pluralCount("확인", evidenceSummary.confirmation_count)}
+                  </span>
+                  {evidenceSummary.recurring_session_count > 1 && (
+                    <span className="rounded-full border border-amber-400/20 bg-amber-500/10 px-1.5 py-0.5 text-amber-300">
+                      {evidenceSummary.recurring_session_count}개 세션 반복
+                    </span>
+                  )}
+                </div>
+              )}
+              {contextTurns.length > 0 && (
+                <div
+                  data-testid="review-context-turns"
+                  className="mb-2 space-y-1 border-l border-white/10 pl-2 text-[11px] leading-snug"
+                >
+                  <p className="font-medium text-sidebar-muted">대화 맥락</p>
+                  {contextTurns.map((turn, index) => (
+                    <div
+                      key={turn.message_id ?? `${item.candidate_id}:context:${index}`}
+                      data-testid="review-context-turn"
+                      className="flex min-w-0 gap-1.5"
+                    >
+                      <span
+                        className={`mt-0.5 h-fit shrink-0 rounded-full border px-1.5 py-0.5 text-[10px] font-medium ${contextRoleClass(turn.role.trim())}`}
+                      >
+                        {contextRoleLabel(turn.role.trim())}
+                      </span>
+                      <p className="min-w-0 flex-1 whitespace-pre-wrap break-words text-sidebar-muted line-clamp-3">
+                        {turn.text.trim()}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              )}
               {hasEvidenceDetail && (
                 <button
                   data-testid="review-detail-toggle"
@@ -129,13 +207,32 @@ export default function ReviewQueuePanel({ items, sessionId, onReview }: Props) 
                   </div>
                 </div>
               )}
+              <label className="mb-2 block text-[11px] font-medium text-sidebar-muted">
+                사유 (선택)
+                <textarea
+                  data-testid="review-reason-note"
+                  className="mt-1 min-h-[52px] w-full resize-none rounded border border-white/10 bg-sidebar px-2 py-1.5 text-[12px] leading-snug text-sidebar-text outline-none placeholder:text-sidebar-muted/45 focus:border-sky-300/60"
+                  value={reasonDraft}
+                  placeholder="왜 이 후보를 수락/거절하시나요?"
+                  onChange={(event) =>
+                    setReasonDrafts((prev) => ({ ...prev, [item.candidate_id]: event.target.value }))
+                  }
+                />
+              </label>
               <div className="flex gap-1.5">
                 <button
                   data-testid="review-accept"
                   className="rounded bg-emerald-600/20 px-2 py-1 text-[11px] font-medium text-emerald-300 transition-colors hover:bg-emerald-600/30"
                   onClick={() => {
                     const statement = isEditing ? editDrafts[item.candidate_id] ?? undefined : undefined;
-                    onReview(item.source_message_id, item.candidate_id, candidateUpdatedAt(item), "accept", statement);
+                    onReview(
+                      item.source_message_id,
+                      item.candidate_id,
+                      candidateUpdatedAt(item),
+                      "accept",
+                      statement,
+                      reasonNote,
+                    );
                   }}
                 >
                   수락
@@ -178,7 +275,14 @@ export default function ReviewQueuePanel({ items, sessionId, onReview }: Props) 
                   data-testid="review-reject"
                   className="rounded bg-red-500/10 px-2 py-1 text-[11px] font-medium text-red-300 transition-colors hover:bg-red-500/20"
                   onClick={() =>
-                    onReview(item.source_message_id, item.candidate_id, candidateUpdatedAt(item), "reject")
+                    onReview(
+                      item.source_message_id,
+                      item.candidate_id,
+                      candidateUpdatedAt(item),
+                      "reject",
+                      undefined,
+                      reasonNote,
+                    )
                   }
                 >
                   거절

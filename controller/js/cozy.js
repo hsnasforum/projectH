@@ -67,7 +67,10 @@ const LANE_META = {
 const ATTENTION_REASON_LABELS = Object.freeze({
   approval_required: '승인 필요',
   auth_login_required: '인증 로그인 필요',
+  commit_push_boundary: '커밋/푸시 승인 필요',
+  commit_push_doc_sync: '커밋/푸시 문서 동기화 승인 필요',
   credential_required: '인증 정보 입력 필요',
+  doc_sync_required: '문서 동기화 승인 필요',
   destructive_risk: '위험 작업 확인 필요',
   external_publication_boundary: '외부 공개 경계 확인',
   pr_boundary: 'PR 경계 확인',
@@ -3508,6 +3511,26 @@ function isAuthAttentionReason(reason) {
   return AUTH_ATTENTION_MARKERS.some((marker) => text.includes(marker.replace(/\s+/g, '_')));
 }
 
+function isDocSyncAttentionReason(reason) {
+  const text = normalizeReasonToken(reason);
+  return text.includes('doc_sync') || text.includes('docs_sync') || (text.includes('milestone') && text.includes('sync'));
+}
+
+function isCommitPushAttentionReason(reason) {
+  const text = normalizeReasonToken(reason);
+  return text.includes('commit') && text.includes('push');
+}
+
+function isReleaseGateAttentionReason(reason) {
+  const text = normalizeReasonToken(reason);
+  return (
+    isCommitPushAttentionReason(text) ||
+    isDocSyncAttentionReason(text) ||
+    text.includes('publication') ||
+    text.includes('pr_')
+  );
+}
+
 function labelForAttentionReason(reason, missingReason) {
   if (missingReason) return '개입 필요 사유 누락';
   const normalized = normalizeReasonToken(reason);
@@ -3516,6 +3539,11 @@ function labelForAttentionReason(reason, missingReason) {
   if (normalized.endsWith('_credential_required') || isAuthAttentionReason(normalized)) {
     return ATTENTION_REASON_LABELS.credential_required;
   }
+  if (isCommitPushAttentionReason(normalized) && isDocSyncAttentionReason(normalized)) {
+    return ATTENTION_REASON_LABELS.commit_push_doc_sync;
+  }
+  if (isCommitPushAttentionReason(normalized)) return ATTENTION_REASON_LABELS.commit_push_boundary;
+  if (isDocSyncAttentionReason(normalized)) return ATTENTION_REASON_LABELS.doc_sync_required;
   if (normalized.includes('approval')) return ATTENTION_REASON_LABELS.approval_required;
   if (normalized.includes('truth_sync')) return ATTENTION_REASON_LABELS.truth_sync_required;
   if (normalized.includes('publication') || normalized.includes('pr_')) return ATTENTION_REASON_LABELS.publication_boundary;
@@ -3583,6 +3611,31 @@ function attentionDecisionText(data, reason, missingReason, laneName) {
   return 'operator_request와 최근 lane 로그를 확인해 다음 행동을 결정해 주세요.';
 }
 
+function attentionTargetText(reason, laneName, roleName) {
+  if (laneName) return `${laneName}${roleName ? ` / ${roleName.toUpperCase()}` : ''}`;
+  const normalized = normalizeReasonToken(reason);
+  if (isReleaseGateAttentionReason(normalized)) return 'Repository / release gate';
+  if (normalized.includes('truth_sync')) return 'Docs / truth-sync';
+  return 'Operator';
+}
+
+function attentionEvidenceFallback(reason) {
+  const normalized = normalizeReasonToken(reason);
+  if (isCommitPushAttentionReason(normalized) && isDocSyncAttentionReason(normalized)) {
+    return 'runtime status가 커밋/푸시 및 문서 동기화 승인 경계를 보고했습니다.';
+  }
+  if (isCommitPushAttentionReason(normalized)) {
+    return 'runtime status가 커밋/푸시 승인 경계를 보고했습니다.';
+  }
+  if (isDocSyncAttentionReason(normalized)) {
+    return 'runtime status가 문서 동기화 승인 경계를 보고했습니다.';
+  }
+  if (isReleaseGateAttentionReason(normalized)) {
+    return 'runtime status가 공개 또는 PR 승인 경계를 보고했습니다.';
+  }
+  return '';
+}
+
 function attentionEvidenceText(data, reason, missingReason, laneName) {
   const autonomy = data.autonomy || {};
   const lane = laneName ? (data.lanes || []).find((item) => item.name === laneName) : null;
@@ -3596,6 +3649,8 @@ function attentionEvidenceText(data, reason, missingReason, laneName) {
   if (missingReason) {
     return 'runtime status가 needs_operator를 노출했지만 reason metadata를 찾지 못했습니다.';
   }
+  const fallback = attentionEvidenceFallback(reason);
+  if (fallback) return fallback;
   if (reason) return `runtime status reason_code=${reason}`;
   return 'runtime status에서 operator 대기 상태를 감지했습니다.';
 }
@@ -3625,6 +3680,7 @@ function buildOperatorAttention(data = runtimeStateStore.data) {
     reason: reason || 'reason_code_missing',
     laneName,
     roleName,
+    targetLabel: attentionTargetText(reason, laneName, roleName),
     controlLabel: attentionControlLabel(control),
     policy: firstNonEmpty(autonomy.operator_policy, autonomy.classification_source),
     decision: attentionDecisionText(payload, reason, missingReason, laneName),
@@ -3646,9 +3702,7 @@ function renderOperatorAttentionBoard() {
   }
   board.className = `operator-attention-board ${attention.tone || 'operator'}`;
   board.dataset.lane = attention.laneName || '';
-  const target = attention.laneName
-    ? `${attention.laneName}${attention.roleName ? ` / ${attention.roleName.toUpperCase()}` : ''}`
-    : '—';
+  const target = attention.targetLabel || 'Operator';
   const actionLabel = attention.laneName ? `${attention.laneName} Terminal` : 'Terminal';
   board.innerHTML = `
     <div class="operator-attention-header">
@@ -4488,37 +4542,62 @@ function connectMonitorStream() {
   });
 }
 
-async function pollMonitorSnapshot() {
-  if (runtimeMonitorDisabled()) return;
-  if (runtimeStateStore.monitor.connected || monitorFallbackInFlight) return;
+async function pollMonitorSnapshot(options = {}) {
+  const force = Boolean(options.force);
+  if (runtimeMonitorDisabled()) return false;
+  if ((!force && runtimeStateStore.monitor.connected) || monitorFallbackInFlight) return false;
   monitorFallbackInFlight = true;
   try {
     const response = await fetch('/api/runtime/monitor-snapshot');
     const data = await response.json();
     if (!response.ok || data.ok === false) throw new Error(data.error || `HTTP ${response.status}`);
     applyMonitorSnapshot(data);
+    return true;
   } catch (error) {
     if (!runtimeStateStore.monitor.snapshot) {
       pushEvent('warn', `토큰 HUD 조회 실패: ${getErrorMessage(error)}`);
     }
+    return false;
   } finally {
     monitorFallbackInFlight = false;
   }
 }
 
-async function pollRuntime() {
-  if (runtimeStateStore.monitor.connected) return;
-  if (pollInFlight) return;
+async function pollRuntime(options = {}) {
+  const force = Boolean(options.force);
+  if (!force && runtimeStateStore.monitor.connected) return false;
+  if (pollInFlight) return false;
   pollInFlight = true;
   try {
     const response = await fetch('/api/runtime/status');
     const data = await response.json();
     if (!response.ok || data.ok === false) throw new Error(data.error || `HTTP ${response.status}`);
     applyRuntimeStatusData(data);
+    return true;
   } catch (error) {
     recordStatusFetchFailure(error);
+    return false;
   } finally {
     pollInFlight = false;
+  }
+}
+
+async function refreshOperatorAttentionBoard(button) {
+  if (button && button.disabled) return;
+  const originalLabel = button ? button.textContent : '';
+  if (button) {
+    button.disabled = true;
+    button.textContent = 'Refreshing';
+  }
+  const [runtimeResult, monitorResult] = await Promise.allSettled([
+    pollRuntime({ force: true }),
+    pollMonitorSnapshot({ force: true }),
+  ]);
+  const refreshed = [runtimeResult, monitorResult].some((result) => result.status === 'fulfilled' && result.value);
+  pushEvent(refreshed ? 'ok' : 'warn', refreshed ? 'Operator attention refreshed' : 'Operator attention refresh skipped');
+  if (button && button.isConnected) {
+    button.disabled = false;
+    button.textContent = originalLabel || 'Refresh';
   }
 }
 
@@ -4708,8 +4787,7 @@ document.getElementById('operator-attention-board').addEventListener('click', (e
     return;
   }
   if (refresh) {
-    pollRuntime();
-    pollMonitorSnapshot();
+    refreshOperatorAttentionBoard(refresh);
   }
 });
 
@@ -4775,6 +4853,12 @@ window.getSceneDebug = function() {
 
 window.getOperatorAttentionDebug = function() {
   return buildOperatorAttention();
+};
+
+window.testSetRuntimeMonitorConnected = function(value) {
+  runtimeStateStore.monitor.connected = Boolean(value);
+  renderSidebar();
+  renderOperatorAttentionBoard();
 };
 
 window.getAgentPositions = function() {

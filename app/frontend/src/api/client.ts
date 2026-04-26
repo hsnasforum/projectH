@@ -104,6 +104,7 @@ export async function postCandidateReview(
   candidateUpdatedAt: string,
   action: "accept" | "reject" | "defer",
   statement?: string,
+  reasonNote?: string,
 ): Promise<void> {
   await fetch(`${BASE}/api/candidate-review`, {
     method: "POST",
@@ -115,6 +116,7 @@ export async function postCandidateReview(
       candidate_updated_at: candidateUpdatedAt,
       review_action: action,
       ...(statement !== undefined ? { statement } : {}),
+      ...(reasonNote ? { reason_note: reasonNote } : {}),
     }),
   });
 }
@@ -214,6 +216,8 @@ export interface PreferenceRecord {
     avg_similarity_score: number | null;
     is_high_quality: boolean | null;
   } | null;
+  review_reason_note?: string | null;
+  source_session_title?: string | null;
   activated_at: string | null;
   created_at: string;
   updated_at: string;
@@ -242,6 +246,8 @@ export interface ReviewQueueItem {
   promotion_eligibility: string;
   artifact_id: string;
   source_message_id: string;
+  source_session_id?: string | null;
+  source_session_title?: string | null;
   supporting_artifact_ids: string[];
   supporting_source_message_ids: string[];
   supporting_signal_refs: Record<string, unknown>[];
@@ -259,6 +265,17 @@ export interface ReviewQueueItem {
   } | null;
   original_snippet?: string | null;
   corrected_snippet?: string | null;
+  context_turns?: Array<{
+    role: string;
+    text: string;
+    message_id?: string | null;
+  }> | null;
+  evidence_summary?: {
+    artifact_count: number;
+    signal_count: number;
+    confirmation_count: number;
+    recurring_session_count: number;
+  } | null;
   is_global?: boolean | null;
 }
 

@@ -335,6 +335,15 @@ def _normalize_control_token(value: object) -> str:
     return text.strip("_")
 
 
+def _contains_normalized_token(text: str, marker: str) -> bool:
+    return (
+        text == marker
+        or text.startswith(f"{marker}_")
+        or text.endswith(f"_{marker}")
+        or f"_{marker}_" in text
+    )
+
+
 def _raw_text(parts: Iterable[object]) -> str:
     return "\n".join(str(part or "") for part in parts if str(part or "").strip())
 
@@ -347,8 +356,16 @@ def normalize_reason_code(value: object) -> str:
         (PR_MERGE_GATE_REASON, PR_MERGE_GATE_REASON),
     )
     for marker, canonical in compound_aliases:
-        if text == marker or text.startswith(f"{marker}_") or text.endswith(f"_{marker}") or f"_{marker}_" in text:
+        if _contains_normalized_token(text, marker):
             return canonical
+    if re.match(r"^b[0-9]+_release_gate_commit_authorization_dirty_tree$", text):
+        return COMMIT_PUSH_BUNDLE_AUTHORIZATION_REASON
+    if re.match(r"^m[0-9]+_commit_push(?:_milestones?)?(?:_doc(?:s)?_sync)?$", text):
+        return COMMIT_PUSH_BUNDLE_AUTHORIZATION_REASON
+    if re.match(r"^m[0-9]+_(?:pr_creation|draft_pr|create_pr)_gate$", text):
+        return PR_CREATION_GATE_REASON
+    if re.match(r"^m[0-9]+_(?:pr_merge|merge_pr|merge)_gate$", text):
+        return PR_MERGE_GATE_REASON
     if _MILESTONE_DIRECTION_REASON_RE.match(text):
         return "slice_ambiguity"
     aliases = {
@@ -357,6 +374,7 @@ def normalize_reason_code(value: object) -> str:
         "branch_complete_pending_milestone_transition": "approval_required",
         "gemini_axis_switch_without_exact_slice": "slice_ambiguity",
         "m21_complete_push_and_pr_bundle": COMMIT_PUSH_BUNDLE_AUTHORIZATION_REASON,
+        "milestones_doc_sync_commit_push": COMMIT_PUSH_BUNDLE_AUTHORIZATION_REASON,
     }
     return normalize_verify_triage_reason(aliases.get(text, text))
 
@@ -381,11 +399,23 @@ def normalize_operator_policy(value: object) -> str:
         "suppress": "internal_only",
         "suppress_internal": "internal_only",
     }
-    return aliases.get(text, text)
+    if text in aliases:
+        return aliases[text]
+    for canonical in ("immediate_publish", "internal_only", "gate_24h"):
+        if _contains_normalized_token(text, canonical):
+            return canonical
+    if _contains_normalized_token(text, COMMIT_PUSH_BUNDLE_AUTHORIZATION_REASON):
+        return "internal_only"
+    if _contains_normalized_token(text, PR_CREATION_GATE_REASON):
+        return "gate_24h"
+    return text
 
 
 def normalize_decision_class(value: object) -> str:
     text = _normalize_control_token(value)
+    for canonical in ("release_gate", "merge_gate", "operator_only", "next_slice_selection"):
+        if _contains_normalized_token(text, canonical):
+            return canonical
     if (
         text == "next_milestone_selection"
         or text.startswith("next_milestone_selection_")
@@ -400,6 +430,12 @@ def normalize_decision_class(value: object) -> str:
     aliases = {
         "branch_closure_and_milestone_transition": "operator_only",
         "branch_complete_pending_milestone_transition": "operator_only",
+        "publication": "release_gate",
+        "publish": "release_gate",
+        "publish_gate": "release_gate",
+        "pr_publication": "release_gate",
+        "branch_publication": "release_gate",
+        "commit_publish_authorization": "release_gate",
     }
     return aliases.get(text, text)
 

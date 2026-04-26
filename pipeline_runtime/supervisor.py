@@ -36,9 +36,7 @@ from .lane_catalog import (
 from .lane_surface import tail_has_busy_indicator, tail_has_ready_indicator, tail_surface_state
 from .operator_autonomy import (
     OPERATOR_APPROVAL_COMPLETED_REASON,
-    classify_operator_candidate,
-    evaluate_stale_operator_control,
-    operator_gate_marker_from_decision,
+    resolve_operator_control,
 )
 from .pr_merge_state import PrMergeStatusCache
 from .role_routes import VERIFY_TRIAGE_ESCALATION, is_verify_followup_route
@@ -824,9 +822,11 @@ class RuntimeSupervisor:
             for job_state in job_states
             if str(job_state.get("status") or "") == "VERIFY_DONE"
         }
-        return evaluate_stale_operator_control(
+        resolution = resolve_operator_control(
             control_text=control_text,
             control_meta=control_meta,
+            control_path=str(control_path),
+            control_mtime=float(control.get("mtime") or 0.0),
             verified_work_paths=verified_work_paths,
             completed_pr_numbers=pr_merge_resolution.completed_pr_numbers,
             mismatched_pr_numbers=pr_merge_resolution.head_mismatch_pr_numbers,
@@ -837,6 +837,8 @@ class RuntimeSupervisor:
             turn_reason=reason,
             turn_control_seq=snapshot_control_seq(turn_snapshot),
         )
+        marker = resolution.get("stale_marker")
+        return marker if isinstance(marker, dict) else None
 
     def _operator_gate_marker(
         self,
@@ -877,18 +879,20 @@ class RuntimeSupervisor:
             "idle_stable": not active_round or str((active_round or {}).get("state") or "") == "CLOSED",
         }
         control_text = self._control_text(control)
-        decision = classify_operator_candidate(control_text, **classify_kwargs)
+        resolution = resolve_operator_control(control_text=control_text, **classify_kwargs)
+        decision = dict(resolution.get("decision") or {})
         persisted = self._load_autonomy_state()
         fingerprint = str(decision.get("fingerprint") or "")
         same_fingerprint = fingerprint and fingerprint == str(persisted.get("fingerprint") or "")
         if same_fingerprint:
             persisted_first_seen_ts = parse_iso_utc(str(persisted.get("first_seen_at") or ""))
             if persisted_first_seen_ts > 0:
-                decision = classify_operator_candidate(
-                    control_text,
+                resolution = resolve_operator_control(
+                    control_text=control_text,
                     **classify_kwargs,
                     first_seen_ts=persisted_first_seen_ts,
                 )
+                decision = dict(resolution.get("decision") or {})
                 fingerprint = str(decision.get("fingerprint") or "")
                 same_fingerprint = fingerprint and fingerprint == str(persisted.get("fingerprint") or "")
         retries = int(persisted.get("same_fingerprint_retries") or 0) if same_fingerprint else 0
@@ -922,13 +926,8 @@ class RuntimeSupervisor:
             ),
         }
 
-        marker = operator_gate_marker_from_decision(
-            decision,
-            control_file=control_file,
-            control_seq=control_seq,
-            fingerprint=fingerprint,
-        )
-        return marker, autonomy
+        marker = resolution.get("gate_marker")
+        return (marker if isinstance(marker, dict) else None), autonomy
 
     def _active_lane_for_runtime(
         self,

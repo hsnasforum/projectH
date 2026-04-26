@@ -6655,6 +6655,28 @@ class RuntimeSupervisorTest(unittest.TestCase):
         self.assertEqual(result["decision_class"], "operator_only")
         self.assertEqual(result["routed_to"], "operator")
 
+    def test_classify_operator_candidate_auth_login_stays_operator_visible(self) -> None:
+        result = classify_operator_candidate(
+            "Invalid authentication credentials; run login before retrying.",
+            control_meta={
+                "reason_code": "auth_login_required",
+                "operator_policy": "gate_24h",
+                "decision_class": "operator_only",
+                "decision_required": "auth login is required before automation can continue",
+            },
+            idle_stable=True,
+            control_mtime=1_000.0,
+            now_ts=1_000.0,
+        )
+
+        self.assertEqual(result["mode"], "needs_operator")
+        self.assertEqual(result["suppressed_mode"], "needs_operator")
+        self.assertEqual(result["reason_code"], "auth_login_required")
+        self.assertEqual(result["operator_policy"], "gate_24h")
+        self.assertEqual(result["decision_class"], "operator_only")
+        self.assertEqual(result["routed_to"], "operator")
+        self.assertTrue(result["operator_eligible"])
+
     # origin: seq 593 dispatch_intent/lane-identity payload stability guard (출처 work note 미기록)
     def test_classify_operator_candidate_payload_stability(self) -> None:
         expected_keys = [

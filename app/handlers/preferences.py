@@ -180,6 +180,7 @@ class PreferenceHandlerMixin:
             "preferences": enriched,
             "active_count": sum(1 for p in enriched if p.get("status") == "active"),
             "candidate_count": sum(1 for p in enriched if p.get("status") == "candidate"),
+            "paused_count": sum(1 for p in enriched if p.get("status") == "paused"),
         }
 
     def get_preference_audit(self) -> dict[str, Any]:

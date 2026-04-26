@@ -22,6 +22,8 @@ const STATUS_COLORS: Record<string, string> = {
   paused: "bg-stone-100 text-stone-500",
 };
 
+type PreferenceStatusFilter = "all" | "candidate" | "active" | "paused";
+
 function preferenceReliabilityCounts(pref: PreferenceRecord) {
   const appliedCount = pref.reliability_stats?.applied_count;
   const correctedCount = pref.reliability_stats?.corrected_count;
@@ -41,6 +43,7 @@ export default function PreferencePanel() {
   const [fadingOut, setFadingOut] = useState<Set<string>>(new Set());
   const [syncingAdopted, setSyncingAdopted] = useState(false);
   const [syncStatus, setSyncStatus] = useState<string | null>(null);
+  const [statusFilter, setStatusFilter] = useState<PreferenceStatusFilter>("all");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -127,6 +130,16 @@ export default function PreferencePanel() {
   // Visible count for header
   const activeCount = preferences.filter((p) => p.status === "active").length;
   const candidateCount = preferences.filter((p) => p.status === "candidate").length;
+  const pausedCount = preferences.filter((p) => p.status === "paused").length;
+  const filteredPreferences = statusFilter === "all"
+    ? preferences
+    : preferences.filter((p) => p.status === statusFilter);
+  const statusTabs: Array<{ key: PreferenceStatusFilter; label: string; count: number }> = [
+    { key: "all", label: "전체", count: preferences.length },
+    { key: "candidate", label: "후보", count: candidateCount },
+    { key: "active", label: "활성", count: activeCount },
+    { key: "paused", label: "일시중지", count: pausedCount },
+  ];
   const adoptedCorrectionsCount = audit?.adopted_corrections_count ?? 0;
   const availableToSyncCount = audit?.available_to_sync_count ?? 0;
   const canSyncAdoptedCorrections = availableToSyncCount > 0;
@@ -165,7 +178,7 @@ export default function PreferencePanel() {
             {activeCount === 0 && candidateCount === 0
               ? canSyncAdoptedCorrections
                 ? `활성 교정 ${adoptedCorrectionsCount}개`
-                : `${preferences.length}개 일시중지`
+                : `${pausedCount}개 일시중지`
               : ""}
           </span>
         </span>
@@ -208,7 +221,33 @@ export default function PreferencePanel() {
               )}
             </div>
           )}
-          {preferences.map((pref) => {
+          <div className="flex items-center gap-1 overflow-x-auto px-1 pb-0.5">
+            {statusTabs.map((tab) => {
+              const selected = statusFilter === tab.key;
+              return (
+                <button
+                  key={tab.key}
+                  type="button"
+                  data-testid={`preference-status-filter-${tab.key}`}
+                  aria-pressed={selected}
+                  className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium transition-colors ${
+                    selected
+                      ? "bg-sky-500/20 text-sky-200"
+                      : "bg-white/5 text-sidebar-muted hover:bg-white/10 hover:text-sidebar-text"
+                  }`}
+                  onClick={() => setStatusFilter(tab.key)}
+                >
+                  {tab.label} ({tab.count})
+                </button>
+              );
+            })}
+          </div>
+          {filteredPreferences.length === 0 && (
+            <div className="px-2 py-2 text-center text-[11px] text-sidebar-muted/60">
+              해당 상태 선호가 없습니다
+            </div>
+          )}
+          {filteredPreferences.map((pref) => {
             const reliability = preferenceReliabilityCounts(pref);
             const isHighQuality = pref.quality_info?.is_high_quality === true;
             const hasEvidenceDetail = Boolean(pref.original_snippet && pref.corrected_snippet);

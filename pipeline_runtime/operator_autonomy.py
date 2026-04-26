@@ -167,6 +167,7 @@ _IMMEDIATE_REASON_CODES = {
     "truth_sync_required": {"mode": "needs_operator", "routed_to": "operator"},
     "security_incident": {"mode": "needs_operator", "routed_to": "operator"},
     "destructive_risk": {"mode": "needs_operator", "routed_to": "operator"},
+    "auth_login_required": {"mode": "needs_operator", "routed_to": "operator"},
     **{
         reason: {"mode": "needs_operator", "routed_to": "operator"}
         for reason in PUBLICATION_BOUNDARY_REASON_CODES
@@ -179,7 +180,6 @@ _GATED_REASON_CODES = {
     "continue_vs_switch": {"mode": "triage", "routed_to": VERIFY_FOLLOWUP_ROUTE},
     "slice_ambiguity": {"mode": "triage", "routed_to": VERIFY_FOLLOWUP_ROUTE},
     "newer_unverified_work_present": {"mode": "recovery", "routed_to": VERIFY_FOLLOWUP_ROUTE},
-    "auth_login_required": {"mode": "recovery", "routed_to": VERIFY_FOLLOWUP_ROUTE},
     "provider_outage": {"mode": "triage", "routed_to": VERIFY_FOLLOWUP_ROUTE},
     "receipt_repair": {"mode": "recovery", "routed_to": VERIFY_FOLLOWUP_ROUTE},
     "verify_manifest_mismatch": {"mode": "recovery", "routed_to": VERIFY_FOLLOWUP_ROUTE},
@@ -974,4 +974,70 @@ def classify_operator_candidate(
         "publish_immediately": operator_policy == "immediate_publish",
         "routed_to": routed_to,
         "fingerprint": fingerprint,
+    }
+
+
+def resolve_operator_control(
+    *,
+    control_text: str,
+    control_meta: Mapping[str, Any] | None = None,
+    control_file: str = "operator_request.md",
+    control_path: str = ".pipeline/operator_request.md",
+    control_seq: int = -1,
+    control_mtime: float = 0.0,
+    verified_work_paths: Iterable[object] = (),
+    completed_pr_numbers: Iterable[object] = (),
+    mismatched_pr_numbers: Iterable[object] = (),
+    normalize_path: Callable[[object], str] | None = None,
+    turn_state_name: str = "",
+    turn_reason: str = "",
+    turn_control_seq: int = -1,
+    lane_notes: Iterable[object] = (),
+    idle_stable: bool = False,
+    first_seen_ts: float | None = None,
+    now_ts: float | None = None,
+) -> dict[str, object]:
+    """Resolve an active operator control using the shared recovery/gate truth.
+
+    Watcher and supervisor still own file IO, PR lookup, persistence, and event
+    writing. This helper keeps the semantic decision, stale-control recovery,
+    and gate marker in one place so clients do not reassemble the truth
+    differently.
+    """
+    decision = classify_operator_candidate(
+        control_text,
+        control_meta=control_meta,
+        control_path=control_path,
+        control_seq=control_seq,
+        control_mtime=control_mtime,
+        first_seen_ts=first_seen_ts,
+        turn_reason=turn_reason,
+        lane_notes=lane_notes,
+        idle_stable=idle_stable,
+        now_ts=now_ts,
+    )
+    stale_marker = evaluate_stale_operator_control(
+        control_text=control_text,
+        control_meta=control_meta,
+        verified_work_paths=verified_work_paths,
+        completed_pr_numbers=completed_pr_numbers,
+        mismatched_pr_numbers=mismatched_pr_numbers,
+        control_file=control_file,
+        control_seq=control_seq,
+        normalize_path=normalize_path,
+        turn_state_name=turn_state_name,
+        turn_reason=turn_reason,
+        turn_control_seq=turn_control_seq,
+    )
+    fingerprint = str(decision.get("fingerprint") or "")
+    gate_marker = operator_gate_marker_from_decision(
+        decision,
+        control_file=control_file,
+        control_seq=control_seq,
+        fingerprint=fingerprint,
+    )
+    return {
+        "decision": decision,
+        "stale_marker": stale_marker,
+        "gate_marker": gate_marker,
     }

@@ -44,6 +44,7 @@ if _PROJECT_IMPORT_ROOT:
     if project_import_path not in sys.path:
         sys.path.insert(0, project_import_path)
 
+import watcher_dispatch
 from pipeline_gui.setup_profile import resolve_project_runtime_adapter
 from pipeline_runtime.automation_health import (
     STALE_ADVISORY_GRACE_CYCLES,
@@ -68,11 +69,9 @@ from pipeline_runtime.lane_catalog import (
 )
 from pipeline_runtime.operator_autonomy import (
     OPERATOR_APPROVAL_COMPLETED_REASON,
-    classify_operator_candidate,
-    evaluate_stale_operator_control,
     is_commit_push_approval_stop,
     normalize_reason_code,
-    operator_gate_marker_from_decision,
+    resolve_operator_control,
 )
 from pipeline_runtime.pr_merge_state import PrMergeStatusCache
 from pipeline_runtime.role_routes import (
@@ -121,24 +120,6 @@ from verify_fsm import (
     compute_md_tree_sig,
     compute_multi_file_sig,
     make_job_id,
-)
-from watcher_dispatch import (
-    _DISPATCH_LOCKS_GUARD,
-    _DISPATCH_LOCKS,
-    _DISPATCH_LOCK_TIMEOUT_SEC,
-    _wait_for_input_ready,
-    _wait_for_dispatch_window,
-    _is_pane_dead,
-    _respawn_pane,
-    _clear_prompt_input_line,
-    _dispatch_lock_for,
-    _pane_has_working_indicator,
-    tmux_send_keys,
-    _dispatch_codex,
-    _dispatch_claude,
-    _dispatch_gemini,
-    DispatchIntent,
-    WatcherDispatchQueue,
 )
 from watcher_state import (
     _JSONSCHEMA_AVAILABLE,
@@ -231,6 +212,8 @@ logging.basicConfig(
     datefmt="%Y-%m-%dT%H:%M:%S",
 )
 log = logging.getLogger("watcher_core")
+
+__all__ = ["WatcherCore", "main"]
 
 SCHEMA_VERSION = 1
 ROUND_NOTE_NAME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}-.+\.md$")
@@ -547,10 +530,10 @@ class WatcherCore:
             str(Path(__file__).parent / "schemas" / "agent_manifest.schema.json"),
         ))
         self.collector = ManifestCollector(self.manifests_dir, schema_path)
-        self.dispatch_queue = WatcherDispatchQueue(
+        self.dispatch_queue = watcher_dispatch.WatcherDispatchQueue(
             lane_input_defer_cooldown_sec=self._lane_input_defer_cooldown_sec,
             capture_pane_text=lambda target: _shared_capture_pane_text(target),
-            send_keys=lambda target, prompt, pane_type: tmux_send_keys(
+            send_keys=lambda target, prompt, pane_type: watcher_dispatch.tmux_send_keys(
                 target, prompt, self.dry_run, pane_type=pane_type
             ),
             get_path_sig=self._get_path_sig,
@@ -627,7 +610,7 @@ class WatcherCore:
             pane_text_has_input_cursor=lambda text: _shared_pane_text_has_input_cursor(text),
             pane_text_is_idle=lambda text: _shared_pane_text_is_idle(text),
             normalize_prompt_text=self.prompt_assembler.finalize_prompt_text,
-            send_keys=lambda target, prompt, dry_run, pane_type: tmux_send_keys(
+            send_keys=lambda target, prompt, dry_run, pane_type: watcher_dispatch.tmux_send_keys(
                 target,
                 prompt,
                 dry_run,
@@ -1433,9 +1416,11 @@ class WatcherCore:
             control_text,
             control_meta,
         )
-        return evaluate_stale_operator_control(
+        resolution = resolve_operator_control(
             control_text=control_text,
             control_meta=control_meta,
+            control_path=str(self.operator_request_path),
+            control_mtime=self._get_path_mtime(self.operator_request_path),
             verified_work_paths=self._verified_work_paths(),
             completed_pr_numbers=pr_merge_resolution.completed_pr_numbers,
             mismatched_pr_numbers=pr_merge_resolution.head_mismatch_pr_numbers,
@@ -1443,6 +1428,8 @@ class WatcherCore:
             control_seq=self._read_control_seq_from_path(self.operator_request_path),
             normalize_path=self._normalize_artifact_path,
         )
+        marker = resolution.get("stale_marker")
+        return marker if isinstance(marker, dict) else None
 
     # ------------------------------------------------------------------
     def _operator_gate_marker(self) -> Optional[dict[str, object]]:
@@ -1454,8 +1441,8 @@ class WatcherCore:
             return None
         control_meta = read_control_meta(self.operator_request_path)
         control_seq = self._read_control_seq_from_path(self.operator_request_path)
-        decision = classify_operator_candidate(
-            control_text,
+        resolution = resolve_operator_control(
+            control_text=control_text,
             control_meta=control_meta,
             control_path=str(self.operator_request_path),
             control_seq=control_seq,
@@ -1467,11 +1454,8 @@ class WatcherCore:
                 and self._get_advisory_advice_mtime() == 0.0
             ),
         )
-        return operator_gate_marker_from_decision(
-            decision,
-            control_file="operator_request.md",
-            control_seq=control_seq,
-        )
+        marker = resolution.get("gate_marker")
+        return marker if isinstance(marker, dict) else None
 
     # ------------------------------------------------------------------
     def _git_read(self, args: list[str]) -> Optional[str]:
@@ -2852,9 +2836,9 @@ class WatcherCore:
                 str(spec.prompt_path),
                 "turn_signal",
                 dict(spec.raw_payload),
-            )
+        )
         return self.dispatch_queue.dispatch(
-            DispatchIntent(
+            watcher_dispatch.DispatchIntent(
                 pending_key=spec.pending_key,
                 notify_kind=spec.notify_kind,
                 lane_role=spec.lane_role,
@@ -3499,11 +3483,11 @@ class WatcherCore:
         advisory_target = self._prompt_pane_target("advisory")
         if not implement_target or not verify_target or not advisory_target:
             return False
-        if _is_pane_dead(implement_target):
+        if watcher_dispatch._is_pane_dead(implement_target):
             return False
-        if _is_pane_dead(verify_target):
+        if watcher_dispatch._is_pane_dead(verify_target):
             return False
-        if _is_pane_dead(advisory_target):
+        if watcher_dispatch._is_pane_dead(advisory_target):
             return False
         if not _shared_pane_text_is_idle(pane_snapshots["verify"]):
             return False

@@ -6227,6 +6227,53 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertEqual(pref_record["reliability_stats"]["applied_count"], 2)
             self.assertEqual(pref_record["reliability_stats"]["corrected_count"], 1)
 
+    def test_list_preferences_payload_includes_status_counts(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                preferences_dir=str(tmp_path / "preferences"),
+                model_provider="mock",
+            )
+            service = WebAppService(settings=settings)
+            candidate = service.preference_store.record_reviewed_candidate_preference(
+                delta_fingerprint="pref-count-candidate",
+                candidate_family="correction_rewrite",
+                description="후보 선호",
+                source_refs={"session_id": "pref-counts", "candidate_id": "candidate"},
+            )
+            active = service.preference_store.record_reviewed_candidate_preference(
+                delta_fingerprint="pref-count-active",
+                candidate_family="correction_rewrite",
+                description="활성 선호",
+                source_refs={"session_id": "pref-counts", "candidate_id": "active"},
+            )
+            paused = service.preference_store.record_reviewed_candidate_preference(
+                delta_fingerprint="pref-count-paused",
+                candidate_family="correction_rewrite",
+                description="일시중지 선호",
+                source_refs={"session_id": "pref-counts", "candidate_id": "paused"},
+            )
+            rejected = service.preference_store.record_reviewed_candidate_preference(
+                delta_fingerprint="pref-count-rejected",
+                candidate_family="correction_rewrite",
+                description="거부 선호",
+                source_refs={"session_id": "pref-counts", "candidate_id": "rejected"},
+            )
+
+            self.assertIsNotNone(candidate)
+            service.preference_store.activate_preference(active["preference_id"])
+            service.preference_store.activate_preference(paused["preference_id"])
+            service.preference_store.pause_preference(paused["preference_id"])
+            service.preference_store.reject_preference(rejected["preference_id"])
+
+            payload = service.list_preferences_payload()
+
+            self.assertEqual(payload["candidate_count"], 1)
+            self.assertEqual(payload["active_count"], 1)
+            self.assertEqual(payload["paused_count"], 1)
+
     def test_submit_candidate_review_accept_persists_local_preference_candidate_with_sqlite_backend(self) -> None:
         with TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)

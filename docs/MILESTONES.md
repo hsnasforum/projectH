@@ -937,10 +937,16 @@ activate / pause / reject 상태 전환 시 사용자가 선택적 이유 메모
 - `PreferencePanel` `handleAction`: 전환 전 `window.prompt()`로 이유 수집;
   취소(`null`)이면 전환 중단, 기존 conflict confirm 및 reject fade-out 흐름 유지.
 
+#### Shipped Infrastructure (Axis 2, 2026-04-26)
+- `list_preferences_payload()`가 `system` task log에서 preference별 최신
+  `transition_reason`을 읽어 `last_transition_reason`으로 payload에 포함.
+- `PreferenceRecord.last_transition_reason?: string | null` TypeScript 타입 추가.
+- `PreferencePanel`이 `last_transition_reason`이 있을 때 "전환 이유: …"를 항목 아래에 표시.
+
 ## Next 3 Implementation Priorities
 
 1. **E2E 환경 개선 완료**: `e2e/start-server.sh` healthcheck wrapper no-server / existing-server 두 경로가 정적 감사(09c806d)로 확인됨. operator가 검증 수준을 release gate로 인정(Q1 Option A, operator_request 263). B1 gate closed (2026-04-26).
-2. **M43 Axis 2 방향**: M43 Axis 1 이후 다음 preference auditability 확장 (transition_reason UI 개선 / audit depth / 기타)을 advisory에서 결정.
+2. **M43 완료**: M43 Axis 1 (transition_reason 기록) + Axis 2 (last_transition_reason 표시) 모두 shipped. M44 방향은 다음 advisory에서 확정.
 
 ## Do Not Pull Forward
 

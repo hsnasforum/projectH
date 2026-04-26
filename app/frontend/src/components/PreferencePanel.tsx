@@ -77,10 +77,17 @@ export default function PreferencePanel() {
           );
           if (!confirmed) return;
         }
-        await activatePreference(pref.preference_id);
-      } else if (action === "pause") await pausePreference(pref.preference_id);
-      else {
-        await rejectPreference(pref.preference_id);
+        const reason = window.prompt("활성화 이유를 입력하세요 (선택사항):", "");
+        if (reason === null) return;
+        await activatePreference(pref.preference_id, reason || undefined);
+      } else if (action === "pause") {
+        const reason = window.prompt("일시중지 이유를 입력하세요 (선택사항):", "");
+        if (reason === null) return;
+        await pausePreference(pref.preference_id, reason || undefined);
+      } else {
+        const reason = window.prompt("거부 이유를 입력하세요 (선택사항):", "");
+        if (reason === null) return;
+        await rejectPreference(pref.preference_id, reason || undefined);
         // Fade out then remove
         setFadingOut((prev) => new Set(prev).add(pref.preference_id));
         setTimeout(() => {

@@ -175,6 +175,25 @@ class PreferenceHandlerMixin:
                 "conflicting_preference_ids": conflicting,
             }
 
+        transition_actions = {"preference_activated", "preference_paused", "preference_rejected"}
+        try:
+            system_records = self.task_logger.iter_session_records("system")
+            latest_reason: dict[str, str] = {}
+            for record in system_records:
+                if record.get("action") not in transition_actions:
+                    continue
+                detail = record.get("detail") or {}
+                preference_id = detail.get("preference_id") if isinstance(detail, dict) else None
+                transition_reason = _as_nonempty_text(detail.get("transition_reason")) if isinstance(detail, dict) else None
+                if preference_id and transition_reason:
+                    latest_reason[str(preference_id)] = transition_reason
+        except Exception:
+            latest_reason = {}
+        for pref_copy in enriched:
+            preference_id = pref_copy.get("preference_id")
+            if preference_id and str(preference_id) in latest_reason:
+                pref_copy["last_transition_reason"] = latest_reason[str(preference_id)]
+
         return {
             "ok": True,
             "preferences": enriched,
@@ -257,30 +276,42 @@ class PreferenceHandlerMixin:
         preference_id = self._normalize_optional_text(payload.get("preference_id"))
         if not preference_id:
             raise WebApiError(400, "활성화할 선호 ID가 필요합니다.")
+        transition_reason = self._normalize_optional_text(payload.get("transition_reason"))
         result = self.preference_store.activate_preference(preference_id)
         if result is None:
             raise WebApiError(404, "해당 선호를 찾을 수 없습니다.")
-        self.task_logger.log(session_id="system", action="preference_activated", detail={"preference_id": preference_id})
+        detail: dict[str, Any] = {"preference_id": preference_id}
+        if transition_reason:
+            detail["transition_reason"] = transition_reason
+        self.task_logger.log(session_id="system", action="preference_activated", detail=detail)
         return {"ok": True, "preference": result}
 
     def pause_preference(self, payload: dict[str, Any]) -> dict[str, Any]:
         preference_id = self._normalize_optional_text(payload.get("preference_id"))
         if not preference_id:
             raise WebApiError(400, "일시중지할 선호 ID가 필요합니다.")
+        transition_reason = self._normalize_optional_text(payload.get("transition_reason"))
         result = self.preference_store.pause_preference(preference_id)
         if result is None:
             raise WebApiError(404, "해당 선호를 찾을 수 없습니다.")
-        self.task_logger.log(session_id="system", action="preference_paused", detail={"preference_id": preference_id})
+        detail: dict[str, Any] = {"preference_id": preference_id}
+        if transition_reason:
+            detail["transition_reason"] = transition_reason
+        self.task_logger.log(session_id="system", action="preference_paused", detail=detail)
         return {"ok": True, "preference": result}
 
     def reject_preference(self, payload: dict[str, Any]) -> dict[str, Any]:
         preference_id = self._normalize_optional_text(payload.get("preference_id"))
         if not preference_id:
             raise WebApiError(400, "거부할 선호 ID가 필요합니다.")
+        transition_reason = self._normalize_optional_text(payload.get("transition_reason"))
         result = self.preference_store.reject_preference(preference_id)
         if result is None:
             raise WebApiError(404, "해당 선호를 찾을 수 없습니다.")
-        self.task_logger.log(session_id="system", action="preference_rejected", detail={"preference_id": preference_id})
+        detail: dict[str, Any] = {"preference_id": preference_id}
+        if transition_reason:
+            detail["transition_reason"] = transition_reason
+        self.task_logger.log(session_id="system", action="preference_rejected", detail=detail)
         return {"ok": True, "preference": result}
 
     def update_preference_description(self, payload: dict[str, Any]) -> dict[str, Any]:

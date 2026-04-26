@@ -77,10 +77,17 @@ export default function PreferencePanel() {
           );
           if (!confirmed) return;
         }
-        await activatePreference(pref.preference_id);
-      } else if (action === "pause") await pausePreference(pref.preference_id);
-      else {
-        await rejectPreference(pref.preference_id);
+        const reason = window.prompt("활성화 이유를 입력하세요 (선택사항):", "");
+        if (reason === null) return;
+        await activatePreference(pref.preference_id, reason || undefined);
+      } else if (action === "pause") {
+        const reason = window.prompt("일시중지 이유를 입력하세요 (선택사항):", "");
+        if (reason === null) return;
+        await pausePreference(pref.preference_id, reason || undefined);
+      } else {
+        const reason = window.prompt("거부 이유를 입력하세요 (선택사항):", "");
+        if (reason === null) return;
+        await rejectPreference(pref.preference_id, reason || undefined);
         // Fade out then remove
         setFadingOut((prev) => new Set(prev).add(pref.preference_id));
         setTimeout(() => {
@@ -256,6 +263,7 @@ export default function PreferencePanel() {
             const descriptionDraft = editDescriptions[pref.preference_id] ?? pref.description;
             const reviewReasonNote = pref.review_reason_note?.trim();
             const sourceSessionTitle = pref.source_session_title?.trim();
+            const lastTransitionReason = pref.last_transition_reason?.trim();
             return (
               <div
                 key={pref.preference_id}
@@ -369,6 +377,12 @@ export default function PreferencePanel() {
                       </p>
                     )}
                   </div>
+                )}
+
+                {lastTransitionReason && (
+                  <p className="mt-0.5 text-[10px] italic text-sidebar-muted/70">
+                    전환 이유: {lastTransitionReason}
+                  </p>
                 )}
 
                 {/* Promotion reason (delta summary) */}

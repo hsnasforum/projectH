@@ -217,6 +217,7 @@ export interface PreferenceRecord {
     is_high_quality: boolean | null;
   } | null;
   review_reason_note?: string | null;
+  last_transition_reason?: string | null;
   source_session_title?: string | null;
   activated_at: string | null;
   created_at: string;
@@ -320,29 +321,47 @@ export async function postSyncAdoptedToPreferenceCandidates(): Promise<SyncAdopt
   return res.json();
 }
 
-export async function activatePreference(preferenceId: string): Promise<{ ok: boolean; preference: PreferenceRecord }> {
+export async function activatePreference(
+  preferenceId: string,
+  transitionReason?: string,
+): Promise<{ ok: boolean; preference: PreferenceRecord }> {
   const res = await fetch(`${BASE}/api/preferences/activate`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ preference_id: preferenceId }),
+    body: JSON.stringify({
+      preference_id: preferenceId,
+      ...(transitionReason ? { transition_reason: transitionReason } : {}),
+    }),
   });
   return res.json();
 }
 
-export async function pausePreference(preferenceId: string): Promise<{ ok: boolean; preference: PreferenceRecord }> {
+export async function pausePreference(
+  preferenceId: string,
+  transitionReason?: string,
+): Promise<{ ok: boolean; preference: PreferenceRecord }> {
   const res = await fetch(`${BASE}/api/preferences/pause`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ preference_id: preferenceId }),
+    body: JSON.stringify({
+      preference_id: preferenceId,
+      ...(transitionReason ? { transition_reason: transitionReason } : {}),
+    }),
   });
   return res.json();
 }
 
-export async function rejectPreference(preferenceId: string): Promise<{ ok: boolean; preference: PreferenceRecord }> {
+export async function rejectPreference(
+  preferenceId: string,
+  transitionReason?: string,
+): Promise<{ ok: boolean; preference: PreferenceRecord }> {
   const res = await fetch(`${BASE}/api/preferences/reject`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ preference_id: preferenceId }),
+    body: JSON.stringify({
+      preference_id: preferenceId,
+      ...(transitionReason ? { transition_reason: transitionReason } : {}),
+    }),
   });
   return res.json();
 }

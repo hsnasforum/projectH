@@ -474,6 +474,7 @@ export default function MessageBubble({
                       );
                       const isEditing = editingPrefId === pref.fingerprint;
                       const displayDescription = fullPref?.description ?? pref.description;
+                      const isHighQualityPreference = fullPref?.quality_info?.is_high_quality === true;
                       return (
                         <div
                           key={pref.fingerprint || pref.description}
@@ -544,6 +545,11 @@ export default function MessageBubble({
                               </button>
                             </div>
                           </div>
+                          {isHighQualityPreference && (
+                            <span className="w-fit rounded bg-sky-50 px-1 py-0.5 text-[9px] font-medium text-sky-600">
+                              고품질
+                            </span>
+                          )}
                           {fullPref?.status && fullPref.status !== "active" && (
                             <span className="w-fit rounded bg-stone-100 px-1 py-0.5 text-[9px] font-medium text-stone-500">
                               {fullPref.status === "paused" ? "일시중지" : fullPref.status}

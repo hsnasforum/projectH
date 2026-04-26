@@ -216,6 +216,7 @@ export interface PreferenceRecord {
     avg_similarity_score: number | null;
     is_high_quality: boolean | null;
   } | null;
+  is_highly_reliable?: boolean | null;
   review_reason_note?: string | null;
   last_transition_reason?: string | null;
   source_session_title?: string | null;
@@ -232,6 +233,7 @@ export interface PreferenceRecord {
   conflict_info?: {
     has_conflict: boolean;
     conflicting_preference_ids: string[];
+    conflict_severity?: "high" | "normal" | "none" | null;
   } | null;
 }
 
@@ -288,6 +290,8 @@ export interface PreferencesPayload {
   paused_count: number;
   total_applied?: number | null;
   total_corrected?: number | null;
+  high_quality_active_count?: number | null;
+  highly_reliable_active_count?: number | null;
 }
 
 export async function fetchPreferences(): Promise<PreferencesPayload> {

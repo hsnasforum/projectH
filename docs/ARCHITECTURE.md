@@ -31,7 +31,7 @@ Responsibilities:
 - local web shell / CLI entry
 - request parsing
 - session list and timeline rendering
-- compact pending review queue rendering for eligible current `durable_candidate` items, with `accept` / `reject` / `defer` reviewed-but-not-applied actions
+- compact pending review queue rendering for eligible current `durable_candidate` items, with source-session/context/evidence-summary metadata and `accept` / `reject` / `defer` reviewed-but-not-applied actions
 - streaming progress and cancel
 - approval card interactions
 - session serialization for evidence, summary chunks, approval objects, and feedback
@@ -81,7 +81,7 @@ Current implementation note:
 - `app/web.py` now computes one optional source-message-anchored read-only `durable_candidate` projection from the current serialized `session_local_candidate` plus a matching current `candidate_confirmation_record`; that projection is not persisted as a separate store
 - `app/web.py` now also computes one optional top-level read-only `recurrence_aggregate_candidates` session projection from current same-session serialized source-message `candidate_recurrence_key` records when at least two distinct grounded-brief anchors share the same exact recurrence identity; that projection is not persisted as a separate store
 - each current `recurrence_aggregate_candidates` item now also exposes deterministic read-only projections (`aggregate_promotion_marker`, `reviewed_memory_precondition_status`, `reviewed_memory_boundary_draft`, `reviewed_memory_rollback_contract`, `reviewed_memory_disable_contract`, `reviewed_memory_conflict_contract`, `reviewed_memory_transition_audit_contract`, `reviewed_memory_unblock_contract`, `reviewed_memory_capability_status`, `reviewed_memory_planning_target_ref`), one conditional `reviewed_memory_capability_basis` (present only when `capability_outcome = unblocked_all_required`), and lifecycle records: one conditional `reviewed_memory_transition_record` (emitted / applied / stopped / reversed) and one optional `reviewed_memory_conflict_visibility_record` (conflict_visibility_checked); none of these objects is persisted as a separate store
-- `app/web.py` now also computes one top-level pending `review_queue_items` session projection from current serialized source-message `durable_candidate` records with `promotion_eligibility = eligible_for_review` and no matching current `candidate_review_record`; that projection is not persisted as a separate store
+- `app/web.py` now also computes one top-level pending `review_queue_items` session projection from current serialized source-message `durable_candidate` records with `promotion_eligibility = eligible_for_review` and no matching current `candidate_review_record`; that projection is not persisted as a separate store and current items include `source_session_id`, `source_session_title`, up to three preceding `context_turns`, `evidence_summary`, quality info, delta summary, original/corrected snippets, and `is_global`
 - `app/templates/index.html` now consumes current `recurrence_aggregate_candidates` as one separate aggregate-level `검토 메모 적용 후보` section adjacent to `검토 후보`; the `검토 메모 적용 시작` submit boundary is now enabled when `capability_outcome = unblocked_all_required` and the user has entered a non-empty reason note (visible but disabled while blocked or while the note is empty); clicking the enabled submit now emits one `reviewed_memory_transition_record` with `record_stage = emitted_record_only_not_applied` and persists it under `reviewed_memory_emitted_transition_records`; after emission the same aggregate card shows `검토 메모 적용 실행`, and clicking that apply boundary POSTs to `/api/aggregate-transition-apply` which changes `record_stage` to `applied_pending_result` with `applied_at` added; after the apply boundary the card shows `결과 확정`, and clicking it changes `record_stage` to `applied_with_result` and creates `apply_result` with `result_version = first_reviewed_memory_apply_result_v1`, `applied_effect_kind = reviewed_memory_correction_pattern`, `result_stage = effect_active`, and `result_at`; the memory effect on future responses is now active (`result_stage = effect_active`); active effects are stored on the session as `reviewed_memory_active_effects`; future responses include a `[검토 메모 활성]` prefix with the operator's reason and pattern fingerprint; stop-apply: after the effect is active the aggregate card shows `적용 중단`; clicking it changes `record_stage` to `stopped`, sets `apply_result.result_stage` to `effect_stopped`, and removes the effect from `reviewed_memory_active_effects`; reversal: after stop the card shows `적용 되돌리기`; clicking it changes `record_stage` to `reversed`, sets `apply_result.result_stage` to `effect_reversed`, and adds `reversed_at`; conflict-visibility: after reversal the card shows `충돌 확인`; clicking it creates a separate `reviewed_memory_conflict_visibility_record` with `transition_action = future_reviewed_memory_conflict_visibility`, `record_stage = conflict_visibility_checked`, `source_apply_transition_ref`, evaluated `conflict_entries`, and `conflict_entry_count`
 - `app/web.py` now also resolves one internal `boundary_source_ref` backer for the same exact aggregate, truthfully mints one exact payload-hidden canonical local proof-record/store entry for the current exact aggregate state inside one same-session internal `reviewed_memory_local_effect_presence_proof_record_store` boundary while keeping `first_seen_at` alone, source-message review acceptance, review-queue presence, approval-backed save support, historical adjuncts, and `task_log` replay outside that lower proof-record layer, materializes one internal `reviewed_memory_local_effect_presence_proof_boundary` helper result only from that exact same-aggregate lower entry while reusing the same `applied_effect_id` and `present_locally_at`, materializes one internal `reviewed_memory_local_effect_presence_fact_source_instance` helper result only from that exact same-aggregate proof-boundary result while reusing the same `applied_effect_id` and `present_locally_at`, materializes one internal `reviewed_memory_local_effect_presence_fact_source` helper result only from that exact same-aggregate fact-source-instance result while reusing the same `applied_effect_id` and `present_locally_at`, materializes one internal `reviewed_memory_local_effect_presence_event` helper result only from that exact same-aggregate fact-source result while reusing the same `applied_effect_id` and `present_locally_at`, materializes one internal `reviewed_memory_local_effect_presence_event_producer` helper result only from that exact same-aggregate event result while reusing the same `applied_effect_id` and `present_locally_at`, materializes one internal `reviewed_memory_local_effect_presence_event_source` helper result only from that exact same-aggregate producer result while reusing the same `applied_effect_id` and `present_locally_at`, materializes one internal `reviewed_memory_local_effect_presence_record` helper result only from that exact same-aggregate event-source result while reusing the same `applied_effect_id` and `present_locally_at`, materializes one internal `reviewed_memory_applied_effect_target` helper result only from that exact same-aggregate source-consumer result while reusing the same `applied_effect_id` and `present_locally_at`, materializes one internal `reviewed_memory_reversible_effect_handle` helper result only from that exact same-aggregate shared target plus the current exact rollback contract, and resolves one internal `rollback_source_ref` only as one exact ref to that same handle; none of these helpers is a payload field or a `task_log` mirror
 - current save-note approvals also carry one explicit `save_content_source = original_draft | corrected_text` plus `source_message_id`, and save-related assistant/system messages may mirror those same fields only on approval/write trace surfaces
@@ -207,6 +207,8 @@ Current session payloads may also expose:
   - not persisted as a separate session-store field
 - computed top-level `review_queue_items`
   - derived from current `durable_candidate` items with `promotion_eligibility = eligible_for_review` and no matching current `candidate_review_record`
+  - each source-message item includes `source_session_id`, `source_session_title`, up to three immediately preceding `context_turns` with compact role/text/message metadata, and an `evidence_summary` object with artifact, signal, confirmation, and recurring-session counts
+  - global recurring items use `item_type = global_candidate`, `source_message_id = global`, `context_turns = []`, and the same evidence-summary shape
   - not persisted as a separate session-store field
 
 Current message records include:
@@ -293,6 +295,26 @@ Current task log is append-only JSONL and already records actions such as:
 - `preference_activated` — detail: `{preference_id}` (system maintenance)
 - `preference_paused` — detail: `{preference_id}` (system maintenance)
 - `preference_rejected` — detail: `{preference_id}` (system maintenance)
+- `global_candidate_review_recorded` — detail: `{candidate_id, fingerprint, review_action}`
+- `preference_candidate_recorded` — detail: `{delta_fingerprint, candidate_id, candidate_family, source}`
+
+### Preference Store
+
+Reviewed-candidate preference records use the existing JSON/SQLite preference-store seam instead of opening a new memory store.
+
+Current accepted source-message candidate reviews with a valid `candidate_recurrence_key.normalized_delta_fingerprint` call `record_reviewed_candidate_preference()` with `status = candidate`. Global candidate accepts use the same candidate path, while global rejects can record a rejected preference candidate to silence that fingerprint. These records are idempotent on the fingerprint: the store refreshes timestamps and appends distinct `reviewed_candidate_source_refs` instead of creating duplicates.
+
+Current reviewed-candidate source refs may include:
+- `candidate_id`
+- `candidate_updated_at`
+- `artifact_id`
+- `source_message_id`
+- `review_action`
+- `session_id`
+- optional `session_title`
+- optional `reason_note`
+
+`list_preferences_payload()` enriches each preference with reliability and quality metadata, then resolves the latest relevant reviewed-candidate source ref. When available, it exposes `review_reason_note` and `source_session_title` as top-level fields for `PreferencePanel`; these fields are audit visibility only and do not activate, pause, reject, apply, or scope a preference by themselves.
 
 ## Approval Contract
 
@@ -1340,7 +1362,7 @@ The next phase should standardize one `grounded brief` artifact.
 ### Automated
 - `python3 -m unittest -v`
 - focused service/smoke slices
-- Playwright browser smoke (`make e2e-test`)
+- Playwright browser smoke (`make e2e-test`) through `e2e/start-server.sh`; the wrapper health-checks the target smoke server, reuses an already healthy server, otherwise starts an isolated mock `app.web` server with inherited provider/model overrides cleared, waits for `/healthz`, and cleans up the temporary server/database on exit
 
 ### Browser Smoke Coverage
 - file summary with evidence/source panel and summary span / applied-range panel

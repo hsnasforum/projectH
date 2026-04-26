@@ -920,9 +920,8 @@ PreferencePanel에서 status별 필터 탭을 제공해 candidate/active/paused 
 
 ## Next 3 Implementation Priorities
 
-1. **M42 Axis 1**: Preference Status Management UI는 `paused_count` payload와 PreferencePanel status 필터 탭으로 candidate/active/paused 선호를 구분 표시한다. A1-γ same-session prompt injection은 범위 밖이다.
-2. **watcher_core re-export note 완료(85c5210)**: `watcher_core.*` re-exports (WatcherTurnState, tmux_send_keys 등)는 test 계약 유지용으로 정리 완료됨.
-3. **E2E 환경 개선 note**: `make e2e-test`는 `e2e/start-server.sh` healthcheck wrapper를 통해 healthy smoke 서버를 재사용하거나, 서버가 없으면 isolated mock `app.web` 서버를 자동 시작/정리한다. 다음 검증 lane에서 no-server/existing-server 두 경로를 release gate truth로 확인 필요.
+1. **E2E 환경 개선 검증**: `make e2e-test`는 `e2e/start-server.sh` healthcheck wrapper를 통해 healthy smoke 서버를 재사용하거나, 서버가 없으면 isolated mock `app.web` 서버를 자동 시작/정리한다. 다음 검증 lane에서 no-server/existing-server 두 경로를 release gate truth로 확인 필요.
+2. **M43 방향 확정**: M42 완료 후 다음 reviewed-memory 확장 방향(preference persistence cross-session / audit depth 확장 / M42 Axis 2 여부)을 advisory에서 결정.
 
 ## Do Not Pull Forward
 

@@ -1,4 +1,5 @@
 import re
+import tempfile
 from pathlib import Path
 import unittest
 
@@ -20,7 +21,9 @@ from pipeline_runtime.operator_autonomy import (
     normalize_reason_code,
     operator_gate_marker_from_decision,
     referenced_operator_pr_numbers,
+    resolve_operator_control,
 )
+from pipeline_runtime.schema import read_control_meta
 
 FIXTURE_HEADER: str = r"""STATUS: needs_operator
 CONTROL_SEQ: 462
@@ -479,6 +482,41 @@ class OperatorRequestHeaderSchemaTests(unittest.TestCase):
                 self.assertEqual(decision["decision_class"], "release_gate")
                 self.assertTrue(decision["operator_eligible"])
 
+    def test_auth_login_required_stays_operator_visible(self) -> None:
+        self.assertIn("auth_login_required", SUPPORTED_REASON_CODES)
+
+        decision = classify_operator_candidate(
+            "STATUS: needs_operator\n"
+            "REASON_CODE: auth_login_required\n"
+            "OPERATOR_POLICY: gate_24h\n"
+            "DECISION_CLASS: operator_only\n"
+            "DECISION_REQUIRED: run login before continuing automation\n",
+            control_meta={
+                "status": "needs_operator",
+                "reason_code": "auth_login_required",
+                "operator_policy": "gate_24h",
+                "decision_class": "operator_only",
+                "decision_required": "run login before continuing automation",
+            },
+            idle_stable=True,
+            control_mtime=1_000.0,
+            now_ts=1_000.0,
+        )
+        marker = operator_gate_marker_from_decision(
+            decision,
+            control_file="operator_request.md",
+            control_seq=1801,
+        )
+
+        self.assertEqual(decision["mode"], "needs_operator")
+        self.assertEqual(decision["suppressed_mode"], "needs_operator")
+        self.assertEqual(decision["reason_code"], "auth_login_required")
+        self.assertEqual(decision["routed_to"], "operator")
+        self.assertEqual(decision["operator_policy"], "gate_24h")
+        self.assertEqual(decision["decision_class"], "operator_only")
+        self.assertTrue(decision["operator_eligible"])
+        self.assertIsNone(marker)
+
     def test_advisory_before_operator_milestone_direction_routes_to_verify_followup(self) -> None:
         control_text = (
             "STATUS: needs_operator\n"
@@ -703,6 +741,55 @@ class OperatorRequestHeaderSchemaTests(unittest.TestCase):
         self.assertIsNotNone(marker)
         assert marker is not None
         self.assertEqual(marker["routed_to"], "verify_followup")
+
+    def test_live_legacy_release_gate_file_resolves_via_shared_resolver(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            operator_path = Path(tmp) / ".pipeline" / "operator_request.md"
+            operator_path.parent.mkdir(parents=True)
+            operator_path.write_text(
+                "STATUS: needs_operator\n"
+                "CONTROL_SEQ: 248\n"
+                "REASON_CODE: b1_release_gate_commit_authorization_dirty_tree\n"
+                "OPERATOR_POLICY: commit_push_bundle_authorization + pr_creation_gate\n"
+                "DECISION_CLASS: commit_publish_authorization\n"
+                "DECISION_REQUIRED: commit_scope + e2e_gate + pr_creation\n"
+                "BASED_ON_WORK: work/4/26/2026-04-26-m42-deep-doc-bundle.md\n"
+                "BASED_ON_VERIFY: verify/4/26/2026-04-26-m42-deep-doc-bundle.md\n",
+                encoding="utf-8",
+            )
+            control_text = operator_path.read_text(encoding="utf-8")
+            resolution = resolve_operator_control(
+                control_text=control_text,
+                control_meta=read_control_meta(operator_path),
+                control_file="operator_request.md",
+                control_path=str(operator_path),
+                control_seq=248,
+                control_mtime=operator_path.stat().st_mtime,
+                idle_stable=True,
+                now_ts=1_000.0,
+            )
+
+        decision = resolution["decision"]
+        gate_marker = resolution["gate_marker"]
+        stale_marker = resolution["stale_marker"]
+
+        self.assertIsNone(stale_marker)
+        self.assertIsInstance(decision, dict)
+        self.assertIsInstance(gate_marker, dict)
+        assert isinstance(decision, dict)
+        assert isinstance(gate_marker, dict)
+        self.assertEqual(decision["mode"], "triage")
+        self.assertEqual(decision["routed_to"], "verify_followup")
+        self.assertEqual(
+            decision["reason_code"],
+            COMMIT_PUSH_BUNDLE_AUTHORIZATION_REASON,
+        )
+        self.assertEqual(decision["operator_policy"], "internal_only")
+        self.assertEqual(decision["decision_class"], "release_gate")
+        self.assertEqual(decision["classification_source"], "operator_policy")
+        self.assertFalse(decision["operator_eligible"])
+        self.assertEqual(gate_marker["routed_to"], "verify_followup")
+        self.assertEqual(gate_marker["reason"], COMMIT_PUSH_BUNDLE_AUTHORIZATION_REASON)
 
     def test_compound_pr_creation_gate_policy_routes_to_verify_followup(self) -> None:
         self.assertEqual(

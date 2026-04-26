@@ -423,6 +423,8 @@ These are placeholders for the next phase design target and its immediate follow
   - accepted source-message candidates and accepted/rejected global candidates may store reviewed-candidate source refs with `session_id`, optional `session_title`, optional `reason_note`, `review_action`, candidate id, candidate timestamp, artifact id, and source-message id
   - `/api/preferences` should expose `source_session_title` and `review_reason_note` only when those fields exist on the selected source ref, and should expose status counts including `paused_count`
   - `PreferencePanel` should render the `출처 세션` / `결정 사유` audit block conditionally and should not treat the block as automatic activation, rollback, scope selection, or cross-session application; it should keep rejected preferences hidden and provide 전체/후보/활성/일시중지 filter tabs without changing activate/pause/reject behavior
+  - `POST /api/preferences/activate`, `pause`, `reject` payload에 `transition_reason`을 포함하면 해당 task log entry의 `detail`에 기록된다.
+  - `transition_reason` 미포함 시 task log detail에 `transition_reason` 키가 없다.
 
 ### Acceptance Placeholder For Memory
 - The current implementation should keep the first source-message-anchored `session_local_memory_signal` projection stable before any review queue or durable-candidate surface is attempted.

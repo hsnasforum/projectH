@@ -918,10 +918,29 @@ PreferencePanel에서 status별 필터 탭을 제공해 candidate/active/paused 
 #### Shipped Infrastructure (Axis 1, 2026-04-26)
 - **Axis 1 shipped**: `list_preferences_payload`에 `paused_count`를 추가하고, `PreferencePanel`에 전체/후보/활성/일시중지 status 필터 탭과 탭별 count 표시를 추가.
 
+### Milestone 43: Preference Transition Auditability
+
+#### Goal
+activate / pause / reject 상태 전환 시 사용자가 선택적 이유 메모(transition_reason)를
+입력할 수 있게 하고, 서버가 이를 task log detail에 남긴다.
+
+#### Guardrails
+- preference store 내부 스키마 변경 없음
+- cross-session persistence, cloud storage 범위 밖
+- browser E2E는 sandbox 제약으로 TypeScript 타입 체크와 handler 단위 테스트로 대체
+
+#### Shipped Infrastructure (Axis 1, 2026-04-26)
+- `activate_preference`, `pause_preference`, `reject_preference` 핸들러에 선택적
+  `transition_reason` 파라미터 추가; task log detail에 기록.
+- `activatePreference`, `pausePreference`, `rejectPreference` API client 함수에
+  `transitionReason?: string` 추가; 값이 있을 때만 payload에 포함.
+- `PreferencePanel` `handleAction`: 전환 전 `window.prompt()`로 이유 수집;
+  취소(`null`)이면 전환 중단, 기존 conflict confirm 및 reject fade-out 흐름 유지.
+
 ## Next 3 Implementation Priorities
 
 1. **E2E 환경 개선 완료**: `e2e/start-server.sh` healthcheck wrapper no-server / existing-server 두 경로가 정적 감사(09c806d)로 확인됨. operator가 검증 수준을 release gate로 인정(Q1 Option A, operator_request 263). B1 gate closed (2026-04-26).
-2. **M43 방향 확정**: M42 완료 후 다음 reviewed-memory 확장 방향(preference persistence cross-session / audit depth 확장 / M42 Axis 2 여부)을 advisory에서 결정.
+2. **M43 Axis 2 방향**: M43 Axis 1 이후 다음 preference auditability 확장 (transition_reason UI 개선 / audit depth / 기타)을 advisory에서 결정.
 
 ## Do Not Pull Forward
 

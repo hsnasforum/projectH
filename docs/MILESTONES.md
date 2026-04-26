@@ -920,7 +920,7 @@ PreferencePanel에서 status별 필터 탭을 제공해 candidate/active/paused 
 
 ## Next 3 Implementation Priorities
 
-1. **E2E 환경 개선 검증**: `make e2e-test`는 `e2e/start-server.sh` healthcheck wrapper를 통해 healthy smoke 서버를 재사용하거나, 서버가 없으면 isolated mock `app.web` 서버를 자동 시작/정리한다. 다음 검증 lane에서 no-server/existing-server 두 경로를 release gate truth로 확인 필요.
+1. **E2E 환경 개선 완료**: `e2e/start-server.sh` healthcheck wrapper no-server / existing-server 두 경로가 정적 감사(09c806d)로 확인됨. operator가 검증 수준을 release gate로 인정(Q1 Option A, operator_request 263). B1 gate closed (2026-04-26).
 2. **M43 방향 확정**: M42 완료 후 다음 reviewed-memory 확장 방향(preference persistence cross-session / audit depth 확장 / M42 Axis 2 여부)을 advisory에서 결정.
 
 ## Do Not Pull Forward

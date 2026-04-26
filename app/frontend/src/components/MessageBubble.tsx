@@ -474,6 +474,7 @@ export default function MessageBubble({
                       );
                       const isEditing = editingPrefId === pref.fingerprint;
                       const displayDescription = fullPref?.description ?? pref.description;
+                      const hasPreferenceConflict = fullPref?.conflict_info?.has_conflict === true;
                       return (
                         <div
                           key={pref.fingerprint || pref.description}
@@ -544,6 +545,11 @@ export default function MessageBubble({
                               </button>
                             </div>
                           </div>
+                          {hasPreferenceConflict && (
+                            <span className="w-fit rounded border border-orange-200 bg-orange-50 px-1 py-0.5 text-[9px] font-medium text-orange-700">
+                              ⚠ 충돌
+                            </span>
+                          )}
                           {fullPref?.status && fullPref.status !== "active" && (
                             <span className="w-fit rounded bg-stone-100 px-1 py-0.5 text-[9px] font-medium text-stone-500">
                               {fullPref.status === "paused" ? "일시중지" : fullPref.status}

@@ -2341,6 +2341,90 @@ class RuntimeSupervisorTest(unittest.TestCase):
             self.assertEqual(autonomy["mode"], "triage")
             self.assertEqual(autonomy["decision_class"], "release_gate")
 
+    def test_legacy_milestone_release_gate_operator_request_surfaces_as_triage(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            pipeline_dir = root / ".pipeline"
+            operator_path = pipeline_dir / "operator_request.md"
+            operator_path.write_text(
+                "STATUS: needs_operator\n"
+                "CONTROL_SEQ: 216\n"
+                "REASON_CODE: m37_commit_push_milestones_doc_sync\n"
+                "OPERATOR_POLICY: pr_creation_gate + commit_push_bundle_authorization\n"
+                "DECISION_CLASS: publication\n"
+                "DECISION_REQUIRED: M37 Axis 2 commit + push + MILESTONES.md doc-sync approval\n",
+                encoding="utf-8",
+            )
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+
+            marker, autonomy = supervisor._operator_gate_marker(
+                {
+                    "active_control_file": ".pipeline/operator_request.md",
+                    "active_control_status": "needs_operator",
+                    "active_control_seq": 216,
+                    "mtime": operator_path.stat().st_mtime,
+                },
+                turn_state={"state": "IDLE", "reason": "operator_request_updated"},
+                active_round={"state": "CLOSED"},
+                wrapper_models={},
+            )
+
+            self.assertIsNotNone(marker)
+            assert marker is not None
+            self.assertEqual(marker["reason"], COMMIT_PUSH_BUNDLE_AUTHORIZATION_REASON)
+            self.assertEqual(marker["operator_policy"], "internal_only")
+            self.assertEqual(marker["decision_class"], "release_gate")
+            self.assertEqual(marker["classification_source"], "operator_policy")
+            self.assertEqual(marker["mode"], "triage")
+            self.assertEqual(marker["routed_to"], "verify_followup")
+            self.assertEqual(autonomy["mode"], "triage")
+            self.assertEqual(autonomy["reason_code"], COMMIT_PUSH_BUNDLE_AUTHORIZATION_REASON)
+            self.assertEqual(autonomy["operator_policy"], "internal_only")
+            self.assertEqual(autonomy["decision_class"], "release_gate")
+
+    def test_b1_dirty_tree_release_gate_operator_request_surfaces_as_triage(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            pipeline_dir = root / ".pipeline"
+            operator_path = pipeline_dir / "operator_request.md"
+            operator_path.write_text(
+                "STATUS: needs_operator\n"
+                "CONTROL_SEQ: 248\n"
+                "REASON_CODE: b1_release_gate_commit_authorization_dirty_tree\n"
+                "OPERATOR_POLICY: commit_push_bundle_authorization + pr_creation_gate\n"
+                "DECISION_CLASS: commit_publish_authorization\n"
+                "DECISION_REQUIRED: commit_scope + e2e_gate + pr_creation\n",
+                encoding="utf-8",
+            )
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+
+            marker, autonomy = supervisor._operator_gate_marker(
+                {
+                    "active_control_file": ".pipeline/operator_request.md",
+                    "active_control_status": "needs_operator",
+                    "active_control_seq": 248,
+                    "mtime": operator_path.stat().st_mtime,
+                },
+                turn_state={"state": "IDLE", "reason": "operator_request_updated"},
+                active_round={"state": "CLOSED"},
+                wrapper_models={},
+            )
+
+            self.assertIsNotNone(marker)
+            assert marker is not None
+            self.assertEqual(marker["reason"], COMMIT_PUSH_BUNDLE_AUTHORIZATION_REASON)
+            self.assertEqual(marker["operator_policy"], "internal_only")
+            self.assertEqual(marker["decision_class"], "release_gate")
+            self.assertEqual(marker["classification_source"], "operator_policy")
+            self.assertEqual(marker["mode"], "triage")
+            self.assertEqual(marker["routed_to"], "verify_followup")
+            self.assertEqual(autonomy["mode"], "triage")
+            self.assertEqual(autonomy["reason_code"], COMMIT_PUSH_BUNDLE_AUTHORIZATION_REASON)
+            self.assertEqual(autonomy["operator_policy"], "internal_only")
+            self.assertEqual(autonomy["decision_class"], "release_gate")
+
     def test_active_verify_round_keeps_codex_surface_working_even_if_wrapper_ready(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

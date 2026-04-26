@@ -970,7 +970,7 @@ PreferencePanel header에서 활성 선호 전체의 `total_applied` / `total_co
 #### Guardrails
 - per-preference `reliability_stats` payload/rendering 구조 변경 없음
 - approval, publish, runtime/operator boundary 변경 없음
-- M44 publish와 M45 Axis 2+ planning은 이 milestone axis에 포함하지 않음
+- M44 publish와 M45 Axis 3+ planning은 이 milestone에 포함하지 않음
 
 #### Shipped Infrastructure (Axis 1, 2026-04-26)
 - `app/handlers/preferences.py`: preferences list payload에 active preference만
@@ -982,10 +982,21 @@ PreferencePanel header에서 활성 선호 전체의 `total_applied` / `total_co
 - `tests/test_preference_handler.py`: no-active zero aggregate와 mixed-status
   active-only sum을 포함해 14 tests OK.
 
+#### Shipped Infrastructure (Axis 2, 2026-04-26)
+- `storage/session_store.py`: preference-applied response에 negative feedback
+  label (`incorrect`, `unclear`)이 저장되면 해당 preference fingerprint의
+  per-preference `corrected_count`를 증가시킨다.
+- 기존 explicit text correction (`corrected_text`) 기반 `corrected_count` path와
+  `personalized_correction_count`는 유지.
+- 구현에는 legacy/raw `dislike` label도 negative set에 포함되어 있으나,
+  현재 HTTP/session normalization 계약은 `dislike`를 보존하지 않는다.
+- `tests/test_session_store_reliability.py`: negative feedback -> `corrected_count`,
+  positive feedback no-op, 기존 `corrected_text` path 유지 1 test.
+
 ## Next 3 Implementation Priorities
 
 1. **E2E 환경 개선 완료**: `e2e/start-server.sh` healthcheck wrapper no-server / existing-server 두 경로가 정적 감사(09c806d)로 확인됨. operator가 검증 수준을 release gate로 인정(Q1 Option A, operator_request 263). B1 gate closed (2026-04-26).
-2. **M45 Axis 1 shipped**: PreferencePanel reliability aggregate header (`총 적용 N회 · 총 교정 N회`) and active-only payload totals landed; M45 Axis 2+는 별도 advisory/verify에서 결정.
+2. **M45 Axis 1+2 shipped**: PreferencePanel reliability aggregate header (`총 적용 N회 · 총 교정 N회`) and active-only payload totals landed; negative feedback (`incorrect`, `unclear`) on preference-applied responses now feeds per-preference `corrected_count`.
 
 ## Do Not Pull Forward
 

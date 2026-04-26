@@ -1,4 +1,5 @@
 import os
+import hashlib
 import subprocess
 import tempfile
 import time
@@ -8,7 +9,9 @@ import itertools
 from pathlib import Path
 from unittest import mock
 
+import watcher_dispatch
 import watcher_core
+import watcher_state
 from pipeline_runtime.automation_health import (
     STALE_ADVISORY_GRACE_CYCLES,
     STALE_CONTROL_CYCLE_THRESHOLD,
@@ -20,7 +23,12 @@ from pipeline_runtime.operator_autonomy import (
     PR_MERGE_GATE_REASON,
 )
 from pipeline_runtime.pr_merge_state import PrMergeGateResolution
+from pipeline_runtime.role_routes import VERIFY_FOLLOWUP_ROUTE
+from pipeline_runtime.turn_arbitration import legacy_turn_state_name
 from pipeline_runtime.wrapper_events import append_wrapper_event
+from verify_fsm import JobState, JobStatus, make_job_id
+from watcher_stabilizer import compute_file_sha256
+from watcher_state import ControlSignal, PaneLease, WatcherTurnState
 
 
 def _write_active_profile(root: Path, payload: dict | None = None) -> None:
@@ -288,7 +296,7 @@ class WorkNoteFilteringTest(unittest.TestCase):
                 }
             )
             core._initial_turn_checked = True
-            core._transition_turn(watcher_core.WatcherTurnState.IDLE, "test_setup")
+            core._transition_turn(WatcherTurnState.IDLE, "test_setup")
 
             with mock.patch.object(core.sm, "step", wraps=core.sm.step) as advance:
                 core._poll()
@@ -323,7 +331,7 @@ class WorkNoteFilteringTest(unittest.TestCase):
                 }
             )
             core._initial_turn_checked = True
-            core._transition_turn(watcher_core.WatcherTurnState.IMPLEMENT_ACTIVE, "test_setup")
+            core._transition_turn(WatcherTurnState.IMPLEMENT_ACTIVE, "test_setup")
             core._work_baseline_snapshot = {}
 
             meta_note = watch_dir / "4" / "9" / "2026-04-09-claude-handoff-task-list-review.md"
@@ -335,7 +343,7 @@ class WorkNoteFilteringTest(unittest.TestCase):
             ):
                 core._poll()
 
-            self.assertEqual(core._current_turn_state, watcher_core.WatcherTurnState.IDLE)
+            self.assertEqual(core._current_turn_state, WatcherTurnState.IDLE)
             self.assertGreaterEqual(advance.call_count, 1)
             job_jsons = list((base_dir / "state" / "jobs").glob("*.json"))
             self.assertTrue(any(job_jsons))
@@ -624,7 +632,7 @@ class WorkNoteFilteringTest(unittest.TestCase):
                 }
             )
             core._initial_turn_checked = True
-            core._transition_turn(watcher_core.WatcherTurnState.IDLE, "test_setup")
+            core._transition_turn(WatcherTurnState.IDLE, "test_setup")
 
             with mock.patch.object(core.sm, "step", side_effect=AssertionError("stale backlog should not dispatch")):
                 core._poll()
@@ -653,8 +661,8 @@ class WorkNoteFilteringTest(unittest.TestCase):
                     "dry_run": True,
                 }
             )
-            job_id = watcher_core.make_job_id(watch_dir, work_note)
-            job = watcher_core.JobState.from_artifact(job_id, str(work_note), run_id=core.run_id)
+            job_id = make_job_id(watch_dir, work_note)
+            job = JobState.from_artifact(job_id, str(work_note), run_id=core.run_id)
 
             _, before_sig = core._build_verify_feedback_sigs(job)
 
@@ -956,7 +964,7 @@ Should I continue here or handoff and continue in a fresh session?
                 }
             )
             core._initial_turn_checked = True
-            core._transition_turn(watcher_core.WatcherTurnState.IMPLEMENT_ACTIVE, "test_setup")
+            core._transition_turn(WatcherTurnState.IMPLEMENT_ACTIVE, "test_setup")
             core._work_baseline_snapshot = {}
 
             pane_texts = {
@@ -970,7 +978,7 @@ context window가 상당히 차 있어 새 세션에서 이어가시는 것을 �
                 "gemini-pane": "✦ Finished\n> ",
             }
             with mock.patch("watcher_core._shared_capture_pane_text", side_effect=lambda target: pane_texts[target]), \
-                 mock.patch("watcher_core._is_pane_dead", return_value=False):
+                 mock.patch("watcher_dispatch._is_pane_dead", return_value=False):
                 core._poll()
 
             draft_path = base_dir / "session_arbitration_draft.md"
@@ -1004,7 +1012,7 @@ context window가 상당히 차 있어 새 세션에서 이어가시는 것을 �
                 }
             )
             core._initial_turn_checked = True
-            core._transition_turn(watcher_core.WatcherTurnState.IMPLEMENT_ACTIVE, "test_setup")
+            core._transition_turn(WatcherTurnState.IMPLEMENT_ACTIVE, "test_setup")
             core._work_baseline_snapshot = {}
 
             busy_snapshots = {
@@ -1046,7 +1054,7 @@ context window가 상당히 차 있어 새 세션에서 이어가시는 것을 �
                 }
             )
             core._initial_turn_checked = True
-            core._transition_turn(watcher_core.WatcherTurnState.IMPLEMENT_ACTIVE, "test_setup")
+            core._transition_turn(WatcherTurnState.IMPLEMENT_ACTIVE, "test_setup")
             core._work_baseline_snapshot = {}
 
             pane_texts = {
@@ -1059,10 +1067,10 @@ context window가 상당히 차 있어 새 세션에서 이어가시는 것을 �
                 "gemini-pane": "✦ Finished\n> ",
             }
             with mock.patch("watcher_core._shared_capture_pane_text", side_effect=lambda target: pane_texts[target]), \
-                 mock.patch("watcher_core._is_pane_dead", return_value=False):
+                 mock.patch("watcher_dispatch._is_pane_dead", return_value=False):
                 core._poll()
                 self.assertFalse((base_dir / "session_arbitration_draft.md").exists())
-                fingerprint = watcher_core.hashlib.sha1(
+                fingerprint = hashlib.sha1(
                     pane_texts["claude-pane"].encode("utf-8")
                 ).hexdigest()
                 core._session_arbitration_snapshot_fingerprints["implement"] = fingerprint
@@ -1096,7 +1104,7 @@ context window가 상당히 차 있어 새 세션에서 이어가시는 것을 �
                 }
             )
             core._initial_turn_checked = True
-            core._transition_turn(watcher_core.WatcherTurnState.IMPLEMENT_ACTIVE, "test_setup")
+            core._transition_turn(WatcherTurnState.IMPLEMENT_ACTIVE, "test_setup")
             core._work_baseline_snapshot = {}
 
             pane_texts = {
@@ -1110,7 +1118,7 @@ context window가 상당히 차 있어 새 세션에서 이어가시는 것을 �
                 "gemini-pane": "✦ Finished\n> ",
             }
             with mock.patch("watcher_core._shared_capture_pane_text", side_effect=lambda target: pane_texts[target]), \
-                 mock.patch("watcher_core._is_pane_dead", return_value=False):
+                 mock.patch("watcher_dispatch._is_pane_dead", return_value=False):
                 with mock.patch.object(core, "_get_work_tree_snapshot_broad", side_effect=[{}, {}, {"work.md": "changed"}, {"work.md": "changed"}]):
                     core._poll()
                     self.assertTrue((base_dir / "session_arbitration_draft.md").exists())
@@ -1118,7 +1126,7 @@ context window가 상당히 차 있어 새 세션에서 이어가시는 것을 �
 
             draft_path = base_dir / "session_arbitration_draft.md"
             self.assertFalse(draft_path.exists())
-            self.assertNotEqual(core._current_turn_state, watcher_core.WatcherTurnState.IMPLEMENT_ACTIVE)
+            self.assertNotEqual(core._current_turn_state, WatcherTurnState.IMPLEMENT_ACTIVE)
 
     def test_same_fingerprint_is_suppressed_during_cooldown_after_clear(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1181,7 +1189,7 @@ context window가 상당히 차 있어 새 세션에서 이어가시는 것을 �
                 }
             )
             core._initial_turn_checked = True
-            core._transition_turn(watcher_core.WatcherTurnState.IMPLEMENT_ACTIVE, "test_setup")
+            core._transition_turn(WatcherTurnState.IMPLEMENT_ACTIVE, "test_setup")
             core._work_baseline_snapshot = {}
 
             pane_texts = {
@@ -1199,7 +1207,7 @@ context window가 상당히 차 있어 새 세션에서 이어가시는 것을 �
                 return target == "codex-pane"
 
             with mock.patch("watcher_core._shared_capture_pane_text", side_effect=lambda target: pane_texts[target]):
-                with mock.patch("watcher_core._is_pane_dead", side_effect=fake_dead):
+                with mock.patch("watcher_dispatch._is_pane_dead", side_effect=fake_dead):
                     core._poll()
 
             self.assertFalse((base_dir / "session_arbitration_draft.md").exists())
@@ -1925,10 +1933,10 @@ class ClaudeImplementBlockedTest(unittest.TestCase):
                 }
             )
             core._initial_turn_checked = True
-            core._transition_turn(watcher_core.WatcherTurnState.IMPLEMENT_ACTIVE, "test_setup")
+            core._transition_turn(WatcherTurnState.IMPLEMENT_ACTIVE, "test_setup")
             core._work_baseline_snapshot = {}
 
-            handoff_sha = watcher_core.compute_file_sha256(handoff_path)
+            handoff_sha = compute_file_sha256(handoff_path)
             pane_texts = {
                 "claude-pane": (
                     "STATUS: implement_blocked\n"
@@ -1945,7 +1953,7 @@ class ClaudeImplementBlockedTest(unittest.TestCase):
             }
 
             with mock.patch("watcher_core._shared_capture_pane_text", side_effect=lambda target: pane_texts[target]):
-                with mock.patch("watcher_core.tmux_send_keys", return_value=True) as send:
+                with mock.patch("watcher_dispatch.tmux_send_keys", return_value=True) as send:
                     core._poll()
 
             send.assert_called_once()
@@ -2001,10 +2009,10 @@ class ClaudeImplementBlockedTest(unittest.TestCase):
                 }
             )
             core._initial_turn_checked = True
-            core._transition_turn(watcher_core.WatcherTurnState.IMPLEMENT_ACTIVE, "test_setup")
+            core._transition_turn(WatcherTurnState.IMPLEMENT_ACTIVE, "test_setup")
             core._work_baseline_snapshot = {}
 
-            handoff_sha = watcher_core.compute_file_sha256(handoff_path)
+            handoff_sha = compute_file_sha256(handoff_path)
             pane_texts = {
                 "codex-pane": (
                     "• STATUS: implement_blocked\n"
@@ -2022,7 +2030,7 @@ class ClaudeImplementBlockedTest(unittest.TestCase):
             }
 
             with mock.patch("watcher_core._shared_capture_pane_text", side_effect=lambda target: pane_texts[target]):
-                with mock.patch("watcher_core.tmux_send_keys", return_value=True) as send:
+                with mock.patch("watcher_dispatch.tmux_send_keys", return_value=True) as send:
                     core._poll()
 
             send.assert_called_once()
@@ -2060,10 +2068,10 @@ class ClaudeImplementBlockedTest(unittest.TestCase):
                 }
             )
             core._initial_turn_checked = True
-            core._transition_turn(watcher_core.WatcherTurnState.IMPLEMENT_ACTIVE, "test_setup")
+            core._transition_turn(WatcherTurnState.IMPLEMENT_ACTIVE, "test_setup")
             core._work_baseline_snapshot = {}
 
-            handoff_sha = watcher_core.compute_file_sha256(handoff_path)
+            handoff_sha = compute_file_sha256(handoff_path)
             pane_texts = {
                 "claude-pane": (
                     "STATUS: implement_blocked\n"
@@ -2078,7 +2086,7 @@ class ClaudeImplementBlockedTest(unittest.TestCase):
             }
 
             with mock.patch("watcher_core._shared_capture_pane_text", side_effect=lambda target: pane_texts[target]):
-                with mock.patch("watcher_core.tmux_send_keys", return_value=True) as send:
+                with mock.patch("watcher_dispatch.tmux_send_keys", return_value=True) as send:
                     core._poll()
                     core._poll()
 
@@ -2137,10 +2145,10 @@ class ClaudeImplementBlockedTest(unittest.TestCase):
                 }
             )
             core._initial_turn_checked = True
-            core._transition_turn(watcher_core.WatcherTurnState.IMPLEMENT_ACTIVE, "test_setup")
+            core._transition_turn(WatcherTurnState.IMPLEMENT_ACTIVE, "test_setup")
             core._work_baseline_snapshot = {}
 
-            handoff_sha = watcher_core.compute_file_sha256(handoff_path)
+            handoff_sha = compute_file_sha256(handoff_path)
             pane_texts = {
                 "claude-pane": (
                     "STATUS: implement_blocked\n"
@@ -2157,7 +2165,7 @@ class ClaudeImplementBlockedTest(unittest.TestCase):
             }
 
             with mock.patch("watcher_core._shared_capture_pane_text", side_effect=lambda target: pane_texts[target]):
-                with mock.patch("watcher_core.tmux_send_keys", return_value=True) as send:
+                with mock.patch("watcher_dispatch.tmux_send_keys", return_value=True) as send:
                     core._poll()
 
             send.assert_not_called()
@@ -2196,10 +2204,10 @@ class ClaudeImplementBlockedTest(unittest.TestCase):
                 }
             )
             core._initial_turn_checked = True
-            core._transition_turn(watcher_core.WatcherTurnState.IMPLEMENT_ACTIVE, "test_setup")
+            core._transition_turn(WatcherTurnState.IMPLEMENT_ACTIVE, "test_setup")
             core._work_baseline_snapshot = {}
 
-            handoff_sha = watcher_core.compute_file_sha256(handoff_path)
+            handoff_sha = compute_file_sha256(handoff_path)
             pane_texts = {
                 "claude-pane": (
                     "STATUS: implement_blocked\n"
@@ -2214,7 +2222,7 @@ class ClaudeImplementBlockedTest(unittest.TestCase):
             }
 
             with mock.patch("watcher_core._shared_capture_pane_text", side_effect=lambda target: pane_texts[target]):
-                with mock.patch("watcher_core.tmux_send_keys", return_value=True) as send:
+                with mock.patch("watcher_dispatch.tmux_send_keys", return_value=True) as send:
                     core._poll()
                     core._poll()
 
@@ -2255,7 +2263,7 @@ class ClaudeImplementBlockedTest(unittest.TestCase):
                 }
             )
             core._initial_turn_checked = True
-            core._transition_turn(watcher_core.WatcherTurnState.IMPLEMENT_ACTIVE, "test_setup")
+            core._transition_turn(WatcherTurnState.IMPLEMENT_ACTIVE, "test_setup")
             core._work_baseline_snapshot = {}
 
             pane_texts = {
@@ -2265,7 +2273,7 @@ class ClaudeImplementBlockedTest(unittest.TestCase):
             }
 
             with mock.patch("watcher_core._shared_capture_pane_text", side_effect=lambda target: pane_texts[target]):
-                with mock.patch("watcher_core.tmux_send_keys", return_value=True) as send:
+                with mock.patch("watcher_dispatch.tmux_send_keys", return_value=True) as send:
                     with mock.patch("watcher_core.time.time", return_value=10.0):
                         core._poll()
                     self.assertEqual(send.call_count, 0)
@@ -2300,7 +2308,7 @@ class ClaudeImplementBlockedTest(unittest.TestCase):
                 }
             )
             core._initial_turn_checked = True
-            core._transition_turn(watcher_core.WatcherTurnState.IMPLEMENT_ACTIVE, "test_setup")
+            core._transition_turn(WatcherTurnState.IMPLEMENT_ACTIVE, "test_setup")
             core._work_baseline_snapshot = {}
 
             pane_texts = {
@@ -2314,7 +2322,7 @@ class ClaudeImplementBlockedTest(unittest.TestCase):
             }
 
             with mock.patch("watcher_core._shared_capture_pane_text", side_effect=lambda target: pane_texts[target]):
-                with mock.patch("watcher_core.tmux_send_keys", return_value=True) as send:
+                with mock.patch("watcher_dispatch.tmux_send_keys", return_value=True) as send:
                     with mock.patch("watcher_core.time.time", return_value=10.0):
                         core._poll()
                     self.assertEqual(send.call_count, 0)
@@ -2472,7 +2480,7 @@ class PaneLeaseOwnerPidWiringTest(unittest.TestCase):
             supervisor_pid = base_dir / "supervisor.pid"
             self.assertFalse(supervisor_pid.exists())
 
-            lease = watcher_core.PaneLease(
+            lease = PaneLease(
                 lock_dir,
                 default_ttl=900,
                 dry_run=False,
@@ -2496,7 +2504,7 @@ class PaneLeaseOwnerPidWiringTest(unittest.TestCase):
             lock_dir.mkdir(parents=True, exist_ok=True)
 
             supervisor_pid = base_dir / "supervisor.pid"
-            lease = watcher_core.PaneLease(
+            lease = PaneLease(
                 lock_dir,
                 default_ttl=900,
                 dry_run=False,
@@ -2525,7 +2533,7 @@ class PaneLeaseOwnerPidWiringTest(unittest.TestCase):
             supervisor_pid = base_dir / "supervisor.pid"
             supervisor_pid.write_text("4242\n", encoding="utf-8")
 
-            lease = watcher_core.PaneLease(
+            lease = PaneLease(
                 lock_dir,
                 default_ttl=900,
                 dry_run=False,
@@ -2533,7 +2541,7 @@ class PaneLeaseOwnerPidWiringTest(unittest.TestCase):
             )
             self.assertTrue(lease.acquire("slot_verify", "job-1", 1, "codex-pane", ttl=900))
 
-            with mock.patch("watcher_core.os.kill", side_effect=ProcessLookupError):
+            with mock.patch("watcher_state.os.kill", side_effect=ProcessLookupError):
                 self.assertTrue(lease._owner_dead())
                 # is_active가 호출되면 dead owner로 감지해 stale lock을 즉시 clear해야 한다.
                 self.assertFalse(lease.is_active("slot_verify"))
@@ -2553,7 +2561,7 @@ class PaneLeaseOwnerPidWiringTest(unittest.TestCase):
             supervisor_pid = base_dir / "supervisor.pid"
             self.assertFalse(supervisor_pid.exists())
 
-            lease = watcher_core.PaneLease(
+            lease = PaneLease(
                 lock_dir,
                 default_ttl=900,
                 dry_run=False,
@@ -2563,7 +2571,7 @@ class PaneLeaseOwnerPidWiringTest(unittest.TestCase):
             self.assertTrue(lease.is_active("slot_verify"))
 
             supervisor_pid.write_text("4242\n", encoding="utf-8")
-            with mock.patch("watcher_core.os.kill", side_effect=ProcessLookupError):
+            with mock.patch("watcher_state.os.kill", side_effect=ProcessLookupError):
                 self.assertFalse(lease.is_active("slot_verify"))
                 self.assertFalse((lock_dir / "slot_verify.lock").exists())
 
@@ -2578,7 +2586,7 @@ class PaneLeaseOwnerPidWiringTest(unittest.TestCase):
             supervisor_pid = base_dir / "supervisor.pid"
             supervisor_pid.write_text("4242\n", encoding="utf-8")
 
-            lease = watcher_core.PaneLease(
+            lease = PaneLease(
                 lock_dir,
                 default_ttl=900,
                 dry_run=False,
@@ -2596,7 +2604,7 @@ class PaneLeaseOwnerPidWiringTest(unittest.TestCase):
                     raise ProcessLookupError
                 return None
 
-            with mock.patch("watcher_core.os.kill", side_effect=_kill):
+            with mock.patch("watcher_state.os.kill", side_effect=_kill):
                 self.assertFalse(lease.is_active("slot_verify"))
                 self.assertFalse((lock_dir / "slot_verify.lock").exists())
 
@@ -2628,14 +2636,14 @@ class PaneLeaseOwnerPidWiringTest(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            lease = watcher_core.PaneLease(
+            lease = PaneLease(
                 lock_dir,
                 default_ttl=900,
                 dry_run=False,
                 owner_pid_path=supervisor_pid,
             )
 
-            with mock.patch("watcher_core.os.kill", return_value=None):
+            with mock.patch("watcher_state.os.kill", return_value=None):
                 self.assertFalse(lease.is_active("slot_verify"))
                 self.assertFalse(legacy_lock.exists())
 
@@ -2654,7 +2662,7 @@ class WatcherDispatchQueueControlMismatchTest(unittest.TestCase):
                 return path.read_text(encoding="utf-8")
 
             active_controls = [
-                watcher_core.ControlSignal(
+                ControlSignal(
                     kind="operator",
                     path=prompt_path,
                     status="needs_operator",
@@ -2662,7 +2670,7 @@ class WatcherDispatchQueueControlMismatchTest(unittest.TestCase):
                     sig="sig-10",
                     control_seq=10,
                 ),
-                watcher_core.ControlSignal(
+                ControlSignal(
                     kind="operator",
                     path=prompt_path,
                     status="needs_operator",
@@ -2674,7 +2682,7 @@ class WatcherDispatchQueueControlMismatchTest(unittest.TestCase):
             send_prompt = mock.Mock(return_value=True)
             log_raw = mock.Mock()
             append_runtime_event = mock.Mock()
-            queue = watcher_core.WatcherDispatchQueue(
+            queue = watcher_dispatch.WatcherDispatchQueue(
                 lane_input_defer_cooldown_sec=0.0,
                 capture_pane_text=mock.Mock(return_value="› \n tab to queue message\n55% context left\n"),
                 send_keys=send_prompt,
@@ -2732,7 +2740,7 @@ class WatcherDispatchQueueControlMismatchTest(unittest.TestCase):
             prompt_path.parent.mkdir(parents=True, exist_ok=True)
             prompt_path.write_text("STATUS: implement\nCONTROL_SEQ: 31\n", encoding="utf-8")
 
-            active_control = watcher_core.ControlSignal(
+            active_control = ControlSignal(
                 kind="implement_handoff",
                 path=prompt_path,
                 status="implement",
@@ -2745,7 +2753,7 @@ class WatcherDispatchQueueControlMismatchTest(unittest.TestCase):
             send_prompt = mock.Mock(return_value=True)
             log_raw = mock.Mock()
             append_runtime_event = mock.Mock()
-            queue = watcher_core.WatcherDispatchQueue(
+            queue = watcher_dispatch.WatcherDispatchQueue(
                 lane_input_defer_cooldown_sec=0.0,
                 capture_pane_text=mock.Mock(return_value="› \n tab to queue message\n55% context left\n"),
                 send_keys=send_prompt,
@@ -2790,7 +2798,7 @@ class WatcherDispatchQueueControlMismatchTest(unittest.TestCase):
             prompt_path.parent.mkdir(parents=True, exist_ok=True)
             prompt_path.write_text("STATUS: needs_operator\n", encoding="utf-8")
 
-            active_control = watcher_core.ControlSignal(
+            active_control = ControlSignal(
                 kind="operator",
                 path=prompt_path,
                 status="needs_operator",
@@ -2801,7 +2809,7 @@ class WatcherDispatchQueueControlMismatchTest(unittest.TestCase):
             send_prompt = mock.Mock(return_value=True)
             log_raw = mock.Mock()
             append_runtime_event = mock.Mock()
-            queue = watcher_core.WatcherDispatchQueue(
+            queue = watcher_dispatch.WatcherDispatchQueue(
                 lane_input_defer_cooldown_sec=0.0,
                 capture_pane_text=mock.Mock(return_value="› \n tab to queue message\n55% context left\n"),
                 send_keys=send_prompt,
@@ -2897,7 +2905,7 @@ class WatcherDispatchQueueControlMismatchTest(unittest.TestCase):
                 derived_from="process_alive",
             )
 
-            active_control = watcher_core.ControlSignal(
+            active_control = ControlSignal(
                 kind="claude_handoff",
                 path=prompt_path,
                 status="implement",
@@ -2909,7 +2917,7 @@ class WatcherDispatchQueueControlMismatchTest(unittest.TestCase):
             send_prompt = mock.Mock(return_value=True)
             log_raw = mock.Mock()
             append_runtime_event = mock.Mock()
-            queue = watcher_core.WatcherDispatchQueue(
+            queue = watcher_dispatch.WatcherDispatchQueue(
                 lane_input_defer_cooldown_sec=0.0,
                 capture_pane_text=mock.Mock(return_value="› \n tab to queue message\n55% context left\n"),
                 send_keys=send_prompt,
@@ -3000,7 +3008,7 @@ class WatcherDispatchQueueControlMismatchTest(unittest.TestCase):
                 derived_from="process_alive",
             )
 
-            active_control = watcher_core.ControlSignal(
+            active_control = ControlSignal(
                 kind="gemini_advice",
                 path=prompt_path,
                 status="advice_ready",
@@ -3011,7 +3019,7 @@ class WatcherDispatchQueueControlMismatchTest(unittest.TestCase):
             send_prompt = mock.Mock(return_value=True)
             log_raw = mock.Mock()
             append_runtime_event = mock.Mock()
-            queue = watcher_core.WatcherDispatchQueue(
+            queue = watcher_dispatch.WatcherDispatchQueue(
                 lane_input_defer_cooldown_sec=0.0,
                 capture_pane_text=mock.Mock(return_value="› \n tab to queue message\n55% context left\n"),
                 send_keys=send_prompt,
@@ -3063,7 +3071,7 @@ class ClaudeHandoffDispatchTest(unittest.TestCase):
             supervisor_pid = base_dir / "supervisor.pid"
             supervisor_pid.write_text("4242\n", encoding="utf-8")
 
-            lease = watcher_core.PaneLease(
+            lease = PaneLease(
                 lock_dir,
                 default_ttl=900,
                 dry_run=False,
@@ -3072,7 +3080,7 @@ class ClaudeHandoffDispatchTest(unittest.TestCase):
             self.assertTrue(lease.acquire("slot_verify", "job-1", 1, "codex-pane", ttl=900))
             self.assertTrue((lock_dir / "slot_verify.lock").exists())
 
-            with mock.patch("watcher_core.os.kill", side_effect=ProcessLookupError):
+            with mock.patch("watcher_state.os.kill", side_effect=ProcessLookupError):
                 self.assertFalse(lease.is_active("slot_verify"))
                 self.assertFalse((lock_dir / "slot_verify.lock").exists())
                 self.assertTrue(lease.acquire("slot_verify", "job-2", 2, "codex-pane", ttl=900))
@@ -3107,12 +3115,12 @@ class ClaudeHandoffDispatchTest(unittest.TestCase):
                 core._check_pipeline_signal_updates()
                 notify.assert_not_called()
                 # Handoff detected but verify active, so stays at current state
-                self.assertNotEqual(core._current_turn_state, watcher_core.WatcherTurnState.IMPLEMENT_ACTIVE)
+                self.assertNotEqual(core._current_turn_state, WatcherTurnState.IMPLEMENT_ACTIVE)
 
                 core.lease.release("slot_verify")
                 core._check_pipeline_signal_updates()
                 notify.assert_called_once()
-                self.assertEqual(core._current_turn_state, watcher_core.WatcherTurnState.IMPLEMENT_ACTIVE)
+                self.assertEqual(core._current_turn_state, WatcherTurnState.IMPLEMENT_ACTIVE)
 
     def test_handoff_update_releases_when_supervisor_pid_is_dead(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -3142,12 +3150,12 @@ class ClaudeHandoffDispatchTest(unittest.TestCase):
             core.lease.acquire("slot_verify", "job-1", 1, "codex-pane", ttl=900)
 
             with (
-                mock.patch("watcher_core.os.kill", side_effect=ProcessLookupError),
+                mock.patch("watcher_state.os.kill", side_effect=ProcessLookupError),
                 mock.patch.object(core, "_notify_implement_owner") as notify,
             ):
                 core._check_pipeline_signal_updates()
                 notify.assert_called_once()
-                self.assertEqual(core._current_turn_state, watcher_core.WatcherTurnState.IMPLEMENT_ACTIVE)
+                self.assertEqual(core._current_turn_state, WatcherTurnState.IMPLEMENT_ACTIVE)
                 self.assertFalse((base_dir / "locks" / "slot_verify.lock").exists())
 
     def test_running_verify_job_finishes_before_older_unverified_work_is_discovered(self) -> None:
@@ -3178,14 +3186,14 @@ class ClaudeHandoffDispatchTest(unittest.TestCase):
             )
             core.started_at = time.time() - core.startup_grace_sec - 1.0
             core._initial_turn_checked = True
-            core._transition_turn(watcher_core.WatcherTurnState.IDLE, "test_setup")
+            core._transition_turn(WatcherTurnState.IDLE, "test_setup")
 
-            job = watcher_core.JobState.from_artifact("job-current", str(current_work))
+            job = JobState.from_artifact("job-current", str(current_work))
             job.run_id = core.run_id
-            with mock.patch("watcher_core.tmux_send_keys", return_value=True):
+            with mock.patch("watcher_dispatch.tmux_send_keys", return_value=True):
                 job = core.sm._handle_verify_pending(job)
 
-            self.assertEqual(job.status, watcher_core.JobStatus.VERIFY_RUNNING)
+            self.assertEqual(job.status, JobStatus.VERIFY_RUNNING)
             core.lease.acquire("slot_verify", job.job_id, job.round, "codex-pane", ttl=900)
 
             handoff_path = base_dir / "implement_handoff.md"
@@ -3200,7 +3208,7 @@ class ClaudeHandoffDispatchTest(unittest.TestCase):
             job.done_deadline_at = time.time() + 30.0
             job.save(core.state_dir)
 
-            stale_job_id = watcher_core.make_job_id(watch_dir, old_work)
+            stale_job_id = make_job_id(watch_dir, old_work)
 
             with (
                 mock.patch("watcher_core._shared_capture_pane_text", return_value="$ "),
@@ -3209,11 +3217,11 @@ class ClaudeHandoffDispatchTest(unittest.TestCase):
             ):
                 core._poll()
 
-            current_job = watcher_core.JobState.load(core.state_dir, job.job_id)
+            current_job = JobState.load(core.state_dir, job.job_id)
             self.assertIsNotNone(current_job)
             assert current_job is not None
-            self.assertEqual(current_job.status, watcher_core.JobStatus.VERIFY_DONE)
-            self.assertEqual(core._current_turn_state, watcher_core.WatcherTurnState.IMPLEMENT_ACTIVE)
+            self.assertEqual(current_job.status, JobStatus.VERIFY_DONE)
+            self.assertEqual(core._current_turn_state, WatcherTurnState.IMPLEMENT_ACTIVE)
             self.assertFalse((core.state_dir / f"{stale_job_id}.json").exists())
 
     def test_handoff_update_releases_from_verify_followup(self) -> None:
@@ -3241,7 +3249,7 @@ class ClaudeHandoffDispatchTest(unittest.TestCase):
             handoff_path = base_dir / "implement_handoff.md"
             handoff_path.write_text("STATUS: implement\nCONTROL_SEQ: 10\n")
             core._transition_turn(
-                watcher_core.WatcherTurnState.VERIFY_FOLLOWUP,
+                WatcherTurnState.VERIFY_FOLLOWUP,
                 "test_followup_active",
                 active_control_file="advisory_advice.md",
                 active_control_seq=9,
@@ -3251,12 +3259,12 @@ class ClaudeHandoffDispatchTest(unittest.TestCase):
             with mock.patch.object(core, "_notify_implement_owner") as notify:
                 core._check_pipeline_signal_updates()
                 notify.assert_not_called()
-                self.assertEqual(core._current_turn_state, watcher_core.WatcherTurnState.VERIFY_FOLLOWUP)
+                self.assertEqual(core._current_turn_state, WatcherTurnState.VERIFY_FOLLOWUP)
 
                 core.lease.release("slot_verify")
                 core._check_pipeline_signal_updates()
                 notify.assert_called_once()
-                self.assertEqual(core._current_turn_state, watcher_core.WatcherTurnState.IMPLEMENT_ACTIVE)
+                self.assertEqual(core._current_turn_state, WatcherTurnState.IMPLEMENT_ACTIVE)
 
 
 class RuntimePlanConsumptionTest(unittest.TestCase):
@@ -3301,7 +3309,7 @@ class RuntimePlanConsumptionTest(unittest.TestCase):
                     "gemini_pane_target": "gemini-pane",
                 }
             )
-            job = watcher_core.JobState.from_artifact("job-role-neutral", str(work_note))
+            job = JobState.from_artifact("job-role-neutral", str(work_note))
 
             implement_prompt = core.prompt_assembler.format_implement_prompt(handoff_path)
             verify_prompt = core.sm.normalize_prompt_text(
@@ -3410,7 +3418,7 @@ class RuntimePlanConsumptionTest(unittest.TestCase):
             )
             core._last_advisory_request_sig = ""
 
-            with mock.patch("watcher_core.tmux_send_keys", return_value=True) as send:
+            with mock.patch("watcher_dispatch.tmux_send_keys", return_value=True) as send:
                 with mock.patch(
                     "watcher_core._shared_capture_pane_text",
                     return_value="Gemini CLI v0.38.0\nType your message\nworkspace\n",
@@ -3449,7 +3457,7 @@ class RuntimePlanConsumptionTest(unittest.TestCase):
                 core._poll()
 
             notify.assert_called_once_with("startup_turn_advisory")
-            self.assertEqual(core._current_turn_state, watcher_core.WatcherTurnState.ADVISORY_ACTIVE)
+            self.assertEqual(core._current_turn_state, WatcherTurnState.ADVISORY_ACTIVE)
             self.assertEqual(core._turn_active_control_file, "advisory_request.md")
             self.assertEqual(core._turn_active_control_seq, 41)
 
@@ -3629,7 +3637,7 @@ class RuntimePlanConsumptionTest(unittest.TestCase):
                 }
             )
 
-            with mock.patch("watcher_core.tmux_send_keys", return_value=True) as send:
+            with mock.patch("watcher_dispatch.tmux_send_keys", return_value=True) as send:
                 with mock.patch(
                     "watcher_core._shared_capture_pane_text",
                     return_value="OpenAI Codex\n› Type your message\n",
@@ -3680,7 +3688,7 @@ class RuntimePlanConsumptionTest(unittest.TestCase):
                 }
             )
 
-            with mock.patch("watcher_core.tmux_send_keys", return_value=True) as send:
+            with mock.patch("watcher_dispatch.tmux_send_keys", return_value=True) as send:
                 with mock.patch(
                     "watcher_core._shared_capture_pane_text",
                     return_value="OpenAI Codex\n› Type your message\n",
@@ -3730,7 +3738,7 @@ class RuntimePlanConsumptionTest(unittest.TestCase):
                 }
             )
             core._initial_turn_checked = True
-            core._transition_turn(watcher_core.WatcherTurnState.IMPLEMENT_ACTIVE, "test_setup")
+            core._transition_turn(WatcherTurnState.IMPLEMENT_ACTIVE, "test_setup")
             core._work_baseline_snapshot = {}
 
             pane_texts = {
@@ -3773,7 +3781,7 @@ class VerifyPromptScopeHintTest(unittest.TestCase):
                     "dry_run": True,
                 }
             )
-            job = watcher_core.JobState.from_artifact("job-docs", str(work_note))
+            job = JobState.from_artifact("job-docs", str(work_note))
 
             context = core.prompt_assembler.build_verify_prompt_context(job.artifact_path)
 
@@ -3807,7 +3815,7 @@ class VerifyPromptScopeHintTest(unittest.TestCase):
                     "dry_run": True,
                 }
             )
-            job = watcher_core.JobState.from_artifact("job-mixed", str(work_note))
+            job = JobState.from_artifact("job-mixed", str(work_note))
 
             context = core.prompt_assembler.build_verify_prompt_context(job.artifact_path)
 
@@ -3818,7 +3826,7 @@ class VerifyPromptScopeHintTest(unittest.TestCase):
 
 class TurnStateEnumTest(unittest.TestCase):
     def test_turn_state_values(self) -> None:
-        from watcher_core import WatcherTurnState
+        from watcher_state import WatcherTurnState
         expected = {"IDLE", "IMPLEMENT_ACTIVE", "VERIFY_ACTIVE", "VERIFY_FOLLOWUP",
                     "ADVISORY_ACTIVE", "OPERATOR_WAIT"}
         self.assertEqual(set(e.value for e in WatcherTurnState), expected)
@@ -3945,7 +3953,7 @@ class TurnResolutionTest(unittest.TestCase):
             turn = core._resolve_turn()
             dispatch_state = core._implement_handoff_dispatch_state(handoff.stat().st_mtime, handoff)
 
-            self.assertEqual(turn, watcher_core.VERIFY_FOLLOWUP_ROUTE)
+            self.assertEqual(turn, VERIFY_FOLLOWUP_ROUTE)
             self.assertTrue(dispatch_state["completed_handoff"])
             self.assertFalse(dispatch_state["dispatchable"])
 
@@ -4096,7 +4104,7 @@ class TurnResolutionTest(unittest.TestCase):
                 core._check_pipeline_signal_updates()
 
             notify.assert_called_once()
-            self.assertEqual(core._current_turn_state, watcher_core.WatcherTurnState.VERIFY_FOLLOWUP)
+            self.assertEqual(core._current_turn_state, WatcherTurnState.VERIFY_FOLLOWUP)
             events = [
                 json.loads(line)
                 for line in (base_dir / "runs" / core.run_id / "events.jsonl").read_text(encoding="utf-8").splitlines()
@@ -4575,7 +4583,7 @@ class TurnResolutionTest(unittest.TestCase):
                 core._check_pipeline_signal_updates()
 
             retriage_notify.assert_called_once()
-            self.assertEqual(core._current_turn_state, watcher_core.WatcherTurnState.VERIFY_FOLLOWUP)
+            self.assertEqual(core._current_turn_state, WatcherTurnState.VERIFY_FOLLOWUP)
 
     def test_pr_merge_gate_recovers_after_referenced_pr_is_merged(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -4657,7 +4665,7 @@ class TurnResolutionTest(unittest.TestCase):
             operator_sig = core._get_path_sig(operator_path)
             core._last_operator_request_sig = operator_sig
             core._transition_turn(
-                watcher_core.WatcherTurnState.OPERATOR_WAIT,
+                WatcherTurnState.OPERATOR_WAIT,
                 "test_operator_wait",
                 active_control_file="operator_request.md",
                 active_control_seq=1721,
@@ -4672,7 +4680,7 @@ class TurnResolutionTest(unittest.TestCase):
                 mock.patch.object(core, "_notify_verify_control_recovery") as recovery_notify,
             ):
                 self.assertTrue(core._check_operator_recovery_without_signal())
-                self.assertEqual(core._current_turn_state, watcher_core.WatcherTurnState.VERIFY_FOLLOWUP)
+                self.assertEqual(core._current_turn_state, WatcherTurnState.VERIFY_FOLLOWUP)
                 self.assertEqual(core._turn_active_control_seq, 1721)
                 recovery_notify.assert_called_once()
 
@@ -4790,7 +4798,7 @@ class TurnResolutionTest(unittest.TestCase):
 
             core._check_pipeline_signal_updates()
 
-            self.assertEqual(core._current_turn_state, watcher_core.WatcherTurnState.OPERATOR_WAIT)
+            self.assertEqual(core._current_turn_state, WatcherTurnState.OPERATOR_WAIT)
             self.assertEqual(core._get_pending_advisory_request_mtime(), 0.0)
             self.assertEqual(core._get_pending_advisory_advice_mtime(), 0.0)
             self.assertEqual(core._last_advisory_request_sig, core._get_path_sig(advisory_request_path))
@@ -4909,7 +4917,7 @@ class TurnResolutionTest(unittest.TestCase):
 
             recovery_notify.assert_not_called()
             retriage_notify.assert_called_once()
-            self.assertEqual(core._current_turn_state, watcher_core.WatcherTurnState.VERIFY_FOLLOWUP)
+            self.assertEqual(core._current_turn_state, WatcherTurnState.VERIFY_FOLLOWUP)
 
     def test_truth_sync_operator_request_stays_operator_turn(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -5267,7 +5275,7 @@ class ControlSeqAgeTrackerTest(unittest.TestCase):
             notify.assert_called_once_with("stale_control_advisory")
             self.assertEqual(handoff_path.read_text(encoding="utf-8"), handoff_text)
             self.assertFalse((base_dir / "operator_request.md").exists())
-            self.assertEqual(core._current_turn_state, watcher_core.WatcherTurnState.ADVISORY_ACTIVE)
+            self.assertEqual(core._current_turn_state, WatcherTurnState.ADVISORY_ACTIVE)
             self.assertEqual(core._turn_active_control_seq, 32)
             request_text = (base_dir / "advisory_request.md").read_text(encoding="utf-8")
             self.assertIn("STATUS: request_open", request_text)
@@ -5396,7 +5404,7 @@ class RollingSignalTransitionTest(unittest.TestCase):
 
             # Set current state with seq 17
             core._transition_turn(
-                watcher_core.WatcherTurnState.CODEX_VERIFY,
+                WatcherTurnState.CODEX_VERIFY,
                 "test_setup",
                 active_control_seq=17,
             )
@@ -5408,7 +5416,7 @@ class RollingSignalTransitionTest(unittest.TestCase):
             core._last_implement_handoff_sig = ""
             core._check_pipeline_signal_updates()
 
-            self.assertEqual(core._current_turn_state, watcher_core.WatcherTurnState.CODEX_VERIFY)
+            self.assertEqual(core._current_turn_state, WatcherTurnState.CODEX_VERIFY)
 
     def test_higher_seq_handoff_transitions_to_claude(self) -> None:
         """A handoff with higher seq should trigger Claude transition."""
@@ -5428,7 +5436,7 @@ class RollingSignalTransitionTest(unittest.TestCase):
             })
 
             core._transition_turn(
-                watcher_core.WatcherTurnState.IDLE,
+                WatcherTurnState.IDLE,
                 "test_setup",
                 active_control_seq=15,
             )
@@ -5437,10 +5445,10 @@ class RollingSignalTransitionTest(unittest.TestCase):
             handoff.write_text("STATUS: implement\nCONTROL_SEQ: 18\n", encoding="utf-8")
             core._last_implement_handoff_sig = ""
 
-            with mock.patch("watcher_core.tmux_send_keys", return_value=True):
+            with mock.patch("watcher_dispatch.tmux_send_keys", return_value=True):
                 core._check_pipeline_signal_updates()
 
-            self.assertEqual(core._current_turn_state, watcher_core.WatcherTurnState.IMPLEMENT_ACTIVE)
+            self.assertEqual(core._current_turn_state, WatcherTurnState.IMPLEMENT_ACTIVE)
 
     def test_stale_operator_request_update_routes_to_verify_control_recovery(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -5495,7 +5503,7 @@ class RollingSignalTransitionTest(unittest.TestCase):
                 core._check_pipeline_signal_updates()
 
             notify.assert_called_once()
-            self.assertEqual(core._current_turn_state, watcher_core.WatcherTurnState.VERIFY_FOLLOWUP)
+            self.assertEqual(core._current_turn_state, WatcherTurnState.VERIFY_FOLLOWUP)
 
     def test_startup_turn_uses_verify_control_recovery_for_stale_operator_request(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -5550,7 +5558,7 @@ class RollingSignalTransitionTest(unittest.TestCase):
                 core._poll()
 
             notify.assert_called_once()
-            self.assertEqual(core._current_turn_state, watcher_core.WatcherTurnState.VERIFY_FOLLOWUP)
+            self.assertEqual(core._current_turn_state, WatcherTurnState.VERIFY_FOLLOWUP)
 
     def test_startup_turn_uses_verify_operator_retriage_for_aged_operator_request(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -5584,7 +5592,7 @@ class RollingSignalTransitionTest(unittest.TestCase):
                 core._poll()
 
             notify.assert_called_once()
-            self.assertEqual(core._current_turn_state, watcher_core.WatcherTurnState.VERIFY_FOLLOWUP)
+            self.assertEqual(core._current_turn_state, WatcherTurnState.VERIFY_FOLLOWUP)
 
     def test_operator_wait_idle_timeout_routes_to_verify_operator_retriage_once(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -5613,7 +5621,7 @@ class RollingSignalTransitionTest(unittest.TestCase):
                 }
             )
             core._transition_turn(
-                watcher_core.WatcherTurnState.OPERATOR_WAIT,
+                WatcherTurnState.OPERATOR_WAIT,
                 "test_setup_operator_wait",
                 active_control_file="operator_request.md",
                 active_control_seq=24,
@@ -5628,7 +5636,7 @@ class RollingSignalTransitionTest(unittest.TestCase):
                 core._check_operator_wait_idle_timeout()
 
             notify.assert_called_once()
-            self.assertEqual(core._current_turn_state, watcher_core.WatcherTurnState.VERIFY_FOLLOWUP)
+            self.assertEqual(core._current_turn_state, WatcherTurnState.VERIFY_FOLLOWUP)
             self.assertEqual(core._turn_active_control_seq, 24)
 
     def test_operator_retriage_no_next_control_promotes_to_advisory_request(self) -> None:
@@ -5670,7 +5678,7 @@ class RollingSignalTransitionTest(unittest.TestCase):
             )
             core._last_operator_retriage_sig = core._get_path_sig(operator_path)
             core._transition_turn(
-                watcher_core.WatcherTurnState.VERIFY_FOLLOWUP,
+                WatcherTurnState.VERIFY_FOLLOWUP,
                 "test_setup_operator_retriage",
                 active_control_file="operator_request.md",
                 active_control_seq=31,
@@ -5684,7 +5692,7 @@ class RollingSignalTransitionTest(unittest.TestCase):
 
             self.assertTrue(promoted)
             notify.assert_called_once_with("operator_retriage_no_next_control")
-            self.assertEqual(core._current_turn_state, watcher_core.WatcherTurnState.ADVISORY_ACTIVE)
+            self.assertEqual(core._current_turn_state, WatcherTurnState.ADVISORY_ACTIVE)
             self.assertEqual(core._turn_active_control_seq, 32)
             request_text = (base_dir / "advisory_request.md").read_text(encoding="utf-8")
             self.assertIn("STATUS: request_open", request_text)
@@ -5741,7 +5749,7 @@ class RollingSignalTransitionTest(unittest.TestCase):
             core._last_operator_retriage_fingerprint = str((marker or {}).get("fingerprint") or "")
             core._operator_retriage_started_at = base_now
             core._transition_turn(
-                watcher_core.WatcherTurnState.VERIFY_FOLLOWUP,
+                WatcherTurnState.VERIFY_FOLLOWUP,
                 "test_setup_operator_retriage",
                 active_control_file="operator_request.md",
                 active_control_seq=31,
@@ -5756,7 +5764,7 @@ class RollingSignalTransitionTest(unittest.TestCase):
                 core._check_pipeline_signal_updates()
 
             retriage_notify.assert_not_called()
-            self.assertEqual(core._current_turn_state, watcher_core.WatcherTurnState.VERIFY_FOLLOWUP)
+            self.assertEqual(core._current_turn_state, WatcherTurnState.VERIFY_FOLLOWUP)
             self.assertEqual(core._operator_retriage_started_at, base_now)
             self.assertEqual(core._last_operator_retriage_sig, core._get_path_sig(operator_path))
 
@@ -5794,7 +5802,7 @@ class RollingSignalTransitionTest(unittest.TestCase):
             })
 
             core._transition_turn(
-                watcher_core.WatcherTurnState.IMPLEMENT_ACTIVE,
+                WatcherTurnState.IMPLEMENT_ACTIVE,
                 "test_setup",
                 active_control_seq=17,
             )
@@ -5811,7 +5819,7 @@ class RollingSignalTransitionTest(unittest.TestCase):
                 core._check_pipeline_signal_updates()
 
             notify.assert_not_called()
-            self.assertEqual(core._current_turn_state, watcher_core.WatcherTurnState.IMPLEMENT_ACTIVE)
+            self.assertEqual(core._current_turn_state, WatcherTurnState.IMPLEMENT_ACTIVE)
             self.assertIsNotNone(core._pending_idle_release_handoff)
 
     # origin: implement handoff idle-release deferred-candidate replay (출처 work note 미기록)
@@ -5833,7 +5841,7 @@ class RollingSignalTransitionTest(unittest.TestCase):
             })
 
             core._transition_turn(
-                watcher_core.WatcherTurnState.IMPLEMENT_ACTIVE,
+                WatcherTurnState.IMPLEMENT_ACTIVE,
                 "test_setup",
                 active_control_seq=17,
             )
@@ -5859,7 +5867,7 @@ class RollingSignalTransitionTest(unittest.TestCase):
                 self.assertTrue(core._check_pending_idle_release_handoff())
 
             notify.assert_called_once()
-            self.assertEqual(core._current_turn_state, watcher_core.WatcherTurnState.IMPLEMENT_ACTIVE)
+            self.assertEqual(core._current_turn_state, WatcherTurnState.IMPLEMENT_ACTIVE)
             self.assertEqual(core._turn_active_control_seq, 18)
             self.assertIsNone(core._pending_idle_release_handoff)
 
@@ -5882,7 +5890,7 @@ class RollingSignalTransitionTest(unittest.TestCase):
             })
 
             core._transition_turn(
-                watcher_core.WatcherTurnState.IMPLEMENT_ACTIVE,
+                WatcherTurnState.IMPLEMENT_ACTIVE,
                 "test_setup",
                 active_control_seq=17,
             )
@@ -5899,7 +5907,7 @@ class RollingSignalTransitionTest(unittest.TestCase):
                 core._check_pipeline_signal_updates()
 
             notify.assert_called_once()
-            self.assertEqual(core._current_turn_state, watcher_core.WatcherTurnState.IMPLEMENT_ACTIVE)
+            self.assertEqual(core._current_turn_state, WatcherTurnState.IMPLEMENT_ACTIVE)
             self.assertEqual(core._turn_active_control_seq, 18)
 
     def test_deferred_handoff_flushes_after_active_claude_round_exits(self) -> None:
@@ -5920,7 +5928,7 @@ class RollingSignalTransitionTest(unittest.TestCase):
             })
 
             core._transition_turn(
-                watcher_core.WatcherTurnState.IMPLEMENT_ACTIVE,
+                WatcherTurnState.IMPLEMENT_ACTIVE,
                 "test_setup",
                 active_control_seq=17,
             )
@@ -5938,14 +5946,14 @@ class RollingSignalTransitionTest(unittest.TestCase):
                 notify.assert_not_called()
 
                 core._transition_turn(
-                    watcher_core.WatcherTurnState.IDLE,
+                    WatcherTurnState.IDLE,
                     "test_round_exit",
                     active_control_seq=17,
                 )
                 core._check_pipeline_signal_updates()
 
             notify.assert_called_once()
-            self.assertEqual(core._current_turn_state, watcher_core.WatcherTurnState.IMPLEMENT_ACTIVE)
+            self.assertEqual(core._current_turn_state, WatcherTurnState.IMPLEMENT_ACTIVE)
 
 
 class ImplementIdleTimeoutTest(unittest.TestCase):
@@ -5967,7 +5975,7 @@ class ImplementIdleTimeoutTest(unittest.TestCase):
             })
 
             core._transition_turn(
-                watcher_core.WatcherTurnState.IMPLEMENT_ACTIVE,
+                WatcherTurnState.IMPLEMENT_ACTIVE,
                 "test_setup",
             )
             import hashlib as _hlib
@@ -5982,7 +5990,7 @@ class ImplementIdleTimeoutTest(unittest.TestCase):
 
             self.assertEqual(
                 core._current_turn_state,
-                watcher_core.WatcherTurnState.IDLE,
+                WatcherTurnState.IDLE,
             )
 
     def test_legacy_claude_idle_timeout_key_still_configures_implement_timeout(self) -> None:
@@ -6022,7 +6030,7 @@ class ImplementIdleTimeoutTest(unittest.TestCase):
             })
 
             core._transition_turn(
-                watcher_core.WatcherTurnState.IMPLEMENT_ACTIVE,
+                WatcherTurnState.IMPLEMENT_ACTIVE,
                 "test_setup",
             )
             core._last_progress_at = time.time() - 10
@@ -6034,7 +6042,7 @@ class ImplementIdleTimeoutTest(unittest.TestCase):
 
             self.assertEqual(
                 core._current_turn_state,
-                watcher_core.WatcherTurnState.IMPLEMENT_ACTIVE,
+                WatcherTurnState.IMPLEMENT_ACTIVE,
             )
             self.assertGreater(core._last_progress_at, time.time() - 2)
 
@@ -6164,7 +6172,7 @@ class TransitionTurnTest(unittest.TestCase):
             })
 
             core._transition_turn(
-                watcher_core.WatcherTurnState.CODEX_VERIFY,
+                WatcherTurnState.CODEX_VERIFY,
                 "work_needs_verify",
                 active_control_file="implement_handoff.md",
                 active_control_seq=17,
@@ -6245,7 +6253,7 @@ class TransitionTurnTest(unittest.TestCase):
             })
 
             core._transition_turn(
-                watcher_core.WatcherTurnState.IMPLEMENT_ACTIVE,
+                WatcherTurnState.IMPLEMENT_ACTIVE,
                 "startup_turn_implement",
                 active_control_file="implement_handoff.md",
                 active_control_seq=23,
@@ -6256,7 +6264,7 @@ class TransitionTurnTest(unittest.TestCase):
             self.assertEqual(data["state"], "IMPLEMENT_ACTIVE")
             self.assertEqual(
                 data["legacy_state"],
-                watcher_core.legacy_turn_state_name(watcher_core.WatcherTurnState.IMPLEMENT_ACTIVE.value),
+                legacy_turn_state_name(WatcherTurnState.IMPLEMENT_ACTIVE.value),
             )
             self.assertEqual(data["active_role"], "implement")
             self.assertEqual(data["active_lane"], "Codex")
@@ -6282,7 +6290,7 @@ class TransitionTurnTest(unittest.TestCase):
 
             with mock.patch("watcher_core._shared_capture_pane_text", return_value="• Working (12s • esc to interrupt)\n"):
                 core._transition_turn(
-                    watcher_core.WatcherTurnState.CODEX_VERIFY,
+                    WatcherTurnState.CODEX_VERIFY,
                     "work_needs_verify",
                     active_control_file="implement_handoff.md",
                     active_control_seq=17,
@@ -6326,7 +6334,7 @@ class TransitionTurnTest(unittest.TestCase):
                 ),
             ):
                 core._transition_turn(
-                    watcher_core.WatcherTurnState.CODEX_VERIFY,
+                    WatcherTurnState.CODEX_VERIFY,
                     "work_needs_verify",
                     active_control_file="implement_handoff.md",
                     active_control_seq=17,
@@ -6359,16 +6367,16 @@ class TransitionTurnTest(unittest.TestCase):
             })
 
             core._transition_turn(
-                watcher_core.WatcherTurnState.IMPLEMENT_ACTIVE,
+                WatcherTurnState.IMPLEMENT_ACTIVE,
                 "startup",
             )
-            self.assertEqual(core._current_turn_state, watcher_core.WatcherTurnState.IMPLEMENT_ACTIVE)
+            self.assertEqual(core._current_turn_state, WatcherTurnState.IMPLEMENT_ACTIVE)
 
             core._transition_turn(
-                watcher_core.WatcherTurnState.IDLE,
+                WatcherTurnState.IDLE,
                 "implement_idle_timeout",
             )
-            self.assertEqual(core._current_turn_state, watcher_core.WatcherTurnState.IDLE)
+            self.assertEqual(core._current_turn_state, WatcherTurnState.IDLE)
 
 
 class BusyLaneNotificationDeferTest(unittest.TestCase):
@@ -6403,7 +6411,7 @@ class BusyLaneNotificationDeferTest(unittest.TestCase):
             core._last_advisory_request_sig = core._get_path_sig(request_path)
             core._last_advisory_advice_sig = core._get_path_sig(advice_path)
             core._transition_turn(
-                watcher_core.WatcherTurnState.ADVISORY_ACTIVE,
+                WatcherTurnState.ADVISORY_ACTIVE,
                 "test_setup_advisory",
                 active_control_file="advisory_request.md",
                 active_control_seq=18,
@@ -6415,7 +6423,7 @@ class BusyLaneNotificationDeferTest(unittest.TestCase):
                     "watcher_core._shared_capture_pane_text",
                     return_value="› \n tab to queue message\n55% context left\n",
                 ),
-                mock.patch("watcher_core.tmux_send_keys", return_value=True) as send_prompt,
+                mock.patch("watcher_dispatch.tmux_send_keys", return_value=True) as send_prompt,
             ):
                 core._poll()
 
@@ -6460,7 +6468,7 @@ class BusyLaneNotificationDeferTest(unittest.TestCase):
             core._last_advisory_request_sig = core._get_path_sig(request_path)
             core._last_advisory_advice_sig = core._get_path_sig(advice_path)
             core._transition_turn(
-                watcher_core.WatcherTurnState.ADVISORY_ACTIVE,
+                WatcherTurnState.ADVISORY_ACTIVE,
                 "test_setup_advisory",
                 active_control_file="advisory_request.md",
                 active_control_seq=18,
@@ -6472,7 +6480,7 @@ class BusyLaneNotificationDeferTest(unittest.TestCase):
                     "watcher_core._shared_capture_pane_text",
                     return_value="› \n tab to queue message\n55% context left\n",
                 ),
-                mock.patch("watcher_core.tmux_send_keys", return_value=True) as send_prompt,
+                mock.patch("watcher_dispatch.tmux_send_keys", return_value=True) as send_prompt,
             ):
                 core._poll()
 
@@ -6506,7 +6514,7 @@ class BusyLaneNotificationDeferTest(unittest.TestCase):
             core._initial_turn_checked = True
             core._last_advisory_request_sig = core._get_path_sig(request_path)
             core._transition_turn(
-                watcher_core.WatcherTurnState.ADVISORY_ACTIVE,
+                WatcherTurnState.ADVISORY_ACTIVE,
                 "test_setup_advisory",
                 active_control_file="advisory_request.md",
                 active_control_seq=18,
@@ -6515,7 +6523,7 @@ class BusyLaneNotificationDeferTest(unittest.TestCase):
 
             with (
                 mock.patch("watcher_core._shared_capture_pane_text", return_value="openai codex\n› "),
-                mock.patch("watcher_core.tmux_send_keys", return_value=True) as send_prompt,
+                mock.patch("watcher_dispatch.tmux_send_keys", return_value=True) as send_prompt,
             ):
                 recovered = core._recover_stale_advisory()
 
@@ -6527,7 +6535,7 @@ class BusyLaneNotificationDeferTest(unittest.TestCase):
             self.assertIn("ROLE: advisory_recovery", args[1])
             self.assertIn("REQUEST_SEQ: 18", args[1])
             self.assertIn("write exactly one next control", args[1])
-            self.assertEqual(core._current_turn_state, watcher_core.WatcherTurnState.VERIFY_FOLLOWUP)
+            self.assertEqual(core._current_turn_state, WatcherTurnState.VERIFY_FOLLOWUP)
             self.assertEqual(core._turn_active_control_file, "advisory_request.md")
             self.assertEqual(core._turn_active_control_seq, 18)
             events = [
@@ -6566,7 +6574,7 @@ class BusyLaneNotificationDeferTest(unittest.TestCase):
             )
             core._initial_turn_checked = True
             core._transition_turn(
-                watcher_core.WatcherTurnState.ADVISORY_ACTIVE,
+                WatcherTurnState.ADVISORY_ACTIVE,
                 "test_setup_advisory",
                 active_control_file="advisory_request.md",
                 active_control_seq=18,
@@ -6575,13 +6583,13 @@ class BusyLaneNotificationDeferTest(unittest.TestCase):
 
             with (
                 mock.patch("watcher_core._shared_capture_pane_text", return_value="openai codex\n› "),
-                mock.patch("watcher_core.tmux_send_keys", return_value=True) as send_prompt,
+                mock.patch("watcher_dispatch.tmux_send_keys", return_value=True) as send_prompt,
             ):
                 recovered = core._recover_stale_advisory()
 
             self.assertFalse(recovered)
             send_prompt.assert_not_called()
-            self.assertEqual(core._current_turn_state, watcher_core.WatcherTurnState.ADVISORY_ACTIVE)
+            self.assertEqual(core._current_turn_state, WatcherTurnState.ADVISORY_ACTIVE)
 
     def test_advisory_advice_followup_defers_until_codex_prompt_ready(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -6610,11 +6618,11 @@ class BusyLaneNotificationDeferTest(unittest.TestCase):
 
             with (
                 mock.patch("watcher_core._shared_capture_pane_text", return_value="• Working (18s • esc to interrupt)\n"),
-                mock.patch("watcher_core.tmux_send_keys", return_value=True) as send_prompt,
+                mock.patch("watcher_dispatch.tmux_send_keys", return_value=True) as send_prompt,
             ):
                 core._check_pipeline_signal_updates()
 
-            self.assertEqual(core._current_turn_state, watcher_core.WatcherTurnState.VERIFY_FOLLOWUP)
+            self.assertEqual(core._current_turn_state, WatcherTurnState.VERIFY_FOLLOWUP)
             pending_key = "codex_verify:advisory_advice_followup:18"
             self.assertIn(pending_key, core.dispatch_queue.pending_notifications)
             send_prompt.assert_not_called()
@@ -6630,7 +6638,7 @@ class BusyLaneNotificationDeferTest(unittest.TestCase):
                     "watcher_core._shared_capture_pane_text",
                     return_value="› \n tab to queue message\n55% context left\n",
                 ),
-                mock.patch("watcher_core.tmux_send_keys", return_value=True) as send_prompt,
+                mock.patch("watcher_dispatch.tmux_send_keys", return_value=True) as send_prompt,
             ):
                 core._check_pipeline_signal_updates()
 
@@ -6664,11 +6672,11 @@ class BusyLaneNotificationDeferTest(unittest.TestCase):
 
             with (
                 mock.patch("watcher_core._shared_capture_pane_text", return_value="Discombobulating... (22s)\n"),
-                mock.patch("watcher_core.tmux_send_keys", return_value=True) as send_prompt,
+                mock.patch("watcher_dispatch.tmux_send_keys", return_value=True) as send_prompt,
             ):
                 core._check_pipeline_signal_updates()
 
-            self.assertEqual(core._current_turn_state, watcher_core.WatcherTurnState.IMPLEMENT_ACTIVE)
+            self.assertEqual(core._current_turn_state, WatcherTurnState.IMPLEMENT_ACTIVE)
             pending_key = "claude_implement:implement_handoff:19"
             self.assertIn(pending_key, core.dispatch_queue.pending_notifications)
             send_prompt.assert_not_called()
@@ -6678,7 +6686,7 @@ class BusyLaneNotificationDeferTest(unittest.TestCase):
                     "watcher_core._shared_capture_pane_text",
                     return_value="How is Claude doing this session? (optional)\n❯ \n  ⏵⏵ bypass permissions on (shift+tab to cycle)\n",
                 ),
-                mock.patch("watcher_core.tmux_send_keys", return_value=True) as send_prompt,
+                mock.patch("watcher_dispatch.tmux_send_keys", return_value=True) as send_prompt,
             ):
                 core._check_pipeline_signal_updates()
 
@@ -6721,7 +6729,7 @@ class BusyLaneNotificationDeferTest(unittest.TestCase):
 
             with (
                 mock.patch("watcher_core._shared_capture_pane_text", return_value=pane_text),
-                mock.patch("watcher_core.tmux_send_keys", return_value=True) as send_prompt,
+                mock.patch("watcher_dispatch.tmux_send_keys", return_value=True) as send_prompt,
             ):
                 core._check_pipeline_signal_updates()
 
@@ -6763,7 +6771,7 @@ class BusyLaneNotificationDeferTest(unittest.TestCase):
 
             with (
                 mock.patch("watcher_core._shared_capture_pane_text", return_value="• Working (22s • esc to interrupt)\n"),
-                mock.patch("watcher_core.tmux_send_keys", return_value=True) as send_prompt,
+                mock.patch("watcher_dispatch.tmux_send_keys", return_value=True) as send_prompt,
             ):
                 ok = core._notify_verify_blocked_triage(signal, "implement_blocked")
 
@@ -6783,7 +6791,7 @@ class BusyLaneNotificationDeferTest(unittest.TestCase):
                     "watcher_core._shared_capture_pane_text",
                     return_value="› \n tab to queue message\n55% context left\n",
                 ),
-                mock.patch("watcher_core.tmux_send_keys", return_value=True) as send_prompt,
+                mock.patch("watcher_dispatch.tmux_send_keys", return_value=True) as send_prompt,
             ):
                 core.dispatch_queue.flush_pending()
 
@@ -6843,14 +6851,14 @@ class BusyLaneNotificationDeferTest(unittest.TestCase):
                     "watcher_core._shared_capture_pane_text",
                     return_value="How is Claude doing this session? (optional)\n❯ \n  ⏵⏵ bypass permissions on (shift+tab to cycle)\n",
                 ),
-                mock.patch("watcher_core.tmux_send_keys", return_value=True) as send_prompt,
+                mock.patch("watcher_dispatch.tmux_send_keys", return_value=True) as send_prompt,
             ):
                 core._check_pipeline_signal_updates()
 
             send_prompt.assert_called_once()
             self.assertEqual(send_prompt.call_args.args[0], "claude-pane")
             self.assertNotIn("verify_operator_retriage", core.dispatch_queue.pending_notifications)
-            self.assertEqual(core._current_turn_state, watcher_core.WatcherTurnState.IMPLEMENT_ACTIVE)
+            self.assertEqual(core._current_turn_state, WatcherTurnState.IMPLEMENT_ACTIVE)
             raw_events = [
                 json.loads(line)
                 for line in (core.events_dir / "raw.jsonl").read_text(encoding="utf-8").splitlines()
@@ -6888,7 +6896,7 @@ class VerifyCompletionContractTest(unittest.TestCase):
 
             work_note = work_day / "2026-04-10-slice.md"
             _write_work_note(work_note, ["docs/ACCEPTANCE_CRITERIA.md"])
-            job = watcher_core.JobState.from_artifact("job-verify-contract", str(work_note))
+            job = JobState.from_artifact("job-verify-contract", str(work_note))
 
             core = watcher_core.WatcherCore(
                 {
@@ -6900,10 +6908,10 @@ class VerifyCompletionContractTest(unittest.TestCase):
                 }
             )
 
-            with mock.patch("watcher_core.tmux_send_keys", return_value=True):
+            with mock.patch("watcher_dispatch.tmux_send_keys", return_value=True):
                 job = core.sm._handle_verify_pending(job)
 
-            self.assertEqual(job.status, watcher_core.JobStatus.VERIFY_RUNNING)
+            self.assertEqual(job.status, JobStatus.VERIFY_RUNNING)
             job.accepted_dispatch_id = job.dispatch_id
             job.accepted_at = time.time() - 5
             job.done_deadline_at = time.time() + 30
@@ -6916,7 +6924,7 @@ class VerifyCompletionContractTest(unittest.TestCase):
                  mock.patch("watcher_core._shared_pane_text_has_input_cursor", return_value=True):
                 job = core.sm._handle_verify_running(job)
 
-            self.assertEqual(job.status, watcher_core.JobStatus.VERIFY_RUNNING)
+            self.assertEqual(job.status, JobStatus.VERIFY_RUNNING)
 
             verify_note = root / "verify" / "4" / "10" / "2026-04-10-slice-verification.md"
             _write_verify_note(verify_note, ["verify/4/10/2026-04-10-slice-verification.md"])
@@ -6926,7 +6934,7 @@ class VerifyCompletionContractTest(unittest.TestCase):
                  mock.patch("watcher_core._shared_pane_text_has_input_cursor", return_value=True):
                 job = core.sm._handle_verify_running(job)
 
-            self.assertEqual(job.status, watcher_core.JobStatus.VERIFY_RUNNING)
+            self.assertEqual(job.status, JobStatus.VERIFY_RUNNING)
 
             job.done_dispatch_id = job.dispatch_id
             job.done_at = time.time() - 1
@@ -6934,7 +6942,7 @@ class VerifyCompletionContractTest(unittest.TestCase):
                  mock.patch("watcher_core._shared_pane_text_has_busy_indicator", return_value=False), \
                  mock.patch("watcher_core._shared_pane_text_has_input_cursor", return_value=True):
                 job = core.sm._handle_verify_running(job)
-            self.assertEqual(job.status, watcher_core.JobStatus.VERIFY_DONE)
+            self.assertEqual(job.status, JobStatus.VERIFY_DONE)
             self.assertEqual(job.verify_result, "passed_by_feedback")
             self.assertTrue(job.verify_manifest_path)
             manifest_path = Path(job.verify_manifest_path)
@@ -6964,7 +6972,7 @@ class VerifyCompletionContractTest(unittest.TestCase):
             old_verify_note = verify_day / "2026-04-10-old-verification.md"
             _write_verify_note(old_verify_note, ["verify/4/10/2026-04-10-old-verification.md"])
             os.utime(old_verify_note, (10.0, 10.0))
-            job = watcher_core.JobState.from_artifact("job-verify-receipt", str(work_note))
+            job = JobState.from_artifact("job-verify-receipt", str(work_note))
 
             core = watcher_core.WatcherCore(
                 {
@@ -6976,10 +6984,10 @@ class VerifyCompletionContractTest(unittest.TestCase):
                 }
             )
 
-            with mock.patch("watcher_core.tmux_send_keys", return_value=True):
+            with mock.patch("watcher_dispatch.tmux_send_keys", return_value=True):
                 job = core.sm._handle_verify_pending(job)
 
-            self.assertEqual(job.status, watcher_core.JobStatus.VERIFY_RUNNING)
+            self.assertEqual(job.status, JobStatus.VERIFY_RUNNING)
 
     def test_idle_timeout_with_incomplete_outputs_requeues_verify_pending(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -6993,7 +7001,7 @@ class VerifyCompletionContractTest(unittest.TestCase):
 
             work_note = work_day / "2026-04-10-slice.md"
             _write_work_note(work_note, ["tests/test_web_app.py"])
-            job = watcher_core.JobState.from_artifact("job-verify-retry", str(work_note))
+            job = JobState.from_artifact("job-verify-retry", str(work_note))
 
             core = watcher_core.WatcherCore(
                 {
@@ -7005,10 +7013,10 @@ class VerifyCompletionContractTest(unittest.TestCase):
                 }
             )
 
-            with mock.patch("watcher_core.tmux_send_keys", return_value=True):
+            with mock.patch("watcher_dispatch.tmux_send_keys", return_value=True):
                 job = core.sm._handle_verify_pending(job)
 
-            self.assertEqual(job.status, watcher_core.JobStatus.VERIFY_RUNNING)
+            self.assertEqual(job.status, JobStatus.VERIFY_RUNNING)
 
             job.accepted_dispatch_id = job.dispatch_id
             job.accepted_at = time.time() - 400
@@ -7024,7 +7032,7 @@ class VerifyCompletionContractTest(unittest.TestCase):
                  mock.patch("watcher_core._shared_pane_text_has_input_cursor", return_value=True):
                 job = core.sm._handle_verify_running(job)
 
-            self.assertEqual(job.status, watcher_core.JobStatus.VERIFY_PENDING)
+            self.assertEqual(job.status, JobStatus.VERIFY_PENDING)
             self.assertGreater(job.last_failed_dispatch_at, 0.0)
             self.assertEqual(job.last_failed_dispatch_snapshot, "")
             self.assertGreaterEqual(job.dispatch_fail_count, 1)
@@ -7037,10 +7045,10 @@ class VerifyCompletionContractTest(unittest.TestCase):
             )
 
             job.last_failed_dispatch_at = time.time() - 30
-            with mock.patch("watcher_core.tmux_send_keys", return_value=True):
+            with mock.patch("watcher_dispatch.tmux_send_keys", return_value=True):
                 job = core.sm._handle_verify_pending(job)
 
-            self.assertEqual(job.status, watcher_core.JobStatus.VERIFY_RUNNING)
+            self.assertEqual(job.status, JobStatus.VERIFY_RUNNING)
 
     def test_idle_prompt_with_incomplete_outputs_requeues_before_long_timeout(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -7054,7 +7062,7 @@ class VerifyCompletionContractTest(unittest.TestCase):
 
             work_note = work_day / "2026-04-10-slice.md"
             _write_work_note(work_note, ["tests/test_web_app.py"])
-            job = watcher_core.JobState.from_artifact("job-verify-quick-idle", str(work_note))
+            job = JobState.from_artifact("job-verify-quick-idle", str(work_note))
 
             core = watcher_core.WatcherCore(
                 {
@@ -7067,10 +7075,10 @@ class VerifyCompletionContractTest(unittest.TestCase):
                 }
             )
 
-            with mock.patch("watcher_core.tmux_send_keys", return_value=True):
+            with mock.patch("watcher_dispatch.tmux_send_keys", return_value=True):
                 job = core.sm._handle_verify_pending(job)
 
-            self.assertEqual(job.status, watcher_core.JobStatus.VERIFY_RUNNING)
+            self.assertEqual(job.status, JobStatus.VERIFY_RUNNING)
 
             job.last_activity_at = time.time() - 30
             job.last_dispatch_at = time.time() - 35
@@ -7086,7 +7094,7 @@ class VerifyCompletionContractTest(unittest.TestCase):
                  mock.patch("watcher_core._shared_pane_text_has_input_cursor", return_value=True):
                 job = core.sm._handle_verify_running(job)
 
-            self.assertEqual(job.status, watcher_core.JobStatus.VERIFY_PENDING)
+            self.assertEqual(job.status, JobStatus.VERIFY_PENDING)
             self.assertGreater(job.last_failed_dispatch_at, 0.0)
             self.assertEqual(job.last_failed_dispatch_snapshot, "")
             self.assertEqual(job.dispatch_stall_count, 0)
@@ -7108,7 +7116,7 @@ class VerifyCompletionContractTest(unittest.TestCase):
 
             work_note = work_day / "2026-04-10-slice.md"
             _write_work_note(work_note, ["tests/test_web_app.py"])
-            job = watcher_core.JobState.from_artifact("job-verify-stall-repeat", str(work_note))
+            job = JobState.from_artifact("job-verify-stall-repeat", str(work_note))
 
             core = watcher_core.WatcherCore(
                 {
@@ -7121,7 +7129,7 @@ class VerifyCompletionContractTest(unittest.TestCase):
                 }
             )
 
-            with mock.patch("watcher_core.tmux_send_keys", return_value=True):
+            with mock.patch("watcher_dispatch.tmux_send_keys", return_value=True):
                 job = core.sm._handle_verify_pending(job)
 
             first_dispatch_at = time.time() - 35
@@ -7136,15 +7144,15 @@ class VerifyCompletionContractTest(unittest.TestCase):
                  mock.patch("watcher_core._shared_pane_text_has_input_cursor", return_value=True):
                 job = core.sm._handle_verify_running(job)
 
-            self.assertEqual(job.status, watcher_core.JobStatus.VERIFY_PENDING)
+            self.assertEqual(job.status, JobStatus.VERIFY_PENDING)
             self.assertEqual(job.dispatch_stall_count, 1)
             self.assertEqual(job.degraded_reason, "")
 
             job.last_failed_dispatch_at = time.time() - 30
-            with mock.patch("watcher_core.tmux_send_keys", return_value=True):
+            with mock.patch("watcher_dispatch.tmux_send_keys", return_value=True):
                 job = core.sm._handle_verify_pending(job)
 
-            self.assertEqual(job.status, watcher_core.JobStatus.VERIFY_RUNNING)
+            self.assertEqual(job.status, JobStatus.VERIFY_RUNNING)
             self.assertEqual(job.dispatch_stall_count, 1)
             self.assertEqual(job.degraded_reason, "")
 
@@ -7158,17 +7166,17 @@ class VerifyCompletionContractTest(unittest.TestCase):
                  mock.patch("watcher_core._shared_pane_text_has_input_cursor", return_value=True):
                 job = core.sm._handle_verify_running(job)
 
-            self.assertEqual(job.status, watcher_core.JobStatus.VERIFY_PENDING)
+            self.assertEqual(job.status, JobStatus.VERIFY_PENDING)
             self.assertEqual(job.dispatch_stall_count, 2)
             self.assertEqual(job.degraded_reason, "dispatch_stall")
             self.assertEqual(job.dispatch_stall_stage, "dispatch_seen_missing")
             self.assertEqual(job.lane_note, "waiting_dispatch_seen_after_dispatch")
 
-            with mock.patch("watcher_core.tmux_send_keys", return_value=True) as send_keys:
+            with mock.patch("watcher_dispatch.tmux_send_keys", return_value=True) as send_keys:
                 same_job = core.sm._handle_verify_pending(job)
 
             self.assertIs(same_job, job)
-            self.assertEqual(job.status, watcher_core.JobStatus.VERIFY_PENDING)
+            self.assertEqual(job.status, JobStatus.VERIFY_PENDING)
             send_keys.assert_not_called()
 
     def test_delayed_task_accepted_does_not_false_stall_before_accept_deadline(self) -> None:
@@ -7196,7 +7204,7 @@ class VerifyCompletionContractTest(unittest.TestCase):
 
             work_note = work_day / "2026-04-10-slice.md"
             _write_work_note(work_note, ["tests/test_web_app.py"])
-            job = watcher_core.JobState.from_artifact("job-verify-delayed-accept", str(work_note))
+            job = JobState.from_artifact("job-verify-delayed-accept", str(work_note))
 
             with mock.patch.dict(os.environ, {"PIPELINE_RUNTIME_DISABLE_EXPORTER": "1"}):
                 core = watcher_core.WatcherCore(
@@ -7211,7 +7219,7 @@ class VerifyCompletionContractTest(unittest.TestCase):
                     }
                 )
 
-            with mock.patch("watcher_core.tmux_send_keys", return_value=True):
+            with mock.patch("watcher_dispatch.tmux_send_keys", return_value=True):
                 job = core.sm._handle_verify_pending(job)
 
             append_wrapper_event(
@@ -7242,7 +7250,7 @@ class VerifyCompletionContractTest(unittest.TestCase):
                  mock.patch("watcher_core._shared_pane_text_has_input_cursor", return_value=True):
                 job = core.sm._handle_verify_running(job)
 
-            self.assertEqual(job.status, watcher_core.JobStatus.VERIFY_RUNNING)
+            self.assertEqual(job.status, JobStatus.VERIFY_RUNNING)
             self.assertEqual(job.degraded_reason, "")
             self.assertEqual(job.accepted_dispatch_id, "")
 
@@ -7288,7 +7296,7 @@ class VerifyCompletionContractTest(unittest.TestCase):
                  mock.patch("watcher_core._shared_pane_text_has_input_cursor", return_value=True):
                 job = core.sm._handle_verify_running(job)
 
-            self.assertEqual(job.status, watcher_core.JobStatus.VERIFY_RUNNING)
+            self.assertEqual(job.status, JobStatus.VERIFY_RUNNING)
             self.assertEqual(job.accepted_dispatch_id, job.dispatch_id)
             self.assertEqual(job.degraded_reason, "")
 
@@ -7304,7 +7312,7 @@ class VerifyCompletionContractTest(unittest.TestCase):
 
             work_note = work_day / "2026-04-10-slice.md"
             _write_work_note(work_note, ["tests/test_web_app.py"])
-            job = watcher_core.JobState.from_artifact("job-verify-dispatch-seq", str(work_note))
+            job = JobState.from_artifact("job-verify-dispatch-seq", str(work_note))
 
             core = watcher_core.WatcherCore(
                 {
@@ -7316,7 +7324,7 @@ class VerifyCompletionContractTest(unittest.TestCase):
                 }
             )
 
-            with mock.patch("watcher_core.tmux_send_keys", return_value=True):
+            with mock.patch("watcher_dispatch.tmux_send_keys", return_value=True):
                 job = core.sm._handle_verify_pending(job)
 
             self.assertEqual(job.dispatch_control_seq, 1)
@@ -7327,10 +7335,10 @@ class VerifyCompletionContractTest(unittest.TestCase):
                 current_pane="› prompt",
                 reason="retry verify dispatch",
             )
-            self.assertEqual(job.status, watcher_core.JobStatus.VERIFY_PENDING)
+            self.assertEqual(job.status, JobStatus.VERIFY_PENDING)
             self.assertEqual(job.dispatch_control_seq, 1)
 
-            with mock.patch("watcher_core.tmux_send_keys", return_value=True):
+            with mock.patch("watcher_dispatch.tmux_send_keys", return_value=True):
                 job = core.sm._handle_verify_pending(job)
 
             self.assertEqual(job.dispatch_control_seq, 1)
@@ -7348,7 +7356,7 @@ class VerifyCompletionContractTest(unittest.TestCase):
 
             work_note = work_day / "2026-04-10-slice.md"
             _write_work_note(work_note, ["tests/test_web_app.py"])
-            job = watcher_core.JobState.from_artifact("job-verify-task-done-missing", str(work_note))
+            job = JobState.from_artifact("job-verify-task-done-missing", str(work_note))
 
             core = watcher_core.WatcherCore(
                 {
@@ -7361,7 +7369,7 @@ class VerifyCompletionContractTest(unittest.TestCase):
                 }
             )
 
-            with mock.patch("watcher_core.tmux_send_keys", return_value=True):
+            with mock.patch("watcher_dispatch.tmux_send_keys", return_value=True):
                 job = core.sm._handle_verify_pending(job)
 
             job.accepted_dispatch_id = job.dispatch_id
@@ -7377,17 +7385,17 @@ class VerifyCompletionContractTest(unittest.TestCase):
                  mock.patch("watcher_core._shared_pane_text_has_input_cursor", return_value=True):
                 job = core.sm._handle_verify_running(job)
 
-            self.assertEqual(job.status, watcher_core.JobStatus.VERIFY_PENDING)
+            self.assertEqual(job.status, JobStatus.VERIFY_PENDING)
             self.assertEqual(job.completion_stall_count, 1)
             self.assertEqual(job.completion_stall_stage, "task_done_missing")
             self.assertEqual(job.lane_note, "waiting_task_done_after_accept")
             self.assertEqual(job.degraded_reason, "")
 
             job.last_failed_dispatch_at = time.time() - 30
-            with mock.patch("watcher_core.tmux_send_keys", return_value=True):
+            with mock.patch("watcher_dispatch.tmux_send_keys", return_value=True):
                 job = core.sm._handle_verify_pending(job)
 
-            self.assertEqual(job.status, watcher_core.JobStatus.VERIFY_RUNNING)
+            self.assertEqual(job.status, JobStatus.VERIFY_RUNNING)
             self.assertEqual(job.completion_stall_count, 1)
             self.assertEqual(job.degraded_reason, "")
 
@@ -7403,7 +7411,7 @@ class VerifyCompletionContractTest(unittest.TestCase):
                  mock.patch("watcher_core._shared_pane_text_has_input_cursor", return_value=True):
                 job = core.sm._handle_verify_running(job)
 
-            self.assertEqual(job.status, watcher_core.JobStatus.VERIFY_PENDING)
+            self.assertEqual(job.status, JobStatus.VERIFY_PENDING)
             self.assertEqual(job.completion_stall_count, 2)
             self.assertEqual(job.completion_stall_stage, "task_done_missing")
             self.assertEqual(job.degraded_reason, "post_accept_completion_stall")
@@ -7421,7 +7429,7 @@ class VerifyCompletionContractTest(unittest.TestCase):
 
             work_note = work_day / "2026-04-10-slice.md"
             _write_work_note(work_note, ["tests/test_web_app.py"])
-            job = watcher_core.JobState.from_artifact("job-verify-background-wait", str(work_note))
+            job = JobState.from_artifact("job-verify-background-wait", str(work_note))
 
             core = watcher_core.WatcherCore(
                 {
@@ -7434,7 +7442,7 @@ class VerifyCompletionContractTest(unittest.TestCase):
                 }
             )
 
-            with mock.patch("watcher_core.tmux_send_keys", return_value=True):
+            with mock.patch("watcher_dispatch.tmux_send_keys", return_value=True):
                 job = core.sm._handle_verify_pending(job)
 
             original_deadline = time.time() - 1
@@ -7458,7 +7466,7 @@ class VerifyCompletionContractTest(unittest.TestCase):
                  mock.patch("watcher_core._shared_pane_text_has_input_cursor", return_value=True):
                 job = core.sm._handle_verify_running(job)
 
-            self.assertEqual(job.status, watcher_core.JobStatus.VERIFY_RUNNING)
+            self.assertEqual(job.status, JobStatus.VERIFY_RUNNING)
             self.assertEqual(job.completion_stall_count, 0)
             self.assertEqual(job.degraded_reason, "")
             self.assertGreater(job.done_deadline_at, original_deadline)
@@ -7476,7 +7484,7 @@ class VerifyCompletionContractTest(unittest.TestCase):
 
             work_note = work_day / "2026-04-10-slice.md"
             _write_work_note(work_note, ["tests/test_web_app.py"])
-            job = watcher_core.JobState.from_artifact("job-verify-receipt-close-missing", str(work_note))
+            job = JobState.from_artifact("job-verify-receipt-close-missing", str(work_note))
 
             core = watcher_core.WatcherCore(
                 {
@@ -7489,7 +7497,7 @@ class VerifyCompletionContractTest(unittest.TestCase):
                 }
             )
 
-            with mock.patch("watcher_core.tmux_send_keys", return_value=True):
+            with mock.patch("watcher_dispatch.tmux_send_keys", return_value=True):
                 job = core.sm._handle_verify_pending(job)
 
             job.accepted_dispatch_id = job.dispatch_id
@@ -7506,7 +7514,7 @@ class VerifyCompletionContractTest(unittest.TestCase):
                  mock.patch("watcher_core._shared_pane_text_has_input_cursor", return_value=True):
                 job = core.sm._handle_verify_running(job)
 
-            self.assertEqual(job.status, watcher_core.JobStatus.VERIFY_PENDING)
+            self.assertEqual(job.status, JobStatus.VERIFY_PENDING)
             self.assertEqual(job.completion_stall_count, 1)
             self.assertEqual(job.completion_stall_stage, "receipt_close_missing")
             self.assertEqual(job.lane_note, "waiting_receipt_close_after_task_done")
@@ -7541,7 +7549,7 @@ class VerifyCompletionContractTest(unittest.TestCase):
 
             work_note = work_day / "2026-04-10-slice.md"
             _write_work_note(work_note, ["tests/test_web_app.py"])
-            job = watcher_core.JobState.from_artifact("job-verify-stale-task-done", str(work_note))
+            job = JobState.from_artifact("job-verify-stale-task-done", str(work_note))
 
             core = watcher_core.WatcherCore(
                 {
@@ -7554,7 +7562,7 @@ class VerifyCompletionContractTest(unittest.TestCase):
                 }
             )
 
-            with mock.patch("watcher_core.tmux_send_keys", return_value=True):
+            with mock.patch("watcher_dispatch.tmux_send_keys", return_value=True):
                 job = core.sm._handle_verify_pending(job)
 
             job.accepted_dispatch_id = job.dispatch_id
@@ -7586,7 +7594,7 @@ class VerifyCompletionContractTest(unittest.TestCase):
                  mock.patch("watcher_core._shared_pane_text_has_input_cursor", return_value=True):
                 job = core.sm._handle_verify_running(job)
 
-            self.assertEqual(job.status, watcher_core.JobStatus.VERIFY_RUNNING)
+            self.assertEqual(job.status, JobStatus.VERIFY_RUNNING)
             self.assertEqual(job.done_dispatch_id, "")
             self.assertEqual(job.degraded_reason, "")
             self.assertEqual(job.verify_result, "")
@@ -7620,7 +7628,7 @@ class VerifyCompletionContractTest(unittest.TestCase):
 
             work_note = work_day / "2026-04-10-slice.md"
             _write_work_note(work_note, ["watcher_core.py"])
-            job = watcher_core.JobState.from_artifact("job-verify-output-close", str(work_note))
+            job = JobState.from_artifact("job-verify-output-close", str(work_note))
 
             with mock.patch.dict(os.environ, {"PIPELINE_RUNTIME_DISABLE_EXPORTER": "1"}):
                 core = watcher_core.WatcherCore(
@@ -7634,7 +7642,7 @@ class VerifyCompletionContractTest(unittest.TestCase):
                     }
                 )
 
-            with mock.patch("watcher_core.tmux_send_keys", return_value=True):
+            with mock.patch("watcher_dispatch.tmux_send_keys", return_value=True):
                 job = core.sm._handle_verify_pending(job)
 
             append_wrapper_event(
@@ -7682,7 +7690,7 @@ class VerifyCompletionContractTest(unittest.TestCase):
                  mock.patch("watcher_core._shared_pane_text_has_input_cursor", return_value=True):
                 job = core.sm._handle_verify_running(job)
 
-            self.assertEqual(job.status, watcher_core.JobStatus.VERIFY_DONE)
+            self.assertEqual(job.status, JobStatus.VERIFY_DONE)
             self.assertEqual(job.done_dispatch_id, job.dispatch_id)
             self.assertEqual(job.verify_result, "passed_by_feedback")
             self.assertEqual(job.completion_stall_count, 0)
@@ -7716,7 +7724,7 @@ class VerifyCompletionContractTest(unittest.TestCase):
 
             work_note = work_day / "2026-04-10-slice.md"
             _write_work_note(work_note, ["tests/test_watcher_core.py"])
-            job = watcher_core.JobState.from_artifact("job-verify-folded-accept", str(work_note))
+            job = JobState.from_artifact("job-verify-folded-accept", str(work_note))
 
             with mock.patch.dict(os.environ, {"PIPELINE_RUNTIME_DISABLE_EXPORTER": "1"}):
                 core = watcher_core.WatcherCore(
@@ -7731,7 +7739,7 @@ class VerifyCompletionContractTest(unittest.TestCase):
                     }
                 )
 
-            with mock.patch("watcher_core.tmux_send_keys", return_value=True):
+            with mock.patch("watcher_dispatch.tmux_send_keys", return_value=True):
                 job = core.sm._handle_verify_pending(job)
 
             append_wrapper_event(
@@ -7792,7 +7800,7 @@ class VerifyCompletionContractTest(unittest.TestCase):
                  mock.patch("watcher_core._shared_pane_text_has_input_cursor", return_value=True):
                 job = core.sm._handle_verify_running(job)
 
-            self.assertEqual(job.status, watcher_core.JobStatus.VERIFY_RUNNING)
+            self.assertEqual(job.status, JobStatus.VERIFY_RUNNING)
             self.assertEqual(job.accepted_dispatch_id, job.dispatch_id)
             self.assertEqual(job.done_dispatch_id, job.dispatch_id)
             self.assertEqual(job.dispatch_stall_count, 0)
@@ -7811,7 +7819,7 @@ class VerifyCompletionContractTest(unittest.TestCase):
 
             work_note = work_day / "2026-04-10-slice.md"
             _write_work_note(work_note, ["tests/test_web_app.py"])
-            job = watcher_core.JobState.from_artifact("job-verify-seen-missing", str(work_note))
+            job = JobState.from_artifact("job-verify-seen-missing", str(work_note))
 
             core = watcher_core.WatcherCore(
                 {
@@ -7825,7 +7833,7 @@ class VerifyCompletionContractTest(unittest.TestCase):
                 }
             )
 
-            with mock.patch("watcher_core.tmux_send_keys", return_value=True):
+            with mock.patch("watcher_dispatch.tmux_send_keys", return_value=True):
                 job = core.sm._handle_verify_pending(job)
 
             job.last_activity_at = time.time() - 30
@@ -7839,7 +7847,7 @@ class VerifyCompletionContractTest(unittest.TestCase):
                  mock.patch("watcher_core._shared_pane_text_has_input_cursor", return_value=True):
                 job = core.sm._handle_verify_running(job)
 
-            self.assertEqual(job.status, watcher_core.JobStatus.VERIFY_PENDING)
+            self.assertEqual(job.status, JobStatus.VERIFY_PENDING)
             self.assertEqual(job.dispatch_stall_count, 1)
             self.assertEqual(job.dispatch_stall_stage, "dispatch_seen_missing")
             self.assertEqual(job.lane_note, "waiting_dispatch_seen_after_dispatch")
@@ -7869,7 +7877,7 @@ class VerifyCompletionContractTest(unittest.TestCase):
 
             work_note = work_day / "2026-04-10-slice.md"
             _write_work_note(work_note, ["tests/test_web_app.py"])
-            job = watcher_core.JobState.from_artifact("job-verify-task-accept-missing", str(work_note))
+            job = JobState.from_artifact("job-verify-task-accept-missing", str(work_note))
 
             with mock.patch.dict(os.environ, {"PIPELINE_RUNTIME_DISABLE_EXPORTER": "1"}):
                 core = watcher_core.WatcherCore(
@@ -7883,7 +7891,7 @@ class VerifyCompletionContractTest(unittest.TestCase):
                     }
                 )
 
-            with mock.patch("watcher_core.tmux_send_keys", return_value=True):
+            with mock.patch("watcher_dispatch.tmux_send_keys", return_value=True):
                 job = core.sm._handle_verify_pending(job)
 
             append_wrapper_event(
@@ -7911,7 +7919,7 @@ class VerifyCompletionContractTest(unittest.TestCase):
                  mock.patch("watcher_core._shared_pane_text_has_input_cursor", return_value=True):
                 job = core.sm._handle_verify_running(job)
 
-            self.assertEqual(job.status, watcher_core.JobStatus.VERIFY_PENDING)
+            self.assertEqual(job.status, JobStatus.VERIFY_PENDING)
             self.assertEqual(job.dispatch_stall_count, 1)
             self.assertEqual(job.dispatch_stall_stage, "task_accept_missing")
             self.assertEqual(job.lane_note, "waiting_task_accept_after_dispatch")
@@ -7928,8 +7936,8 @@ class VerifyCompletionContractTest(unittest.TestCase):
 
             work_note = work_day / "2026-04-10-slice.md"
             _write_work_note(work_note, ["tests/test_web_app.py"])
-            job = watcher_core.JobState.from_artifact("job-startup-recovery", str(work_note))
-            job.status = watcher_core.JobStatus.VERIFY_RUNNING
+            job = JobState.from_artifact("job-startup-recovery", str(work_note))
+            job.status = JobStatus.VERIFY_RUNNING
             job.artifact_hash = "artifact-hash"
             job.dispatch_id = "dispatch-startup-recovery"
             job.last_dispatch_at = time.time() - 30
@@ -7962,7 +7970,7 @@ class VerifyCompletionContractTest(unittest.TestCase):
                  mock.patch("watcher_core._shared_pane_text_has_input_cursor", return_value=True):
                 job = core.sm._handle_verify_running(job)
 
-            self.assertEqual(job.status, watcher_core.JobStatus.VERIFY_PENDING)
+            self.assertEqual(job.status, JobStatus.VERIFY_PENDING)
             self.assertEqual(job.last_dispatch_slot, "")
             self.assertFalse(
                 core.dedupe.is_duplicate(job.job_id, job.round, job.artifact_hash, "slot_verify")
@@ -7998,17 +8006,17 @@ class VerifyCompletionContractTest(unittest.TestCase):
                 }
             )
 
-            pending_job_id = watcher_core.make_job_id(watch_dir, older_work)
-            pending_job = watcher_core.JobState.from_artifact(
+            pending_job_id = make_job_id(watch_dir, older_work)
+            pending_job = JobState.from_artifact(
                 pending_job_id,
                 str(older_work),
                 run_id=core.run_id,
             )
-            pending_job.status = watcher_core.JobStatus.VERIFY_PENDING
+            pending_job.status = JobStatus.VERIFY_PENDING
             pending_job.save(core.state_dir)
 
             core._initial_turn_checked = True
-            core._current_turn_state = watcher_core.WatcherTurnState.CODEX_VERIFY
+            core._current_turn_state = WatcherTurnState.CODEX_VERIFY
 
             with mock.patch.object(core.sm, "step", side_effect=lambda job: job) as step_mock:
                 core._poll()
@@ -8016,7 +8024,7 @@ class VerifyCompletionContractTest(unittest.TestCase):
             step_mock.assert_called_once()
             stepped_job = step_mock.call_args.args[0]
             self.assertEqual(stepped_job.job_id, pending_job_id)
-            self.assertEqual(stepped_job.status, watcher_core.JobStatus.VERIFY_PENDING)
+            self.assertEqual(stepped_job.status, JobStatus.VERIFY_PENDING)
 
     def test_poll_archives_verified_pending_job_before_latest_unverified_work_scan(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -8052,18 +8060,18 @@ class VerifyCompletionContractTest(unittest.TestCase):
                 }
             )
 
-            old_job_id = watcher_core.make_job_id(watch_dir, old_work)
-            old_job = watcher_core.JobState.from_artifact(
+            old_job_id = make_job_id(watch_dir, old_work)
+            old_job = JobState.from_artifact(
                 old_job_id,
                 str(old_work),
                 run_id=core.run_id,
             )
-            old_job.status = watcher_core.JobStatus.VERIFY_PENDING
+            old_job.status = JobStatus.VERIFY_PENDING
             old_job.save(core.state_dir)
-            latest_job_id = watcher_core.make_job_id(watch_dir, latest_work)
+            latest_job_id = make_job_id(watch_dir, latest_work)
 
             core._initial_turn_checked = True
-            core._transition_turn(watcher_core.WatcherTurnState.IDLE, "test_setup")
+            core._transition_turn(WatcherTurnState.IDLE, "test_setup")
 
             with mock.patch.object(core.sm, "step", side_effect=lambda job: job) as step_mock:
                 core._poll()
@@ -8071,7 +8079,7 @@ class VerifyCompletionContractTest(unittest.TestCase):
             step_mock.assert_called_once()
             stepped_job = step_mock.call_args.args[0]
             self.assertEqual(stepped_job.job_id, latest_job_id)
-            self.assertIsNone(watcher_core.JobState.load(core.state_dir, old_job_id))
+            self.assertIsNone(JobState.load(core.state_dir, old_job_id))
             archived = (
                 base_dir
                 / "runs"
@@ -8109,13 +8117,13 @@ class VerifyCompletionContractTest(unittest.TestCase):
                 }
             )
 
-            job_id = watcher_core.make_job_id(watch_dir, work_note)
-            job = watcher_core.JobState.from_artifact(
+            job_id = make_job_id(watch_dir, work_note)
+            job = JobState.from_artifact(
                 job_id,
                 str(work_note),
                 run_id=core.run_id,
             )
-            job.status = watcher_core.JobStatus.VERIFY_PENDING
+            job.status = JobStatus.VERIFY_PENDING
             job.artifact_hash = "artifact-hash"
             job.save(core.state_dir)
 
@@ -8134,7 +8142,7 @@ class VerifyCompletionContractTest(unittest.TestCase):
             released_job = fsm_release_mock.call_args.args[0]
             self.assertEqual(released_job.job_id, job_id)
             direct_release_mock.assert_not_called()
-            self.assertIsNone(watcher_core.JobState.load(core.state_dir, job_id))
+            self.assertIsNone(JobState.load(core.state_dir, job_id))
             archived = (
                 base_dir
                 / "runs"
@@ -8171,17 +8179,17 @@ class VerifyCompletionContractTest(unittest.TestCase):
                 }
             )
 
-            running_job_id = watcher_core.make_job_id(watch_dir, work_note)
-            running_job = watcher_core.JobState.from_artifact(
+            running_job_id = make_job_id(watch_dir, work_note)
+            running_job = JobState.from_artifact(
                 running_job_id,
                 str(work_note),
                 run_id=core.run_id,
             )
-            running_job.status = watcher_core.JobStatus.VERIFY_RUNNING
+            running_job.status = JobStatus.VERIFY_RUNNING
             running_job.save(core.state_dir)
 
             core._initial_turn_checked = True
-            core._current_turn_state = watcher_core.WatcherTurnState.VERIFY_FOLLOWUP
+            core._current_turn_state = WatcherTurnState.VERIFY_FOLLOWUP
 
             with (
                 mock.patch.object(core, "_check_pipeline_signal_updates"),
@@ -8199,7 +8207,7 @@ class VerifyCompletionContractTest(unittest.TestCase):
             generic_step_mock.assert_not_called()
             stepped_job = step_mock.call_args.args[0]
             self.assertEqual(stepped_job.job_id, running_job_id)
-            self.assertEqual(stepped_job.status, watcher_core.JobStatus.VERIFY_RUNNING)
+            self.assertEqual(stepped_job.status, JobStatus.VERIFY_RUNNING)
             retry_mock.assert_not_called()
 
     def test_poll_defers_current_run_verify_pending_while_advisory_request_is_pending(self) -> None:
@@ -8229,17 +8237,17 @@ class VerifyCompletionContractTest(unittest.TestCase):
                 }
             )
 
-            pending_job_id = watcher_core.make_job_id(watch_dir, work_note)
-            pending_job = watcher_core.JobState.from_artifact(
+            pending_job_id = make_job_id(watch_dir, work_note)
+            pending_job = JobState.from_artifact(
                 pending_job_id,
                 str(work_note),
                 run_id=core.run_id,
             )
-            pending_job.status = watcher_core.JobStatus.VERIFY_PENDING
+            pending_job.status = JobStatus.VERIFY_PENDING
             pending_job.save(core.state_dir)
 
             core._initial_turn_checked = True
-            core._current_turn_state = watcher_core.WatcherTurnState.ADVISORY_ACTIVE
+            core._current_turn_state = WatcherTurnState.ADVISORY_ACTIVE
 
             with (
                 mock.patch.object(core, "_check_pipeline_signal_updates"),
@@ -8250,9 +8258,9 @@ class VerifyCompletionContractTest(unittest.TestCase):
 
             step_mock.assert_not_called()
             retry_mock.assert_called_once_with()
-            persisted_job = watcher_core.JobState.load(core.state_dir, pending_job_id)
+            persisted_job = JobState.load(core.state_dir, pending_job_id)
             self.assertIsNotNone(persisted_job)
-            self.assertEqual(persisted_job.status, watcher_core.JobStatus.VERIFY_PENDING)
+            self.assertEqual(persisted_job.status, JobStatus.VERIFY_PENDING)
 
     def test_poll_skips_new_verify_candidate_scan_during_verify_followup(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -8266,7 +8274,7 @@ class VerifyCompletionContractTest(unittest.TestCase):
 
             work_note = work_day / "2026-04-10-stale.md"
             _write_work_note(work_note, ["watcher_core.py"])
-            job_id = watcher_core.make_job_id(watch_dir, work_note)
+            job_id = make_job_id(watch_dir, work_note)
 
             core = watcher_core.WatcherCore(
                 {
@@ -8279,7 +8287,7 @@ class VerifyCompletionContractTest(unittest.TestCase):
             )
 
             core._initial_turn_checked = True
-            core._current_turn_state = watcher_core.WatcherTurnState.VERIFY_FOLLOWUP
+            core._current_turn_state = WatcherTurnState.VERIFY_FOLLOWUP
 
             with (
                 mock.patch.object(core, "_check_pipeline_signal_updates"),
@@ -8289,7 +8297,7 @@ class VerifyCompletionContractTest(unittest.TestCase):
                 core._poll()
 
             step_mock.assert_not_called()
-            self.assertIsNone(watcher_core.JobState.load(core.state_dir, job_id))
+            self.assertIsNone(JobState.load(core.state_dir, job_id))
 
 
 class CodexDispatchConfirmationTest(unittest.TestCase):
@@ -8308,7 +8316,7 @@ class CodexDispatchConfirmationTest(unittest.TestCase):
              mock.patch("watcher_dispatch._shared_capture_pane_text", side_effect=lambda _pane: next(snapshots)), \
              mock.patch("watcher_dispatch._pane_has_working_indicator", return_value=True), \
              mock.patch("watcher_dispatch.time.sleep", return_value=None):
-            result = watcher_core._dispatch_codex("%1", "ROLE: verify")
+            result = watcher_dispatch._dispatch_codex("%1", "ROLE: verify")
 
         self.assertTrue(result)
         self.assertGreaterEqual(len(run_calls), 3)
@@ -8328,7 +8336,7 @@ class CodexDispatchConfirmationTest(unittest.TestCase):
              mock.patch("watcher_dispatch._pane_has_working_indicator", return_value=False), \
              mock.patch("watcher_dispatch._shared_pane_text_has_codex_activity", return_value=False), \
              mock.patch("watcher_dispatch.time.sleep", return_value=None):
-            result = watcher_core._dispatch_codex("%1", "ROLE: verify")
+            result = watcher_dispatch._dispatch_codex("%1", "ROLE: verify")
 
         self.assertTrue(result)
         self.assertGreaterEqual(run_mock.call_count, 3)
@@ -8340,7 +8348,7 @@ class CodexDispatchConfirmationTest(unittest.TestCase):
              mock.patch("watcher_dispatch._shared_capture_pane_text", side_effect=lambda _pane: next(snapshots)), \
              mock.patch("watcher_dispatch._shared_pane_text_has_codex_activity", return_value=False), \
              mock.patch("watcher_dispatch.time.sleep", return_value=None):
-            result = watcher_core._dispatch_codex("%1", "ROLE: verify")
+            result = watcher_dispatch._dispatch_codex("%1", "ROLE: verify")
 
         self.assertFalse(result)
         self.assertGreaterEqual(run_mock.call_count, 3)
@@ -8355,7 +8363,7 @@ class CodexDispatchConfirmationTest(unittest.TestCase):
              mock.patch("watcher_dispatch._shared_capture_pane_text", side_effect=lambda _pane: next(snapshots)), \
              mock.patch("watcher_dispatch._pane_has_working_indicator", side_effect=[True]), \
              mock.patch("watcher_dispatch.time.sleep", return_value=None):
-            result = watcher_core._dispatch_codex("%1", "ROLE: verify")
+            result = watcher_dispatch._dispatch_codex("%1", "ROLE: verify")
 
         self.assertTrue(result)
 
@@ -8368,7 +8376,7 @@ class CodexDispatchConfirmationTest(unittest.TestCase):
         with mock.patch("watcher_dispatch.subprocess.run") as run_mock, \
              mock.patch("watcher_dispatch._shared_capture_pane_text", side_effect=lambda _pane: next(snapshots)), \
              mock.patch("watcher_dispatch.time.sleep", return_value=None):
-            result = watcher_core._dispatch_claude("%1", "ROLE: verify")
+            result = watcher_dispatch._dispatch_claude("%1", "ROLE: verify")
 
         self.assertTrue(result)
         self.assertGreaterEqual(run_mock.call_count, 4)
@@ -8382,7 +8390,7 @@ class CodexDispatchConfirmationTest(unittest.TestCase):
         with mock.patch("watcher_dispatch.subprocess.run"), \
              mock.patch("watcher_dispatch._shared_capture_pane_text", side_effect=lambda _pane: next(snapshots)), \
              mock.patch("watcher_dispatch.time.sleep", return_value=None):
-            result = watcher_core._dispatch_claude("%1", "ROLE: verify")
+            result = watcher_dispatch._dispatch_claude("%1", "ROLE: verify")
 
         self.assertTrue(result)
 
@@ -8395,7 +8403,7 @@ class CodexDispatchConfirmationTest(unittest.TestCase):
         with mock.patch("watcher_dispatch.subprocess.run"), \
              mock.patch("watcher_dispatch._shared_capture_pane_text", side_effect=lambda _pane: next(snapshots)), \
              mock.patch("watcher_dispatch.time.sleep", return_value=None):
-            result = watcher_core._dispatch_claude("%1", "ROLE: verify")
+            result = watcher_dispatch._dispatch_claude("%1", "ROLE: verify")
 
         self.assertFalse(result)
 
@@ -8411,10 +8419,10 @@ class CodexDispatchConfirmationTest(unittest.TestCase):
         busy_lock = _BusyLock()
         with mock.patch("watcher_dispatch._dispatch_lock_for", return_value=busy_lock), \
              mock.patch("watcher_dispatch._wait_for_dispatch_window") as wait_window:
-            result = watcher_core.tmux_send_keys("%1", "ROLE: verify", pane_type="codex")
+            result = watcher_dispatch.tmux_send_keys("%1", "ROLE: verify", pane_type="codex")
 
         self.assertFalse(result)
-        self.assertEqual(busy_lock.timeout, watcher_core._DISPATCH_LOCK_TIMEOUT_SEC)
+        self.assertEqual(busy_lock.timeout, watcher_dispatch._DISPATCH_LOCK_TIMEOUT_SEC)
         wait_window.assert_not_called()
 
     def test_tmux_send_keys_releases_dispatch_lock_after_dispatch(self) -> None:
@@ -8433,10 +8441,10 @@ class CodexDispatchConfirmationTest(unittest.TestCase):
         with mock.patch("watcher_dispatch._dispatch_lock_for", return_value=tracking_lock), \
              mock.patch("watcher_dispatch._wait_for_dispatch_window", return_value=True), \
              mock.patch("watcher_dispatch._dispatch_codex", return_value=True) as dispatch_codex:
-            result = watcher_core.tmux_send_keys("%1", "ROLE: verify", pane_type="codex")
+            result = watcher_dispatch.tmux_send_keys("%1", "ROLE: verify", pane_type="codex")
 
         self.assertTrue(result)
-        self.assertEqual(tracking_lock.timeout, watcher_core._DISPATCH_LOCK_TIMEOUT_SEC)
+        self.assertEqual(tracking_lock.timeout, watcher_dispatch._DISPATCH_LOCK_TIMEOUT_SEC)
         self.assertTrue(tracking_lock.released)
         dispatch_codex.assert_called_once_with("%1", "ROLE: verify")
 
@@ -8456,10 +8464,10 @@ class CodexDispatchConfirmationTest(unittest.TestCase):
         with mock.patch("watcher_dispatch._dispatch_lock_for", return_value=tracking_lock), \
              mock.patch("watcher_dispatch._wait_for_dispatch_window", return_value=True), \
              mock.patch("watcher_dispatch._dispatch_claude", return_value=False) as dispatch_claude:
-            result = watcher_core.tmux_send_keys("%1", "ROLE: implement", pane_type="claude")
+            result = watcher_dispatch.tmux_send_keys("%1", "ROLE: implement", pane_type="claude")
 
         self.assertFalse(result)
-        self.assertEqual(tracking_lock.timeout, watcher_core._DISPATCH_LOCK_TIMEOUT_SEC)
+        self.assertEqual(tracking_lock.timeout, watcher_dispatch._DISPATCH_LOCK_TIMEOUT_SEC)
         self.assertTrue(tracking_lock.released)
         dispatch_claude.assert_called_once_with("%1", "ROLE: implement")
 
@@ -8479,10 +8487,10 @@ class CodexDispatchConfirmationTest(unittest.TestCase):
         with mock.patch("watcher_dispatch._dispatch_lock_for", return_value=tracking_lock), \
              mock.patch("watcher_dispatch._wait_for_dispatch_window", return_value=True), \
              mock.patch("watcher_dispatch._dispatch_gemini", return_value=False) as dispatch_gemini:
-            result = watcher_core.tmux_send_keys("%1", "ROLE: advisory", pane_type="gemini")
+            result = watcher_dispatch.tmux_send_keys("%1", "ROLE: advisory", pane_type="gemini")
 
         self.assertFalse(result)
-        self.assertEqual(tracking_lock.timeout, watcher_core._DISPATCH_LOCK_TIMEOUT_SEC)
+        self.assertEqual(tracking_lock.timeout, watcher_dispatch._DISPATCH_LOCK_TIMEOUT_SEC)
         self.assertTrue(tracking_lock.released)
         dispatch_gemini.assert_called_once_with("%1", "ROLE: advisory")
 
@@ -8499,7 +8507,7 @@ class CodexDispatchConfirmationTest(unittest.TestCase):
              mock.patch("watcher_dispatch._shared_pane_text_has_input_cursor", return_value=True), \
              mock.patch("watcher_dispatch._shared_pane_text_has_gemini_activity", return_value=False), \
              mock.patch("watcher_dispatch.time.sleep", return_value=None):
-            result = watcher_core._dispatch_gemini("%1", "ROLE: advisory")
+            result = watcher_dispatch._dispatch_gemini("%1", "ROLE: advisory")
 
         self.assertFalse(result)
 
@@ -8516,8 +8524,8 @@ class VerifyPendingBackoffTest(unittest.TestCase):
 
             work_note = watch_dir / "2026-04-10-slice.md"
             _write_work_note(work_note, ["e2e/tests/web-smoke.spec.mjs"])
-            job = watcher_core.JobState.from_artifact("job-backoff", str(work_note))
-            job.status = watcher_core.JobStatus.VERIFY_PENDING
+            job = JobState.from_artifact("job-backoff", str(work_note))
+            job.status = JobStatus.VERIFY_PENDING
             job.artifact_hash = "hash-1"
 
             core = watcher_core.WatcherCore(
@@ -8530,11 +8538,11 @@ class VerifyPendingBackoffTest(unittest.TestCase):
                 }
             )
 
-            with mock.patch("watcher_core.tmux_send_keys", return_value=False), \
+            with mock.patch("watcher_dispatch.tmux_send_keys", return_value=False), \
                  mock.patch("watcher_core._shared_capture_pane_text", return_value="› pasted prompt placeholder"):
                 job = core.sm._handle_verify_pending(job)
 
-            self.assertEqual(job.status, watcher_core.JobStatus.VERIFY_PENDING)
+            self.assertEqual(job.status, JobStatus.VERIFY_PENDING)
             self.assertGreater(job.last_failed_dispatch_at, 0.0)
             self.assertEqual(job.last_failed_dispatch_snapshot, "› pasted prompt placeholder")
             self.assertEqual(job.dispatch_fail_count, 1)
@@ -8550,8 +8558,8 @@ class VerifyPendingBackoffTest(unittest.TestCase):
 
             work_note = watch_dir / "2026-04-10-slice.md"
             _write_work_note(work_note, ["e2e/tests/web-smoke.spec.mjs"])
-            job = watcher_core.JobState.from_artifact("job-backoff", str(work_note))
-            job.status = watcher_core.JobStatus.VERIFY_PENDING
+            job = JobState.from_artifact("job-backoff", str(work_note))
+            job.status = JobStatus.VERIFY_PENDING
             job.artifact_hash = "hash-1"
             job.last_failed_dispatch_at = time.time()
             job.last_failed_dispatch_snapshot = "› pasted prompt placeholder"
@@ -8567,10 +8575,10 @@ class VerifyPendingBackoffTest(unittest.TestCase):
             )
 
             with mock.patch.object(core.lease, "acquire", side_effect=AssertionError("lease should not be acquired")), \
-                 mock.patch("watcher_core.tmux_send_keys", side_effect=AssertionError("dispatch should not run")):
+                 mock.patch("watcher_dispatch.tmux_send_keys", side_effect=AssertionError("dispatch should not run")):
                 job = core.sm._handle_verify_pending(job)
 
-            self.assertEqual(job.status, watcher_core.JobStatus.VERIFY_PENDING)
+            self.assertEqual(job.status, JobStatus.VERIFY_PENDING)
 
     def test_failed_dispatch_same_snapshot_skips_retry_after_backoff(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -8583,8 +8591,8 @@ class VerifyPendingBackoffTest(unittest.TestCase):
 
             work_note = watch_dir / "2026-04-10-slice.md"
             _write_work_note(work_note, ["e2e/tests/web-smoke.spec.mjs"])
-            job = watcher_core.JobState.from_artifact("job-backoff", str(work_note))
-            job.status = watcher_core.JobStatus.VERIFY_PENDING
+            job = JobState.from_artifact("job-backoff", str(work_note))
+            job.status = JobStatus.VERIFY_PENDING
             job.artifact_hash = "hash-1"
             job.last_failed_dispatch_at = time.time() - 30
             job.last_failed_dispatch_snapshot = "› pasted prompt placeholder"
@@ -8600,11 +8608,11 @@ class VerifyPendingBackoffTest(unittest.TestCase):
             )
 
             with mock.patch.object(core.lease, "acquire", side_effect=AssertionError("lease should not be acquired")), \
-                 mock.patch("watcher_core.tmux_send_keys", side_effect=AssertionError("dispatch should not run")), \
+                 mock.patch("watcher_dispatch.tmux_send_keys", side_effect=AssertionError("dispatch should not run")), \
                  mock.patch("watcher_core._shared_capture_pane_text", return_value="› pasted prompt placeholder"):
                 job = core.sm._handle_verify_pending(job)
 
-            self.assertEqual(job.status, watcher_core.JobStatus.VERIFY_PENDING)
+            self.assertEqual(job.status, JobStatus.VERIFY_PENDING)
 
     def test_failed_dispatch_visible_prompt_skips_retry_after_backoff(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -8617,8 +8625,8 @@ class VerifyPendingBackoffTest(unittest.TestCase):
 
             work_note = watch_dir / "2026-04-10-slice.md"
             _write_work_note(work_note, ["e2e/tests/web-smoke.spec.mjs"])
-            job = watcher_core.JobState.from_artifact("job-backoff", str(work_note))
-            job.status = watcher_core.JobStatus.VERIFY_PENDING
+            job = JobState.from_artifact("job-backoff", str(work_note))
+            job.status = JobStatus.VERIFY_PENDING
             job.artifact_hash = "hash-1"
             job.last_failed_dispatch_at = time.time() - 30
             job.last_failed_dispatch_snapshot = "› stale snapshot placeholder"
@@ -8648,7 +8656,7 @@ class VerifyPendingBackoffTest(unittest.TestCase):
                  mock.patch.object(core.sm, "capture_pane_text", return_value=visible_prompt):
                 job = core.sm._handle_verify_pending(job)
 
-            self.assertEqual(job.status, watcher_core.JobStatus.VERIFY_PENDING)
+            self.assertEqual(job.status, JobStatus.VERIFY_PENDING)
             self.assertGreater(job.last_failed_dispatch_at, previous_failed_at)
             self.assertEqual(job.last_failed_dispatch_snapshot, visible_prompt.rstrip())
 
@@ -8676,8 +8684,8 @@ class VerifyPendingBackoffTest(unittest.TestCase):
 
             work_note = watch_dir / "2026-04-10-slice.md"
             _write_work_note(work_note, ["watcher_core.py"])
-            job = watcher_core.JobState.from_artifact("job-dispatch-stall-backoff", str(work_note))
-            job.status = watcher_core.JobStatus.VERIFY_PENDING
+            job = JobState.from_artifact("job-dispatch-stall-backoff", str(work_note))
+            job.status = JobStatus.VERIFY_PENDING
             job.artifact_hash = "hash-1"
 
             core = watcher_core.WatcherCore(
@@ -8691,7 +8699,7 @@ class VerifyPendingBackoffTest(unittest.TestCase):
                 }
             )
 
-            with mock.patch("watcher_core.tmux_send_keys", return_value=True):
+            with mock.patch("watcher_dispatch.tmux_send_keys", return_value=True):
                 job = core.sm._handle_verify_pending(job)
 
             append_wrapper_event(
@@ -8726,18 +8734,18 @@ class VerifyPendingBackoffTest(unittest.TestCase):
                  mock.patch("watcher_core._shared_pane_text_has_input_cursor", return_value=True):
                 job = core.sm._handle_verify_running(job)
 
-            self.assertEqual(job.status, watcher_core.JobStatus.VERIFY_PENDING)
+            self.assertEqual(job.status, JobStatus.VERIFY_PENDING)
             self.assertEqual(job.dispatch_stall_count, 1)
             self.assertEqual(job.last_failed_dispatch_snapshot, stale_snapshot)
 
             job.last_failed_dispatch_at = time.time() - 30
 
             with mock.patch.object(core.lease, "acquire", side_effect=AssertionError("lease should not be acquired")), \
-                 mock.patch("watcher_core.tmux_send_keys", side_effect=AssertionError("dispatch should not run")), \
+                 mock.patch("watcher_dispatch.tmux_send_keys", side_effect=AssertionError("dispatch should not run")), \
                  mock.patch("watcher_core._shared_capture_pane_text", return_value=stale_snapshot):
                 job = core.sm._handle_verify_pending(job)
 
-            self.assertEqual(job.status, watcher_core.JobStatus.VERIFY_PENDING)
+            self.assertEqual(job.status, JobStatus.VERIFY_PENDING)
 
 
 if __name__ == "__main__":

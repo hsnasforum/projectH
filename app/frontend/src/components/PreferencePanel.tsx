@@ -23,6 +23,10 @@ const STATUS_COLORS: Record<string, string> = {
 };
 
 type PreferenceStatusFilter = "all" | "candidate" | "active" | "paused";
+type PreferenceReliabilityTotals = {
+  applied: number;
+  corrected: number;
+};
 
 function preferenceReliabilityCounts(pref: PreferenceRecord) {
   const appliedCount = pref.reliability_stats?.applied_count;
@@ -44,6 +48,10 @@ export default function PreferencePanel() {
   const [syncingAdopted, setSyncingAdopted] = useState(false);
   const [syncStatus, setSyncStatus] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<PreferenceStatusFilter>("all");
+  const [reliabilityTotals, setReliabilityTotals] = useState<PreferenceReliabilityTotals>({
+    applied: 0,
+    corrected: 0,
+  });
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -55,6 +63,20 @@ export default function PreferencePanel() {
       // Filter out rejected items entirely
       const visible = (data.preferences ?? []).filter((p) => p.status !== "rejected");
       setPreferences(visible);
+      setReliabilityTotals({
+        applied: typeof data.total_applied === "number" && Number.isFinite(data.total_applied)
+          ? data.total_applied
+          : visible.reduce((total, pref) => {
+              if (pref.status !== "active") return total;
+              return total + preferenceReliabilityCounts(pref).applied;
+            }, 0),
+        corrected: typeof data.total_corrected === "number" && Number.isFinite(data.total_corrected)
+          ? data.total_corrected
+          : visible.reduce((total, pref) => {
+              if (pref.status !== "active") return total;
+              return total + preferenceReliabilityCounts(pref).corrected;
+            }, 0),
+      });
       setAudit(auditData);
     } catch {
       // silent
@@ -174,25 +196,32 @@ export default function PreferencePanel() {
         onClick={() => setExpanded(!expanded)}
         className="w-full flex items-center justify-between px-1 py-1 text-[11px] text-sidebar-muted hover:text-sidebar-text transition-colors"
       >
-        <span className="flex items-center gap-1.5">
+        <span className="flex min-w-0 flex-1 items-center gap-1.5 text-left">
           {activeCount > 0 && (
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+            <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-400" />
           )}
-          <span>
-            {activeCount > 0 ? `${activeCount}개 활성` : ""}
-            {activeCount > 0 && candidateCount > 0 ? " · " : ""}
-            {candidateCount > 0 ? `${candidateCount}개 후보` : ""}
-            {activeCount === 0 && candidateCount === 0
-              ? canSyncAdoptedCorrections
-                ? `활성 교정 ${adoptedCorrectionsCount}개`
-                : `${pausedCount}개 일시중지`
-              : ""}
+          <span className="min-w-0 flex-1">
+            <span className="block truncate">
+              {activeCount > 0 ? `${activeCount}개 활성` : ""}
+              {activeCount > 0 && candidateCount > 0 ? " · " : ""}
+              {candidateCount > 0 ? `${candidateCount}개 후보` : ""}
+              {activeCount === 0 && candidateCount === 0
+                ? canSyncAdoptedCorrections
+                  ? `활성 교정 ${adoptedCorrectionsCount}개`
+                  : `${pausedCount}개 일시중지`
+                : ""}
+            </span>
+            {activeCount > 0 && (
+              <span className="block truncate text-[10px] text-sidebar-muted/70">
+                총 적용 {reliabilityTotals.applied}회 · 총 교정 {reliabilityTotals.corrected}회
+              </span>
+            )}
           </span>
         </span>
         <svg
           width="10" height="10" viewBox="0 0 24 24" fill="none"
           stroke="currentColor" strokeWidth="2"
-          className={`transition-transform ${expanded ? "rotate-180" : ""}`}
+          className={`shrink-0 transition-transform ${expanded ? "rotate-180" : ""}`}
         >
           <path d="M18 15l-6-6-6 6" />
         </svg>

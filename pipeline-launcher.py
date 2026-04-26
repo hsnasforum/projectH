@@ -149,7 +149,34 @@ def _fit_text(text: str, width: int) -> str:
     return text[: width - 1] + "…"
 
 
-def _control_summary(control_file: str, control_seq: int, control_status: str) -> str:
+def _non_operator_hibernate(
+    *,
+    control_file: str,
+    control_status: str,
+    autonomy_mode: str,
+    operator_eligible: bool,
+    automation_health: str,
+) -> bool:
+    return (
+        not control_file
+        and control_status == "none"
+        and automation_health == "ok"
+        and not operator_eligible
+        and autonomy_mode == "hibernate"
+    )
+
+
+def _truthy_flag(value: object) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value or "").strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _control_summary(
+    control_file: str,
+    control_seq: int,
+    control_status: str,
+) -> str:
     label = Path(control_file).name if control_file else "(없음)"
     detail_parts: list[str] = []
     if control_status and control_status != "none":
@@ -159,6 +186,35 @@ def _control_summary(control_file: str, control_seq: int, control_status: str) -
     if not detail_parts:
         return label
     return f"{label} · {' · '.join(detail_parts)}"
+
+
+def _autonomy_summary(
+    *,
+    mode: str,
+    reason: str,
+    operator_eligible: bool,
+    operator_policy: str,
+    decision_class: str,
+    automation_health: str,
+    non_operator_hibernate: bool = False,
+) -> str:
+    autonomy_mode = mode or "normal"
+    reason_label = operator_facing_reason_label(reason) or reason
+    display = autonomy_mode + (f" / {reason_label}" if reason_label else "")
+    detail_parts: list[str] = []
+    if non_operator_hibernate:
+        detail_parts.append("비운영자 자동 대기")
+    if operator_eligible:
+        detail_parts.append("operator_eligible=true")
+    elif operator_policy or autonomy_mode == "hibernate":
+        detail_parts.append("operator_eligible=false")
+    if operator_policy:
+        detail_parts.append(f"policy={operator_policy}")
+    if decision_class:
+        detail_parts.append(f"class={decision_class}")
+    if detail_parts:
+        display += f" ({' / '.join(detail_parts)})"
+    return display
 
 
 def _automation_summary(
@@ -522,7 +578,10 @@ def _runtime_view(project: Path) -> dict[str, object]:
         "control_seq": int(control.get("active_control_seq") or -1),
         "control_status": str(control.get("active_control_status") or "none"),
         "autonomy_mode": str(autonomy.get("mode") or "normal"),
-        "autonomy_reason": str(autonomy.get("block_reason") or ""),
+        "autonomy_reason": str(autonomy.get("reason_code") or autonomy.get("block_reason") or ""),
+        "autonomy_operator_eligible": _truthy_flag(autonomy.get("operator_eligible")),
+        "autonomy_operator_policy": str(autonomy.get("operator_policy") or ""),
+        "autonomy_decision_class": str(autonomy.get("decision_class") or ""),
         "automation_health": str(status.get("automation_health") or "ok"),
         "automation_reason_code": str(status.get("automation_reason_code") or ""),
         "automation_incident_family": str(status.get("automation_incident_family") or ""),
@@ -680,6 +739,9 @@ def build_snapshot(project: Path, session: str, runtime_view: dict[str, object] 
     control_status = str(runtime_view.get("control_status") or "none")
     autonomy_mode = str(runtime_view.get("autonomy_mode") or "normal")
     autonomy_reason = str(runtime_view.get("autonomy_reason") or "")
+    autonomy_operator_eligible = _truthy_flag(runtime_view.get("autonomy_operator_eligible"))
+    autonomy_operator_policy = str(runtime_view.get("autonomy_operator_policy") or "")
+    autonomy_decision_class = str(runtime_view.get("autonomy_decision_class") or "")
     automation_health = str(runtime_view.get("automation_health") or "ok")
     automation_reason = str(runtime_view.get("automation_reason_code") or "")
     automation_family = str(runtime_view.get("automation_incident_family") or "")
@@ -691,6 +753,22 @@ def build_snapshot(project: Path, session: str, runtime_view: dict[str, object] 
     degraded_reason = str(runtime_view.get("degraded_reason") or "")
     degraded_reasons = [str(item) for item in list(runtime_view.get("degraded_reasons") or []) if str(item)]
     last_receipt_id = str(runtime_view.get("last_receipt_id") or "")
+    non_operator_hibernate = _non_operator_hibernate(
+        control_file=control_file,
+        control_status=control_status,
+        autonomy_mode=autonomy_mode,
+        operator_eligible=autonomy_operator_eligible,
+        automation_health=automation_health,
+    )
+    autonomy_display = _autonomy_summary(
+        mode=autonomy_mode,
+        reason=autonomy_reason,
+        operator_eligible=autonomy_operator_eligible,
+        operator_policy=autonomy_operator_policy,
+        decision_class=autonomy_decision_class,
+        automation_health=automation_health,
+        non_operator_hibernate=non_operator_hibernate,
+    )
 
     lines = [
         "Pipeline Launcher",
@@ -711,7 +789,7 @@ def build_snapshot(project: Path, session: str, runtime_view: dict[str, object] 
         f"Latest verify: {verify_name} ({time_ago(verify_mtime)})" if verify_mtime else f"Latest verify: {verify_name}",
         "",
         f"Control: {_control_summary(control_file, control_seq, control_status)}",
-        f"Autonomy: {autonomy_mode}" + (f" / {autonomy_reason}" if autonomy_reason else ""),
+        f"Autonomy: {autonomy_display}",
         "Round  : " + " / ".join(
             part
             for part in [active_round_state, active_round_job_id, active_round_dispatch_id]
@@ -980,6 +1058,9 @@ def draw(
     control_status = str(runtime_view.get("control_status") or "none")
     autonomy_mode = str(runtime_view.get("autonomy_mode") or "normal")
     autonomy_reason = str(runtime_view.get("autonomy_reason") or "")
+    autonomy_operator_eligible = _truthy_flag(runtime_view.get("autonomy_operator_eligible"))
+    autonomy_operator_policy = str(runtime_view.get("autonomy_operator_policy") or "")
+    autonomy_decision_class = str(runtime_view.get("autonomy_decision_class") or "")
     automation_health = str(runtime_view.get("automation_health") or "ok")
     automation_reason = str(runtime_view.get("automation_reason_code") or "")
     automation_family = str(runtime_view.get("automation_incident_family") or "")
@@ -988,6 +1069,13 @@ def draw(
     control_age_cycles = int(runtime_view.get("control_age_cycles") or 0)
     stale_control_cycle_threshold = int(runtime_view.get("stale_control_cycle_threshold") or 0)
     stale_advisory_pending = bool(runtime_view.get("stale_advisory_pending"))
+    non_operator_hibernate = _non_operator_hibernate(
+        control_file=control_file,
+        control_status=control_status,
+        autonomy_mode=autonomy_mode,
+        operator_eligible=autonomy_operator_eligible,
+        automation_health=automation_health,
+    )
 
     safe_addstr(stdscr, row, 0, "│ ", CYAN)
     safe_addstr(stdscr, row, 2, "Latest work:   ", WHITE)
@@ -1013,8 +1101,20 @@ def draw(
 
     safe_addstr(stdscr, row, 0, "│ ", CYAN)
     safe_addstr(stdscr, row, 2, "Autonomy:      ", WHITE)
-    autonomy_display = autonomy_mode + (f" / {autonomy_reason}" if autonomy_reason else "")
-    autonomy_attr = YELLOW if autonomy_mode not in {"", "normal"} else WHITE
+    autonomy_display = _autonomy_summary(
+        mode=autonomy_mode,
+        reason=autonomy_reason,
+        operator_eligible=autonomy_operator_eligible,
+        operator_policy=autonomy_operator_policy,
+        decision_class=autonomy_decision_class,
+        automation_health=automation_health,
+        non_operator_hibernate=non_operator_hibernate,
+    )
+    autonomy_attr = (
+        YELLOW
+        if autonomy_mode not in {"", "normal", "hibernate"} or automation_health != "ok"
+        else WHITE
+    )
     safe_addstr(stdscr, row, 17, autonomy_display[:max(0, w - 20)], autonomy_attr)
     safe_addstr(stdscr, row, w - 1, "│", CYAN)
     row += 1
@@ -1025,6 +1125,7 @@ def draw(
         health=automation_health,
         reason=automation_reason,
         action=automation_action,
+        family=automation_family,
     )
     automation_attr = {
         "ok": GREEN,

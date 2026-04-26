@@ -1589,7 +1589,9 @@ class RuntimeSupervisor:
                                 note = "signal_mismatch"
                 elif surface_working and tail_surface == "READY":
                     state = "READY"
-                    if lane_name == verify_owner and active_round_note:
+                    if note.startswith("dispatch_seen"):
+                        note = "prompt_visible"
+                    elif lane_name == verify_owner and active_round_note:
                         note = active_round_note
                     elif lane_name == verify_owner:
                         note = str((active_round or {}).get("state") or "").lower() or "prompt_visible"

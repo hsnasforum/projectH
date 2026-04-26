@@ -18,7 +18,6 @@ _BASE_BUSY_MARKERS = (
 )
 _ACTIVE_BUSY_MARKERS = (
     "waiting for background",
-    "background terminal",
     "esc to interrupt",
     "esc to cancel",
     "thinking with ",

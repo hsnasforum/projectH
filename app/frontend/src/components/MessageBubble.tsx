@@ -544,6 +544,16 @@ export default function MessageBubble({
                               </button>
                             </div>
                           </div>
+                          {fullPref?.status && fullPref.status !== "active" && (
+                            <span className="w-fit rounded bg-stone-100 px-1 py-0.5 text-[9px] font-medium text-stone-500">
+                              {fullPref.status === "paused" ? "일시중지" : fullPref.status}
+                            </span>
+                          )}
+                          {fullPref?.last_transition_reason && (
+                            <p className="mt-0.5 text-[9px] italic text-stone-400">
+                              이유: {fullPref.last_transition_reason}
+                            </p>
+                          )}
                           {fullPref?.original_snippet && (
                             <div className="pl-1 text-[10px] text-stone-400" data-testid="pref-original-snippet">
                               <span className="font-medium">원본: </span>{fullPref.original_snippet}

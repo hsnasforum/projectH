@@ -66,6 +66,9 @@ _VOLATILE_CONTROL_LINE_RE = re.compile(
     r"\b\s*:?.*$"
 )
 _MILESTONE_DIRECTION_REASON_RE = re.compile(r"^m[0-9]+_direction(?:_[a-z0-9_]+)?$")
+_NEXT_DIRECTION_REASON_RE = re.compile(
+    r"^(?:next_direction|next_priority|milestone_direction)(?:_[a-z0-9_]+)?$"
+)
 _WORK_PATH_RE = re.compile(r"(work/\d+/\d+/[^\s`]+\.md)")
 _PR_NUMBER_RE = re.compile(
     r"(?i)(?:\bPR\s*#\s*|/pull/)([1-9][0-9]*)\b"
@@ -366,7 +369,7 @@ def normalize_reason_code(value: object) -> str:
         return PR_CREATION_GATE_REASON
     if re.match(r"^m[0-9]+_(?:pr_merge|merge_pr|merge)_gate$", text):
         return PR_MERGE_GATE_REASON
-    if _MILESTONE_DIRECTION_REASON_RE.match(text):
+    if _MILESTONE_DIRECTION_REASON_RE.match(text) or _NEXT_DIRECTION_REASON_RE.match(text):
         return "slice_ambiguity"
     aliases = {
         "branch_commit_and_milestone_transition": "approval_required",
@@ -395,6 +398,8 @@ def normalize_operator_policy(value: object) -> str:
         "advisory_before_operator": "gate_24h",
         "advisory_first": "gate_24h",
         "advisory_first_before_operator": "gate_24h",
+        "direction_selection_after_feature_complete": "gate_24h",
+        "next_direction_after_launcher_close": "gate_24h",
         "internal": "internal_only",
         "suppress": "internal_only",
         "suppress_internal": "internal_only",
@@ -425,6 +430,14 @@ def normalize_decision_class(value: object) -> str:
         or text.startswith("branch_strategy_")
         or text.endswith("_branch_strategy")
         or "_branch_strategy_" in text
+        or text == "milestone_direction"
+        or text.startswith("milestone_direction_")
+        or text.endswith("_milestone_direction")
+        or "_milestone_direction_" in text
+        or text == "next_direction"
+        or text.startswith("next_direction_")
+        or text.endswith("_next_direction")
+        or "_next_direction_" in text
     ):
         return "next_slice_selection"
     aliases = {

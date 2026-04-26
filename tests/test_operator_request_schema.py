@@ -566,6 +566,57 @@ class OperatorRequestHeaderSchemaTests(unittest.TestCase):
         assert marker is not None
         self.assertEqual(marker["routed_to"], "verify_followup")
 
+    def test_next_direction_after_launcher_close_routes_to_verify_followup(self) -> None:
+        control_text = (
+            "STATUS: needs_operator\n"
+            "CONTROL_SEQ: 290\n"
+            "REASON_CODE: next_direction_after_launcher_close\n"
+            "OPERATOR_POLICY: direction_selection_after_feature_complete\n"
+            "DECISION_CLASS: milestone_direction\n"
+            "DECISION_REQUIRED: confirm next priority — M44 publish, M45 start, or runtime hardening\n"
+            "BASED_ON_WORK: work/4/26/2026-04-26-pipeline-launcher-hibernate-surface.md\n"
+            "BASED_ON_VERIFY: verify/4/26/2026-04-26-pipeline-launcher-hibernate-surface.md\n"
+        )
+
+        self.assertEqual(normalize_reason_code("next_direction_after_launcher_close"), "slice_ambiguity")
+        self.assertEqual(normalize_operator_policy("direction_selection_after_feature_complete"), "gate_24h")
+        self.assertEqual(normalize_decision_class("milestone_direction"), "next_slice_selection")
+
+        decision = classify_operator_candidate(
+            control_text,
+            control_meta={
+                "status": "needs_operator",
+                "control_seq": 290,
+                "reason_code": "next_direction_after_launcher_close",
+                "operator_policy": "direction_selection_after_feature_complete",
+                "decision_class": "milestone_direction",
+                "decision_required": "confirm next priority — M44 publish, M45 start, or runtime hardening",
+                "based_on_work": "work/4/26/2026-04-26-pipeline-launcher-hibernate-surface.md",
+                "based_on_verify": "verify/4/26/2026-04-26-pipeline-launcher-hibernate-surface.md",
+            },
+            idle_stable=True,
+            control_mtime=1_000.0,
+            now_ts=1_000.0,
+        )
+        marker = operator_gate_marker_from_decision(
+            decision,
+            control_file="operator_request.md",
+            control_seq=290,
+        )
+
+        self.assertEqual(decision["mode"], "triage")
+        self.assertEqual(decision["suppressed_mode"], "triage")
+        self.assertEqual(decision["reason_code"], "slice_ambiguity")
+        self.assertEqual(decision["operator_policy"], "gate_24h")
+        self.assertEqual(decision["decision_class"], "next_slice_selection")
+        self.assertEqual(decision["classification_source"], "operator_policy")
+        self.assertEqual(decision["routed_to"], "verify_followup")
+        self.assertFalse(decision["operator_eligible"])
+        self.assertIsNotNone(marker)
+        assert marker is not None
+        self.assertEqual(marker["reason"], "slice_ambiguity")
+        self.assertEqual(marker["routed_to"], "verify_followup")
+
     def test_seq617_raw_operator_headers_normalize_to_canonical_metadata(self) -> None:
         self.assertEqual(
             normalize_reason_code("branch_complete_pending_milestone_transition"),

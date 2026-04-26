@@ -882,6 +882,21 @@ class PanePromptDetectionTest(unittest.TestCase):
         self.assertFalse(watcher_core._shared_pane_text_has_busy_indicator(text))
         self.assertTrue(watcher_core._shared_pane_text_is_idle(text))
 
+    def test_completed_background_terminal_line_does_not_block_codex_prompt(self) -> None:
+        text = "\n".join(
+            [
+                "• Waited for background terminal",
+                "────────────────────────────────────────",
+                "• 구현 완료했습니다.",
+                "› Write tests for @filename",
+                "  gpt-5.5 xhigh · ~/code/projectH",
+            ]
+        )
+
+        self.assertTrue(watcher_core._shared_pane_text_has_input_cursor(text))
+        self.assertFalse(watcher_core._shared_pane_text_has_busy_indicator(text, "Codex"))
+        self.assertTrue(watcher_core._shared_pane_text_is_idle(text, "Codex"))
+
 
 class LiveSessionEscalationTest(unittest.TestCase):
     def test_extract_live_session_escalation_detects_expected_reasons(self) -> None:
@@ -1471,6 +1486,46 @@ class WatcherPromptAssemblyTest(unittest.TestCase):
             self.assertIn("pr_creation_gate + gate_24h + release_gate", prompt)
             self.assertIn("create or reuse a draft PR", prompt)
             self.assertIn("stacked child branch/PR", prompt)
+
+    def test_next_direction_after_launcher_close_routes_to_verify_followup(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            watch_dir = root / "work"
+            base_dir = root / ".pipeline"
+            watch_dir.mkdir(parents=True, exist_ok=True)
+            base_dir.mkdir(parents=True, exist_ok=True)
+            _write_active_profile(root)
+
+            operator_path = base_dir / "operator_request.md"
+            operator_path.write_text(
+                "STATUS: needs_operator\n"
+                "CONTROL_SEQ: 290\n"
+                "REASON_CODE: next_direction_after_launcher_close\n"
+                "OPERATOR_POLICY: direction_selection_after_feature_complete\n"
+                "DECISION_CLASS: milestone_direction\n"
+                "DECISION_REQUIRED: confirm next priority — M44 publish, M45 start, or runtime hardening\n",
+                encoding="utf-8",
+            )
+
+            core = watcher_core.WatcherCore(
+                {
+                    "watch_dir": str(watch_dir),
+                    "base_dir": str(base_dir),
+                    "repo_root": str(root),
+                    "dry_run": True,
+                }
+            )
+
+            marker = core._operator_gate_marker()
+            self.assertIsNotNone(marker)
+            assert marker is not None
+            self.assertEqual(marker["reason"], "slice_ambiguity")
+            self.assertEqual(marker["operator_policy"], "gate_24h")
+            self.assertEqual(marker["decision_class"], "next_slice_selection")
+            self.assertEqual(marker["classification_source"], "operator_policy")
+            self.assertEqual(marker["mode"], "triage")
+            self.assertEqual(marker["routed_to"], "verify_followup")
+            self.assertEqual(core._resolve_turn(), "verify_followup")
 
     def test_legacy_milestone_commit_push_doc_sync_operator_request_routes_to_verify_followup(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

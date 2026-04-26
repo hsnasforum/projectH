@@ -194,12 +194,27 @@ class PreferenceHandlerMixin:
             if preference_id and str(preference_id) in latest_reason:
                 pref_copy["last_transition_reason"] = latest_reason[str(preference_id)]
 
+        total_applied = 0
+        total_corrected = 0
+        for pref_copy in enriched:
+            if pref_copy.get("status") != "active":
+                continue
+            reliability_stats = pref_copy.get("reliability_stats")
+            if not isinstance(reliability_stats, dict):
+                continue
+            applied_count = reliability_stats.get("applied_count", 0)
+            corrected_count = reliability_stats.get("corrected_count", 0)
+            total_applied += applied_count if isinstance(applied_count, int) else 0
+            total_corrected += corrected_count if isinstance(corrected_count, int) else 0
+
         return {
             "ok": True,
             "preferences": enriched,
             "active_count": sum(1 for p in enriched if p.get("status") == "active"),
             "candidate_count": sum(1 for p in enriched if p.get("status") == "candidate"),
             "paused_count": sum(1 for p in enriched if p.get("status") == "paused"),
+            "total_applied": total_applied,
+            "total_corrected": total_corrected,
         }
 
     def get_preference_audit(self) -> dict[str, Any]:

@@ -474,6 +474,14 @@ export default function MessageBubble({
                       );
                       const isEditing = editingPrefId === pref.fingerprint;
                       const displayDescription = fullPref?.description ?? pref.description;
+                      const appliedCount = fullPref?.reliability_stats?.applied_count;
+                      const correctedCount = fullPref?.reliability_stats?.corrected_count;
+                      const shouldShowReliabilityStats =
+                        typeof appliedCount === "number" && Number.isFinite(appliedCount) && appliedCount > 0;
+                      const visibleCorrectedCount =
+                        typeof correctedCount === "number" && Number.isFinite(correctedCount)
+                          ? correctedCount
+                          : 0;
                       return (
                         <div
                           key={pref.fingerprint || pref.description}
@@ -552,6 +560,11 @@ export default function MessageBubble({
                           {fullPref?.last_transition_reason && (
                             <p className="mt-0.5 text-[9px] italic text-stone-400">
                               이유: {fullPref.last_transition_reason}
+                            </p>
+                          )}
+                          {shouldShowReliabilityStats && (
+                            <p className="mt-0.5 text-[9px] text-stone-400">
+                              적용 {appliedCount}회 · 교정 {visibleCorrectedCount}회
                             </p>
                           )}
                           {fullPref?.original_snippet && (

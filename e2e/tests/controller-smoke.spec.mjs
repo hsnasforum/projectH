@@ -424,6 +424,54 @@ test.describe("controller office smoke", () => {
     await expect(page.locator("#event-list")).toContainText("Operator attention refreshed");
   });
 
+  test("controller hides non-operator hibernate gate from operator attention board", async ({ page }) => {
+    await disableRuntimeMonitor(page);
+    await page.route("**/api/runtime/status", (route) =>
+      route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({
+          runtime_state: "RUNNING",
+          project_root: "/tmp/projectH",
+          automation_health: "ok",
+          automation_reason_code: "",
+          automation_next_action: "continue",
+          role_owners: { implement: "Codex", verify: "Claude", advisory: "Gemini" },
+          lanes: [
+            { name: "Codex", state: "ready", note: "prompt_visible" },
+            { name: "Claude", state: "ready", note: "prompt_visible" },
+            { name: "Gemini", state: "ready", note: "prompt_visible" },
+          ],
+          control: {
+            active_control_file: "",
+            active_control_status: "none",
+            active_control_seq: -1,
+          },
+          autonomy: {
+            mode: "hibernate",
+            reason_code: "idle_hibernate",
+            block_reason: "idle_hibernate",
+            operator_policy: "internal_only",
+            decision_class: "internal_only",
+            operator_eligible: false,
+          },
+          turn_state: { state: "IDLE", active_role: "", active_lane: "" },
+          watcher: { alive: true },
+          active_round: { state: "IDLE" },
+          artifacts: {},
+        }),
+      }),
+    );
+
+    await page.goto("/controller");
+    const board = page.locator("#operator-attention-board");
+    await expect(board).toHaveClass(/hidden/);
+    await expect(board).toBeEmpty();
+
+    const attention = await page.evaluate(() => window.getOperatorAttentionDebug());
+    expect(attention.visible).toBe(false);
+    expect(attention.suppressed).toBe(true);
+  });
+
   test("controller shows active verify owner as working even when lane snapshot is ready", async ({
     page,
   }) => {

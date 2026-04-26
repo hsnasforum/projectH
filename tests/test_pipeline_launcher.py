@@ -305,6 +305,53 @@ class TestPipelineLauncherSessionContract(unittest.TestCase):
             self.assertTrue(any("Control: operator_request.md · needs_operator · seq 155" in line for line in lines))
             self.assertTrue(any("control_changed needs_operator seq=155 operator_request.md" in line for line in lines))
 
+    def test_build_snapshot_marks_canonical_none_hibernate_as_non_operator_wait(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="projH-hibernate-gate-") as tmp:
+            project = Path(tmp).resolve()
+            session = _session_name_for(project)
+
+            lines = pipeline_launcher.build_snapshot(
+                project,
+                session,
+                runtime_view={
+                    "runtime_state": "RUNNING",
+                    "watcher_alive": True,
+                    "watcher_pid": 2020,
+                    "work_name": "—",
+                    "work_mtime": 0.0,
+                    "verify_name": "—",
+                    "verify_mtime": 0.0,
+                    "control_file": "",
+                    "control_seq": -1,
+                    "control_status": "none",
+                    "autonomy_mode": "hibernate",
+                    "autonomy_reason": "m44_publish_pr_creation_merge",
+                    "autonomy_operator_eligible": False,
+                    "autonomy_operator_policy": "internal_only",
+                    "autonomy_decision_class": "internal_only",
+                    "automation_health": "ok",
+                    "automation_reason_code": "",
+                    "automation_incident_family": "",
+                    "automation_next_action": "continue",
+                    "active_round": {"state": "IDLE"},
+                    "lanes": [],
+                    "event_lines": [],
+                    "events": [],
+                },
+            )
+
+        self.assertTrue(
+            any("Control: (없음)" in line for line in lines)
+        )
+        self.assertTrue(
+            any(
+                "Autonomy: hibernate / m44_publish_pr_creation_merge (비운영자 자동 대기 / operator_eligible=false / policy=internal_only / class=internal_only)"
+                in line
+                for line in lines
+            )
+        )
+        self.assertFalse(any("개입 필요" in line for line in lines))
+
     def test_build_snapshot_surfaces_verify_receipt_pending_context(self) -> None:
         with tempfile.TemporaryDirectory(prefix="projH-receipt-pending-") as tmp:
             project = Path(tmp).resolve()
@@ -405,6 +452,66 @@ class TestPipelineLauncherSessionContract(unittest.TestCase):
             self.assertEqual(runtime_view["runtime_state"], "RUNNING")
             self.assertEqual(runtime_view["control_status"], "needs_operator")
             self.assertTrue(any("control_changed needs_operator" in line for line in runtime_view["event_lines"]))
+
+    def test_runtime_view_prefers_canonical_none_over_compat_operator_hibernate(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="projH-hibernate-meta-") as tmp:
+            project = Path(tmp).resolve()
+            session = _session_name_for(project)
+
+            with mock.patch.object(
+                pipeline_launcher,
+                "read_runtime_status",
+                return_value={
+                    "runtime_state": "RUNNING",
+                    "lanes": [],
+                    "watcher": {"alive": True, "pid": 1234},
+                    "control": {
+                        "active_control_file": "",
+                        "active_control_seq": -1,
+                        "active_control_status": "none",
+                    },
+                    "autonomy": {
+                        "mode": "hibernate",
+                        "block_reason": "m44_publish_pr_creation_merge",
+                        "operator_policy": "internal_only",
+                        "decision_class": "internal_only",
+                        "classification_source": "reason_code",
+                        "operator_eligible": "false",
+                    },
+                    "compat": {
+                        "control_slots": {
+                            "active": {
+                                "file": "operator_request.md",
+                                "status": "needs_operator",
+                                "label": "operator wait",
+                                "control_seq": 285,
+                            },
+                            "stale": [],
+                        }
+                    },
+                },
+            ), mock.patch.object(
+                pipeline_launcher,
+                "read_runtime_event_tail",
+                return_value=[],
+            ):
+                runtime_view = pipeline_launcher._runtime_view(project)
+
+            self.assertEqual(runtime_view["runtime_state"], "RUNNING")
+            self.assertEqual(runtime_view["control_file"], "")
+            self.assertEqual(runtime_view["control_status"], "none")
+            self.assertEqual(runtime_view["autonomy_mode"], "hibernate")
+            self.assertEqual(runtime_view["autonomy_reason"], "m44_publish_pr_creation_merge")
+            self.assertFalse(runtime_view["autonomy_operator_eligible"])
+            self.assertEqual(runtime_view["autonomy_operator_policy"], "internal_only")
+            self.assertEqual(runtime_view["autonomy_decision_class"], "internal_only")
+            self.assertEqual(runtime_view["automation_health"], "ok")
+
+            lines = pipeline_launcher.build_snapshot(project, session, runtime_view=runtime_view)
+
+            self.assertTrue(any("Control: (없음)" in line for line in lines))
+            self.assertTrue(any("비운영자 자동 대기" in line for line in lines))
+            self.assertFalse(any("operator_request.md" in line for line in lines))
 
     def test_runtime_view_surfaces_dispatch_stall_event_lines(self) -> None:
         with tempfile.TemporaryDirectory(prefix="projH-dispatch-stall-") as tmp:

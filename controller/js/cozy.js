@@ -3662,6 +3662,9 @@ function buildOperatorAttention(data = runtimeStateStore.data) {
   const autonomy = payload.autonomy || {};
   const controlNeedsOperator = presentation.controlStatus === 'needs_operator';
   const healthNeedsOperator = presentation.automationHealth === 'needs_operator';
+  if (presentation.suppressedOperatorCandidate) {
+    return { visible: false, suppressed: true };
+  }
   if (!controlNeedsOperator && !healthNeedsOperator) return { visible: false };
   const reason = firstNonEmpty(
     autonomy.reason_code,
@@ -4120,6 +4123,15 @@ function setLowMotion(nextLowMotion, persist = true) {
   if (persist) PrefStore.set('office_low_motion', lowMotion ? '1' : '0');
 }
 
+function isSuppressedOperatorCandidate(payload, automationHealth, controlStatus) {
+  const autonomy = (payload || {}).autonomy || {};
+  const autonomyMode = String(autonomy.mode || '').trim();
+  return controlStatus === 'none'
+    && automationHealth === 'ok'
+    && autonomy.operator_eligible === false
+    && autonomyMode === 'hibernate';
+}
+
 function getPresentation(data) {
   const payload = data || runtimeStateStore.data || {};
   const runtimeState = String(payload.runtime_state || 'STOPPED').toUpperCase();
@@ -4138,7 +4150,11 @@ function getPresentation(data) {
   const uncertain = runtimeState === 'DEGRADED' && degradedReasons.some((reason) => UNCERTAIN_RUNTIME_REASONS.has(reason));
   const inactive = INACTIVE_RUNTIME_STATES.has(runtimeState);
   const showLive = !inactive && !uncertain;
-  const controlStatus = showLive ? (control.active_control_status || 'none') : (uncertain ? 'uncertain' : 'none');
+  const rawControlStatus = showLive ? (control.active_control_status || 'none') : (uncertain ? 'uncertain' : 'none');
+  const suppressedOperatorCandidate = showLive
+    ? isSuppressedOperatorCandidate(payload, automationHealth, rawControlStatus)
+    : false;
+  const controlStatus = rawControlStatus;
   const roundState = showLive ? liveRoundState(payload) : (uncertain ? 'uncertain' : 'IDLE');
   let watcherStatus = 'Dead';
   let watcherClass = 'dim';
@@ -4186,6 +4202,7 @@ function getPresentation(data) {
     automationDetail,
     controlAgeCycles,
     staleAdvisoryPending,
+    suppressedOperatorCandidate,
   };
 }
 

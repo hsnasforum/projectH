@@ -11,6 +11,15 @@ function liveRoundState(data, turn) {
   return turnState || roundState || 'IDLE';
 }
 
+function isSuppressedOperatorCandidate(data, automationHealth, controlStatus) {
+  const autonomy = (data || {}).autonomy || {};
+  const autonomyMode = String(autonomy.mode || '').trim();
+  return controlStatus === 'none'
+    && automationHealth === 'ok'
+    && autonomy.operator_eligible === false
+    && autonomyMode === 'hibernate';
+}
+
 class _PipelineState {
   constructor() {
     this.data = null;
@@ -61,7 +70,9 @@ class _PipelineState {
     const uncertain = runtimeState === 'DEGRADED' && degradedReasons.some(r => UNCERTAIN_RUNTIME_REASONS.has(r));
     const inactive = INACTIVE_RUNTIME_STATES.has(runtimeState);
     const showLive = !inactive && !uncertain;
-    const controlStatus = showLive ? (control.active_control_status || 'none') : (uncertain ? 'uncertain' : 'none');
+    const rawControlStatus = showLive ? (control.active_control_status || 'none') : (uncertain ? 'uncertain' : 'none');
+    const suppressedOperatorCandidate = showLive ? isSuppressedOperatorCandidate(d, automationHealth, rawControlStatus) : false;
+    const controlStatus = rawControlStatus;
     const roundState = showLive ? liveRoundState(d, turn) : (uncertain ? 'uncertain' : 'IDLE');
     let watcherStatus = 'Dead', watcherClass = 'dim';
     if (uncertain) { watcherStatus = 'Unknown'; watcherClass = 'warn'; }
@@ -79,7 +90,7 @@ class _PipelineState {
     return { runtimeState, runtimeClass, badgeClass, uncertain, inactive, controlStatus, controlClass,
       roundState, roundClass, watcherStatus, watcherClass, degradedReason, degradedReasons,
       automationHealth, automationReason, automationFamily, automationAction, automationDetail,
-      controlAgeCycles, staleAdvisoryPending };
+      controlAgeCycles, staleAdvisoryPending, suppressedOperatorCandidate };
   }
 
   detectChanges(data) {

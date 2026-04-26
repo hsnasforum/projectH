@@ -217,6 +217,7 @@ export interface PreferenceRecord {
     is_high_quality: boolean | null;
   } | null;
   review_reason_note?: string | null;
+  last_transition_reason?: string | null;
   source_session_title?: string | null;
   activated_at: string | null;
   created_at: string;

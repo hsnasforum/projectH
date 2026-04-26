@@ -263,6 +263,7 @@ export default function PreferencePanel() {
             const descriptionDraft = editDescriptions[pref.preference_id] ?? pref.description;
             const reviewReasonNote = pref.review_reason_note?.trim();
             const sourceSessionTitle = pref.source_session_title?.trim();
+            const lastTransitionReason = pref.last_transition_reason?.trim();
             return (
               <div
                 key={pref.preference_id}
@@ -376,6 +377,12 @@ export default function PreferencePanel() {
                       </p>
                     )}
                   </div>
+                )}
+
+                {lastTransitionReason && (
+                  <p className="mt-0.5 text-[10px] italic text-sidebar-muted/70">
+                    전환 이유: {lastTransitionReason}
+                  </p>
                 )}
 
                 {/* Promotion reason (delta summary) */}

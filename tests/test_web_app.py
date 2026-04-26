@@ -6377,6 +6377,51 @@ class WebAppServiceTest(unittest.TestCase):
                 for record in rejected
             ))
 
+    def test_list_preferences_payload_includes_last_transition_reason(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                preferences_dir=str(tmp_path / "preferences"),
+                model_provider="mock",
+            )
+            service = WebAppService(settings=settings)
+            with_reason = service.preference_store.record_reviewed_candidate_preference(
+                delta_fingerprint="pref-last-transition-reason",
+                candidate_family="correction_rewrite",
+                description="전환 이유 표시 선호",
+                source_refs={"session_id": "pref-transition", "candidate_id": "with-reason"},
+            )
+            without_reason = service.preference_store.record_reviewed_candidate_preference(
+                delta_fingerprint="pref-no-transition-reason",
+                candidate_family="correction_rewrite",
+                description="전환 이유 없는 선호",
+                source_refs={"session_id": "pref-transition", "candidate_id": "without-reason"},
+            )
+
+            activate_response = service.activate_preference({
+                "preference_id": with_reason["preference_id"],
+                "transition_reason": "테스트 전환 이유",
+            })
+            no_reason_response = service.activate_preference({
+                "preference_id": without_reason["preference_id"],
+            })
+
+            self.assertTrue(activate_response["ok"])
+            self.assertTrue(no_reason_response["ok"])
+            payload = service.list_preferences_payload()
+            preferences = {
+                pref["preference_id"]: pref
+                for pref in payload.get("preferences", [])
+            }
+            target = preferences.get(with_reason["preference_id"])
+            no_reason_target = preferences.get(without_reason["preference_id"])
+            self.assertIsNotNone(target)
+            self.assertIsNotNone(no_reason_target)
+            self.assertEqual(target.get("last_transition_reason"), "테스트 전환 이유")
+            self.assertNotIn("last_transition_reason", no_reason_target)
+
     def test_submit_candidate_review_accept_persists_local_preference_candidate_with_sqlite_backend(self) -> None:
         with TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)

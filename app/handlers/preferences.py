@@ -175,6 +175,25 @@ class PreferenceHandlerMixin:
                 "conflicting_preference_ids": conflicting,
             }
 
+        transition_actions = {"preference_activated", "preference_paused", "preference_rejected"}
+        try:
+            system_records = self.task_logger.iter_session_records("system")
+            latest_reason: dict[str, str] = {}
+            for record in system_records:
+                if record.get("action") not in transition_actions:
+                    continue
+                detail = record.get("detail") or {}
+                preference_id = detail.get("preference_id") if isinstance(detail, dict) else None
+                transition_reason = _as_nonempty_text(detail.get("transition_reason")) if isinstance(detail, dict) else None
+                if preference_id and transition_reason:
+                    latest_reason[str(preference_id)] = transition_reason
+        except Exception:
+            latest_reason = {}
+        for pref_copy in enriched:
+            preference_id = pref_copy.get("preference_id")
+            if preference_id and str(preference_id) in latest_reason:
+                pref_copy["last_transition_reason"] = latest_reason[str(preference_id)]
+
         return {
             "ok": True,
             "preferences": enriched,

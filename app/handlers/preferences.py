@@ -105,6 +105,24 @@ def _preference_exists_for_fingerprint(preference_store: Any, fingerprint: str) 
     )
 
 
+def _is_highly_reliable_preference(preference: dict[str, Any]) -> bool:
+    quality_info = preference.get("quality_info")
+    if not isinstance(quality_info, dict) or quality_info.get("is_high_quality") is not True:
+        return False
+
+    reliability_stats = preference.get("reliability_stats")
+    if not isinstance(reliability_stats, dict):
+        return False
+
+    applied_count = reliability_stats.get("applied_count", 0)
+    corrected_count = reliability_stats.get("corrected_count", 0)
+    if not isinstance(applied_count, int) or not isinstance(corrected_count, int):
+        return False
+    if applied_count < 3:
+        return False
+    return corrected_count / applied_count < 0.15
+
+
 class PreferenceHandlerMixin:
     """Preference management methods extracted from WebAppService."""
 
@@ -142,6 +160,7 @@ class PreferenceHandlerMixin:
             else:
                 quality_info = {"avg_similarity_score": None, "is_high_quality": None}
             pref_copy["quality_info"] = quality_info
+            pref_copy["is_highly_reliable"] = _is_highly_reliable_preference(pref_copy)
             source_ref = _preference_review_source_ref(pref_copy)
             if source_ref is not None:
                 review_reason_note = _as_nonempty_text(source_ref.get("reason_note"))
@@ -167,12 +186,27 @@ class PreferenceHandlerMixin:
                     conflict_map.setdefault(preference_a_id, []).append(preference_b_id)
                     conflict_map.setdefault(preference_b_id, []).append(preference_a_id)
 
+        highly_reliable_by_pref_id = {
+            str(pref_copy.get("preference_id", "")): pref_copy.get("is_highly_reliable") is True
+            for pref_copy in enriched
+        }
         for pref_copy in enriched:
             pref_id = str(pref_copy.get("preference_id", ""))
             conflicting = conflict_map.get(pref_id, [])
+            has_conflict = len(conflicting) > 0
+            if not has_conflict:
+                conflict_severity = "none"
+            elif highly_reliable_by_pref_id.get(pref_id, False) or any(
+                highly_reliable_by_pref_id.get(conflicting_pref_id, False)
+                for conflicting_pref_id in conflicting
+            ):
+                conflict_severity = "high"
+            else:
+                conflict_severity = "normal"
             pref_copy["conflict_info"] = {
-                "has_conflict": len(conflicting) > 0,
+                "has_conflict": has_conflict,
                 "conflicting_preference_ids": conflicting,
+                "conflict_severity": conflict_severity,
             }
 
         transition_actions = {"preference_activated", "preference_paused", "preference_rejected"}
@@ -196,9 +230,16 @@ class PreferenceHandlerMixin:
 
         total_applied = 0
         total_corrected = 0
+        high_quality_active_count = 0
+        highly_reliable_active_count = 0
         for pref_copy in enriched:
             if pref_copy.get("status") != "active":
                 continue
+            quality_info = pref_copy.get("quality_info")
+            if isinstance(quality_info, dict) and quality_info.get("is_high_quality") is True:
+                high_quality_active_count += 1
+            if pref_copy.get("is_highly_reliable") is True:
+                highly_reliable_active_count += 1
             reliability_stats = pref_copy.get("reliability_stats")
             if not isinstance(reliability_stats, dict):
                 continue
@@ -215,6 +256,8 @@ class PreferenceHandlerMixin:
             "paused_count": sum(1 for p in enriched if p.get("status") == "paused"),
             "total_applied": total_applied,
             "total_corrected": total_corrected,
+            "high_quality_active_count": high_quality_active_count,
+            "highly_reliable_active_count": highly_reliable_active_count,
         }
 
     def get_preference_audit(self) -> dict[str, Any]:

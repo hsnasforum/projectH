@@ -37,6 +37,14 @@ function preferenceReliabilityCounts(pref: PreferenceRecord) {
   };
 }
 
+function isActiveHighQualityPreference(pref: PreferenceRecord) {
+  return pref.status === "active" && pref.quality_info?.is_high_quality === true;
+}
+
+function isActiveHighlyReliablePreference(pref: PreferenceRecord) {
+  return pref.status === "active" && pref.is_highly_reliable === true;
+}
+
 export default function PreferencePanel() {
   const [preferences, setPreferences] = useState<PreferenceRecord[]>([]);
   const [audit, setAudit] = useState<PreferenceAudit | null>(null);
@@ -52,6 +60,8 @@ export default function PreferencePanel() {
     applied: 0,
     corrected: 0,
   });
+  const [highQualityActiveCount, setHighQualityActiveCount] = useState(0);
+  const [highlyReliableActiveCount, setHighlyReliableActiveCount] = useState(0);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -77,6 +87,16 @@ export default function PreferencePanel() {
               return total + preferenceReliabilityCounts(pref).corrected;
             }, 0),
       });
+      setHighQualityActiveCount(
+        typeof data.high_quality_active_count === "number" && Number.isFinite(data.high_quality_active_count)
+          ? data.high_quality_active_count
+          : visible.filter(isActiveHighQualityPreference).length,
+      );
+      setHighlyReliableActiveCount(
+        typeof data.highly_reliable_active_count === "number" && Number.isFinite(data.highly_reliable_active_count)
+          ? data.highly_reliable_active_count
+          : visible.filter(isActiveHighlyReliablePreference).length,
+      );
       setAudit(auditData);
     } catch {
       // silent
@@ -214,6 +234,8 @@ export default function PreferencePanel() {
             {activeCount > 0 && (
               <span className="block truncate text-[10px] text-sidebar-muted/70">
                 총 적용 {reliabilityTotals.applied}회 · 총 교정 {reliabilityTotals.corrected}회
+                {highQualityActiveCount > 0 ? ` · 고품질 ${highQualityActiveCount}개` : ""}
+                {highlyReliableActiveCount > 0 ? ` · 신뢰도 높음 ${highlyReliableActiveCount}개` : ""}
               </span>
             )}
           </span>
@@ -286,6 +308,8 @@ export default function PreferencePanel() {
           {filteredPreferences.map((pref) => {
             const reliability = preferenceReliabilityCounts(pref);
             const isHighQuality = pref.quality_info?.is_high_quality === true;
+            const isHighlyReliable = pref.is_highly_reliable === true;
+            const isHighSeverityConflict = pref.conflict_info?.conflict_severity === "high";
             const hasEvidenceDetail = Boolean(pref.original_snippet && pref.corrected_snippet);
             const isDetailExpanded = expandedItems.has(pref.preference_id);
             const isDescriptionEditing = editDescriptions[pref.preference_id] !== undefined;
@@ -314,10 +338,19 @@ export default function PreferencePanel() {
                       고품질
                     </span>
                   )}
+                  {isHighlyReliable && (
+                    <span className="inline-flex items-center rounded-full bg-emerald-500/15 px-1 py-0.5 text-[9px] font-semibold text-emerald-300">
+                      신뢰도 높음
+                    </span>
+                  )}
                   {pref.conflict_info?.has_conflict && (
                     <span
                       data-testid="pref-conflict-badge"
-                      className="shrink-0 rounded-full border border-orange-200 bg-orange-50 px-1.5 py-0.5 text-[10px] font-medium text-orange-700"
+                      className={`shrink-0 rounded-full border px-1.5 py-0.5 text-[10px] font-medium ${
+                        isHighSeverityConflict
+                          ? "border-amber-300 bg-amber-400/20 text-amber-100"
+                          : "border-orange-200 bg-orange-50 text-orange-700"
+                      }`}
                       title={`충돌: ${pref.conflict_info.conflicting_preference_ids.join(", ")}`}
                     >
                       ⚠ 충돌

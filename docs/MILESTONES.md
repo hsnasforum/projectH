@@ -982,10 +982,103 @@ PreferencePanel header에서 활성 선호 전체의 `total_applied` / `total_co
 - `tests/test_preference_handler.py`: no-active zero aggregate와 mixed-status
   active-only sum을 포함해 14 tests OK.
 
+### Milestone 46: Preference Quality Signal
+
+#### Goal
+PreferencePanel header에서 활성 선호 중 고품질 선호 수를 표시해 사용자가 현재
+활성 선호의 품질 구성을 빠르게 확인하게 한다.
+
+#### Guardrails
+- `quality_info.is_high_quality` 판정 로직 변경 없음
+- per-card `고품질` badge 동작 변경 없음
+- approval, publish, runtime/operator boundary 변경 없음
+- M46 Axis 3+ planning은 이 milestone axis에 포함하지 않음
+
+#### Shipped Infrastructure (Axis 1, 2026-04-26)
+- `app/handlers/preferences.py`: preferences list payload에 active preference 중
+  `quality_info.is_high_quality is True`인 항목 수 `high_quality_active_count`
+  추가.
+- `app/frontend/src/api/client.ts`: `PreferencesPayload`에 optional
+  `high_quality_active_count` field 추가.
+- `app/frontend/src/components/PreferencePanel.tsx`: count가 1 이상일 때만
+  header aggregate line에 `고품질 N개` 표시.
+- `tests/test_preference_handler.py`: mixed active/candidate/paused와 no active
+  high-quality 케이스를 포함해 15 tests OK.
+
+#### Shipped Infrastructure (Axis 2, 2026-04-26)
+- `core/delta_analysis.py`: `is_high_quality()` docstring에
+  `similarity_score`가 `SequenceMatcher` ratio(0.0-1.0)임을 명시하고,
+  lower bound `0.05`는 noise/unrelated text를 제외하며 upper bound `0.98`은
+  near-identical/trivially unchanged text를 제외한다는 기준을 기록.
+- scoring logic과 threshold 값은 변경 없음.
+- `tests/test_delta_analysis.py`: boundary tests 추가 (`0.04` -> False,
+  `0.05` -> True, `0.50` -> True, `0.98` -> True, `0.99` -> False);
+  12 tests OK.
+
+### Milestone 47: Preference Reliability Signal
+
+#### Goal
+M45의 per-preference `reliability_stats`와 M46의
+`quality_info.is_high_quality`를 합성해, 충분히 적용되고 거의 교정되지 않은
+선호를 PreferencePanel 카드의 `신뢰도 높음` badge로 보여준다.
+
+#### Guardrails
+- `reliability_stats` / `quality_info` 구조 변경 없음
+- storage schema 변경 없음
+- approval, publish, runtime/operator boundary 변경 없음
+- M47 Axis 1+2 doc-sync는 이 final bounded bundle로 종료
+
+#### Shipped Infrastructure (Axis 1, 2026-04-26)
+- `app/handlers/preferences.py`: `_is_highly_reliable_preference()` helper가
+  `quality_info.is_high_quality is True`, `applied_count >= 3`,
+  `corrected_count / applied_count < 0.15` 조건을 모두 만족할 때만
+  per-preference `is_highly_reliable`를 `True`로 계산.
+- `app/frontend/src/api/client.ts`: `PreferenceRecord`에 optional
+  `is_highly_reliable` field 추가.
+- `app/frontend/src/components/PreferencePanel.tsx`: `is_highly_reliable === true`
+  항목에만 기존 `고품질` badge 근처의 `신뢰도 높음` badge 표시.
+- `tests/test_preference_handler.py`: true case, `applied_count < 3`, correction
+  rate `>= 0.15`, `is_high_quality is None` false case를 포함해 16 tests OK.
+
+#### Shipped Infrastructure (Axis 2, 2026-04-26)
+- `app/handlers/preferences.py`: preferences list payload에 active preference 중
+  `is_highly_reliable is True`인 항목 수 `highly_reliable_active_count` 추가.
+- `app/frontend/src/api/client.ts`: `PreferencesPayload`에 optional
+  `highly_reliable_active_count` field 추가.
+- `app/frontend/src/components/PreferencePanel.tsx`: count가 1 이상일 때만
+  header aggregate line에 `신뢰도 높음 N개` 표시.
+- `tests/test_preference_handler.py`: mixed active/candidate/false case와 no
+  active highly-reliable 케이스를 포함해 17 tests OK.
+
+### Milestone 48: Preference Reliability Conflict Signal
+
+#### Goal
+`is_highly_reliable` 신호로 conflict severity를 가중해, 사용자가 신뢰도 높은
+선호가 얽힌 충돌과 낮은 신호의 일반 충돌을 구분할 수 있게 한다.
+
+#### Guardrails
+- `has_conflict` / `conflicting_preference_ids` 의미 변경 없음
+- approval, storage, runtime/operator boundary 변경 없음
+- M48 Axis 1 doc-sync는 이 final bounded bundle로 종료
+
+#### Shipped Infrastructure (Axis 1, 2026-04-26)
+- `app/handlers/preferences.py`: every enriched `conflict_info` dict에
+  `conflict_severity` (`"high"` / `"normal"` / `"none"`) field 추가.
+  `"high"`는 self 또는 conflicting preference 중 하나가
+  `is_highly_reliable is True`일 때만 계산하고, conflict가 없으면 `"none"`,
+  그 외 active conflict는 `"normal"`로 둔다.
+- `app/frontend/src/api/client.ts`: `PreferenceRecord.conflict_info`에 optional
+  `conflict_severity?: "high" | "normal" | "none" | null` field 추가.
+- `app/frontend/src/components/PreferencePanel.tsx`: `conflict_severity === "high"`
+  충돌 badge에 elevated amber style 적용, 일반 conflict badge는 기존 orange
+  style 유지.
+- `tests/test_preference_handler.py`: both-high, one-high, neither-high,
+  no-conflict severity case를 포함해 18 tests OK.
+
 ## Next 3 Implementation Priorities
 
 1. **E2E 환경 개선 완료**: `e2e/start-server.sh` healthcheck wrapper no-server / existing-server 두 경로가 정적 감사(09c806d)로 확인됨. operator가 검증 수준을 release gate로 인정(Q1 Option A, operator_request 263). B1 gate closed (2026-04-26).
-2. **M45 Axis 1 shipped**: PreferencePanel reliability aggregate header (`총 적용 N회 · 총 교정 N회`) and active-only payload totals landed; M45 Axis 2+는 별도 advisory/verify에서 결정.
+2. **M48 Axis 1 shipped**: Preference conflict payload now includes `conflict_severity` (`"high"` / `"normal"` / `"none"`) from per-preference `is_highly_reliable`; `PreferencePanel` elevates only high-severity conflict badges while preserving existing `has_conflict` / `conflicting_preference_ids`, approval, and storage boundaries.
 
 ## Do Not Pull Forward
 

@@ -134,6 +134,187 @@ class PreferenceHandlerTest(unittest.TestCase):
         self.assertIsNone(pref["quality_info"]["avg_similarity_score"])
         self.assertIsNone(pref["quality_info"]["is_high_quality"])
 
+    def test_list_preferences_payload_counts_high_quality_active_preferences(self) -> None:
+        mixed_service = _PreferenceService([
+            {
+                "preference_id": "pref-active-high",
+                "delta_fingerprint": "fingerprint-active-high",
+                "description": "active high quality",
+                "status": "active",
+                "avg_similarity_score": 0.15,
+            },
+            {
+                "preference_id": "pref-active-low",
+                "delta_fingerprint": "fingerprint-active-low",
+                "description": "active low quality",
+                "status": "active",
+                "avg_similarity_score": 0.99,
+            },
+            {
+                "preference_id": "pref-candidate-high",
+                "delta_fingerprint": "fingerprint-candidate-high",
+                "description": "candidate high quality",
+                "status": "candidate",
+                "avg_similarity_score": 0.15,
+            },
+            {
+                "preference_id": "pref-paused-high",
+                "delta_fingerprint": "fingerprint-paused-high",
+                "description": "paused high quality",
+                "status": "paused",
+                "avg_similarity_score": 0.15,
+            },
+        ])
+
+        mixed_payload = mixed_service.list_preferences_payload()
+
+        self.assertEqual(mixed_payload["high_quality_active_count"], 1)
+
+        no_active_high_quality_service = _PreferenceService([
+            {
+                "preference_id": "pref-active-low-only",
+                "delta_fingerprint": "fingerprint-active-low-only",
+                "description": "active low quality only",
+                "status": "active",
+                "avg_similarity_score": 0.99,
+            },
+            {
+                "preference_id": "pref-candidate-high-only",
+                "delta_fingerprint": "fingerprint-candidate-high-only",
+                "description": "candidate high quality only",
+                "status": "candidate",
+                "avg_similarity_score": 0.15,
+            },
+        ])
+
+        no_active_high_quality_payload = no_active_high_quality_service.list_preferences_payload()
+
+        self.assertEqual(no_active_high_quality_payload["high_quality_active_count"], 0)
+
+    def test_list_preferences_payload_marks_highly_reliable_preferences(self) -> None:
+        service = _PreferenceService(
+            [
+                {
+                    "preference_id": "pref-reliable",
+                    "delta_fingerprint": "fingerprint-reliable",
+                    "description": "highly reliable preference",
+                    "status": "active",
+                    "avg_similarity_score": 0.15,
+                },
+                {
+                    "preference_id": "pref-too-few",
+                    "delta_fingerprint": "fingerprint-too-few",
+                    "description": "too few applications",
+                    "status": "active",
+                    "avg_similarity_score": 0.15,
+                },
+                {
+                    "preference_id": "pref-correction-rate",
+                    "delta_fingerprint": "fingerprint-correction-rate",
+                    "description": "correction rate at threshold",
+                    "status": "active",
+                    "avg_similarity_score": 0.15,
+                },
+                {
+                    "preference_id": "pref-no-quality",
+                    "delta_fingerprint": "fingerprint-no-quality",
+                    "description": "no quality signal",
+                    "status": "active",
+                },
+            ],
+            audit_summary={
+                "per_preference_stats": {
+                    "fingerprint-reliable": {"applied_count": 3, "corrected_count": 0},
+                    "fingerprint-too-few": {"applied_count": 2, "corrected_count": 0},
+                    "fingerprint-correction-rate": {"applied_count": 20, "corrected_count": 3},
+                    "fingerprint-no-quality": {"applied_count": 5, "corrected_count": 0},
+                },
+            },
+        )
+
+        payload = service.list_preferences_payload()
+        by_id = {pref["preference_id"]: pref for pref in payload["preferences"]}
+
+        self.assertIs(by_id["pref-reliable"]["is_highly_reliable"], True)
+        self.assertIs(by_id["pref-too-few"]["is_highly_reliable"], False)
+        self.assertIs(by_id["pref-correction-rate"]["is_highly_reliable"], False)
+        self.assertIs(by_id["pref-no-quality"]["is_highly_reliable"], False)
+
+    def test_list_preferences_payload_counts_highly_reliable_active_preferences(self) -> None:
+        mixed_service = _PreferenceService(
+            [
+                {
+                    "preference_id": "pref-active-reliable-a",
+                    "delta_fingerprint": "fingerprint-active-reliable-a",
+                    "description": "first active reliable preference",
+                    "status": "active",
+                    "avg_similarity_score": 0.15,
+                },
+                {
+                    "preference_id": "pref-active-reliable-b",
+                    "delta_fingerprint": "fingerprint-active-reliable-b",
+                    "description": "second active reliable preference",
+                    "status": "active",
+                    "avg_similarity_score": 0.15,
+                },
+                {
+                    "preference_id": "pref-active-unreliable",
+                    "delta_fingerprint": "fingerprint-active-unreliable",
+                    "description": "active but too few applications",
+                    "status": "active",
+                    "avg_similarity_score": 0.15,
+                },
+                {
+                    "preference_id": "pref-candidate-reliable",
+                    "delta_fingerprint": "fingerprint-candidate-reliable",
+                    "description": "candidate reliable preference",
+                    "status": "candidate",
+                    "avg_similarity_score": 0.15,
+                },
+            ],
+            audit_summary={
+                "per_preference_stats": {
+                    "fingerprint-active-reliable-a": {"applied_count": 3, "corrected_count": 0},
+                    "fingerprint-active-reliable-b": {"applied_count": 8, "corrected_count": 1},
+                    "fingerprint-active-unreliable": {"applied_count": 2, "corrected_count": 0},
+                    "fingerprint-candidate-reliable": {"applied_count": 5, "corrected_count": 0},
+                },
+            },
+        )
+
+        mixed_payload = mixed_service.list_preferences_payload()
+
+        self.assertEqual(mixed_payload["highly_reliable_active_count"], 2)
+
+        no_active_highly_reliable_service = _PreferenceService(
+            [
+                {
+                    "preference_id": "pref-active-low",
+                    "delta_fingerprint": "fingerprint-active-low",
+                    "description": "active low quality preference",
+                    "status": "active",
+                    "avg_similarity_score": 0.99,
+                },
+                {
+                    "preference_id": "pref-paused-reliable",
+                    "delta_fingerprint": "fingerprint-paused-reliable",
+                    "description": "paused reliable preference",
+                    "status": "paused",
+                    "avg_similarity_score": 0.15,
+                },
+            ],
+            audit_summary={
+                "per_preference_stats": {
+                    "fingerprint-active-low": {"applied_count": 7, "corrected_count": 0},
+                    "fingerprint-paused-reliable": {"applied_count": 7, "corrected_count": 0},
+                },
+            },
+        )
+
+        no_active_highly_reliable_payload = no_active_highly_reliable_service.list_preferences_payload()
+
+        self.assertEqual(no_active_highly_reliable_payload["highly_reliable_active_count"], 0)
+
     def test_list_preferences_payload_no_conflict_for_dissimilar_descriptions(self) -> None:
         service = _PreferenceService([
             {
@@ -192,6 +373,84 @@ class PreferenceHandlerTest(unittest.TestCase):
             ["pref-active-a"],
         )
         self.assertFalse(by_id["pref-candidate"]["conflict_info"]["has_conflict"])
+
+    def test_list_preferences_payload_marks_conflict_severity(self) -> None:
+        service = _PreferenceService(
+            [
+                {
+                    "preference_id": "pref-both-high-a",
+                    "delta_fingerprint": "fingerprint-both-high-a",
+                    "description": "prefer concise summary wording",
+                    "status": "active",
+                    "avg_similarity_score": 0.15,
+                },
+                {
+                    "preference_id": "pref-both-high-b",
+                    "delta_fingerprint": "fingerprint-both-high-b",
+                    "description": "prefer concise summary wording always",
+                    "status": "active",
+                    "avg_similarity_score": 0.15,
+                },
+                {
+                    "preference_id": "pref-one-high",
+                    "delta_fingerprint": "fingerprint-one-high",
+                    "description": "include cited source date",
+                    "status": "active",
+                    "avg_similarity_score": 0.15,
+                },
+                {
+                    "preference_id": "pref-one-normal",
+                    "delta_fingerprint": "fingerprint-one-normal",
+                    "description": "include cited source date always",
+                    "status": "active",
+                    "avg_similarity_score": 0.15,
+                },
+                {
+                    "preference_id": "pref-neither-a",
+                    "delta_fingerprint": "fingerprint-neither-a",
+                    "description": "keep final answer brief",
+                    "status": "active",
+                    "avg_similarity_score": 0.15,
+                },
+                {
+                    "preference_id": "pref-neither-b",
+                    "delta_fingerprint": "fingerprint-neither-b",
+                    "description": "keep final answer brief always",
+                    "status": "active",
+                    "avg_similarity_score": 0.15,
+                },
+                {
+                    "preference_id": "pref-no-conflict",
+                    "delta_fingerprint": "fingerprint-no-conflict",
+                    "description": "use korean honorific style",
+                    "status": "active",
+                    "avg_similarity_score": 0.15,
+                },
+            ],
+            audit_summary={
+                "per_preference_stats": {
+                    "fingerprint-both-high-a": {"applied_count": 3, "corrected_count": 0},
+                    "fingerprint-both-high-b": {"applied_count": 4, "corrected_count": 0},
+                    "fingerprint-one-high": {"applied_count": 3, "corrected_count": 0},
+                    "fingerprint-one-normal": {"applied_count": 2, "corrected_count": 0},
+                    "fingerprint-neither-a": {"applied_count": 2, "corrected_count": 0},
+                    "fingerprint-neither-b": {"applied_count": 2, "corrected_count": 0},
+                    "fingerprint-no-conflict": {"applied_count": 3, "corrected_count": 0},
+                },
+            },
+        )
+
+        payload = service.list_preferences_payload()
+        by_id = {pref["preference_id"]: pref for pref in payload["preferences"]}
+
+        self.assertEqual(by_id["pref-both-high-a"]["conflict_info"]["conflict_severity"], "high")
+        self.assertEqual(by_id["pref-both-high-b"]["conflict_info"]["conflict_severity"], "high")
+        self.assertEqual(by_id["pref-one-high"]["conflict_info"]["conflict_severity"], "high")
+        self.assertEqual(by_id["pref-one-normal"]["conflict_info"]["conflict_severity"], "high")
+        self.assertEqual(by_id["pref-neither-a"]["conflict_info"]["conflict_severity"], "normal")
+        self.assertEqual(by_id["pref-neither-b"]["conflict_info"]["conflict_severity"], "normal")
+        self.assertFalse(by_id["pref-no-conflict"]["conflict_info"]["has_conflict"])
+        self.assertEqual(by_id["pref-no-conflict"]["conflict_info"]["conflict_severity"], "none")
 
     def test_list_preferences_payload_aggregates_active_reliability_totals(self) -> None:
         no_active_service = _PreferenceService(

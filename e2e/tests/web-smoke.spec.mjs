@@ -12460,3 +12460,114 @@ test("reviewed-memory loop: resume/reject lifecycle은 count 기반으로 검증
     await expectPreferenceCountForMessage(reloadedMessage, reducedCount);
   }
 });
+
+test("PreferencePanel 헤더에 충돌 위험 N건이 표시됩니다 (M48 A2 high_severity_conflict_count)", async ({ page }) => {
+  await page.route(/\/api\/preferences$/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: true,
+        preferences: [
+          {
+            preference_id: "pref-conflict-header-test",
+            delta_fingerprint: "sha256:conflict-header-test",
+            description: "충돌 위험 헤더 테스트 선호",
+            status: "active",
+            evidence_count: 2,
+            cross_session_count: 1,
+            reliability_stats: { applied_count: 3, corrected_count: 0 },
+            quality_info: { avg_similarity_score: 0.9, is_high_quality: true },
+            is_highly_reliable: false,
+            conflict_info: {
+              has_conflict: true,
+              conflict_severity: "high",
+              conflicting_preference_ids: ["pref-other"],
+            },
+            activated_at: "2026-04-27T00:00:00Z",
+            created_at: "2026-04-27T00:00:00Z",
+            updated_at: "2026-04-27T00:00:00Z",
+          },
+        ],
+        active_count: 1,
+        candidate_count: 0,
+        highly_reliable_active_count: 0,
+        high_severity_conflict_count: 1,
+      }),
+    });
+  });
+  await page.route(/\/api\/preferences\/audit$/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: true,
+        audit: {
+          total: 1,
+          by_status: { active: 1, candidate: 0 },
+          conflict_pair_count: 1,
+          adopted_corrections_count: 0,
+          available_to_sync_count: 0,
+        },
+      }),
+    });
+  });
+
+  await page.goto("/app-preview");
+  const conflictCountSpan = page.getByTestId("high-severity-conflict-count");
+  await expect(conflictCountSpan).toBeVisible({ timeout: 10_000 });
+  await expect(conflictCountSpan).toContainText("충돌 위험 1건");
+});
+
+test("PreferencePanel 헤더에 신뢰도 높음 N개가 표시됩니다 (M47 highly_reliable_active_count)", async ({ page }) => {
+  await page.route(/\/api\/preferences$/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: true,
+        preferences: [
+          {
+            preference_id: "pref-reliable-header-test",
+            delta_fingerprint: "sha256:reliable-header-test",
+            description: "신뢰도 높음 헤더 테스트 선호",
+            status: "active",
+            evidence_count: 3,
+            cross_session_count: 1,
+            reliability_stats: { applied_count: 5, corrected_count: 0 },
+            quality_info: { avg_similarity_score: 0.92, is_high_quality: true },
+            is_highly_reliable: true,
+            conflict_info: null,
+            activated_at: "2026-04-27T00:00:00Z",
+            created_at: "2026-04-27T00:00:00Z",
+            updated_at: "2026-04-27T00:00:00Z",
+          },
+        ],
+        active_count: 1,
+        candidate_count: 0,
+        highly_reliable_active_count: 1,
+        high_severity_conflict_count: 0,
+      }),
+    });
+  });
+  await page.route(/\/api\/preferences\/audit$/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: true,
+        audit: {
+          total: 1,
+          by_status: { active: 1, candidate: 0 },
+          conflict_pair_count: 0,
+          adopted_corrections_count: 0,
+          available_to_sync_count: 0,
+        },
+      }),
+    });
+  });
+
+  await page.goto("/app-preview");
+  const headerAggregate = page.locator("text=신뢰도 높음 1개");
+  await expect(headerAggregate).toBeVisible({ timeout: 10_000 });
+});

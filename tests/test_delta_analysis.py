@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import unittest
 
-from core.delta_analysis import compute_correction_delta
+from core.delta_analysis import compute_correction_delta, is_high_quality
 
 
 class DeltaAnalysisTest(unittest.TestCase):
@@ -73,6 +73,13 @@ class DeltaAnalysisTest(unittest.TestCase):
         self.assertIn("character_count_delta", dims)
         self.assertIsInstance(dims["change_types"], list)
         self.assertGreater(dims["changed_segment_count"], 0)
+
+    def test_high_quality_threshold_boundaries(self) -> None:
+        self.assertFalse(is_high_quality(0.04))
+        self.assertTrue(is_high_quality(0.05))
+        self.assertTrue(is_high_quality(0.50))
+        self.assertTrue(is_high_quality(0.98))
+        self.assertFalse(is_high_quality(0.99))
 
     def test_fingerprint_matches_web_py_algorithm(self) -> None:
         """Critical compatibility test: same algorithm as web.py."""

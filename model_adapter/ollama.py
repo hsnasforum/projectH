@@ -189,11 +189,15 @@ class OllamaModelAdapter(ModelAdapter):
         "Keep file names and proper nouns as they are when needed."
     )
 
-    def summarize(self, text: str) -> str:
+    def summarize(self, text: str, *, active_preferences: list[dict[str, str]] | None = None) -> str:
         compact = self._is_compact_model
+        pref_block = self._format_preference_block(active_preferences, korean=compact)
+        system = self._COMPACT_SYSTEM_SUMMARIZE if compact else self._FULL_SYSTEM_SUMMARIZE
+        if pref_block:
+            system = pref_block + "\n\n" + system
         return self._generate(
             prompt=text,
-            system=self._COMPACT_SYSTEM_SUMMARIZE if compact else self._FULL_SYSTEM_SUMMARIZE,
+            system=system,
             enforce_korean=True,
             korean_rewrite_instruction=(
                 "자연스러운 한국어로 간결하게 다시 쓰세요. 마크다운 제목 제거." if compact else
@@ -203,11 +207,15 @@ class OllamaModelAdapter(ModelAdapter):
             ),
         )
 
-    def stream_summarize(self, text: str):
+    def stream_summarize(self, text: str, *, active_preferences: list[dict[str, str]] | None = None):
         compact = self._is_compact_model
+        pref_block = self._format_preference_block(active_preferences, korean=compact)
+        system = self._COMPACT_SYSTEM_SUMMARIZE if compact else self._FULL_SYSTEM_SUMMARIZE
+        if pref_block:
+            system = pref_block + "\n\n" + system
         yield from self._stream_generate(
             prompt=text,
-            system=self._COMPACT_SYSTEM_SUMMARIZE if compact else self._FULL_SYSTEM_SUMMARIZE,
+            system=system,
             enforce_korean=True,
             korean_rewrite_instruction=(
                 "자연스러운 한국어로 간결하게 다시 쓰세요. 마크다운 제목 제거." if compact else

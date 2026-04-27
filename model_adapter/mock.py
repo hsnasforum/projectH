@@ -24,19 +24,22 @@ class MockModelAdapter(ModelAdapter):
             prefix = f"[모의 응답, 선호 {len(active_preferences)}건 반영]"
         return f"{prefix} {prompt}"
 
-    def summarize(self, text: str) -> str:
+    def summarize(self, text: str, *, active_preferences: list[dict[str, str]] | None = None) -> str:
+        prefix = "[모의 요약]"
+        if active_preferences:
+            prefix = f"[모의 요약, 선호 {len(active_preferences)}건 반영]"
         if "Summary mode: merged_chunk_outline" in text:
             if "Summary source type: search_results" in text:
-                return "[모의 요약] " + self._summarize_search_chunk_outline(text)
-            return "[모의 요약] " + self._summarize_chunk_outline(text)
+                return prefix + " " + self._summarize_search_chunk_outline(text)
+            return prefix + " " + self._summarize_chunk_outline(text)
         if "Summary mode: short_summary" in text:
             if "Summary source type: search_results" in text:
-                return "[모의 요약] " + self._summarize_search_short_summary_prompt(text)
-            return "[모의 요약] " + self._summarize_short_summary_prompt(text)
+                return prefix + " " + self._summarize_search_short_summary_prompt(text)
+            return prefix + " " + self._summarize_short_summary_prompt(text)
         if "Summary mode: chunk_note" in text:
-            return "[모의 요약] " + self._summarize_chunk_note_prompt(text)
+            return prefix + " " + self._summarize_chunk_note_prompt(text)
         trimmed = text.strip().replace("\n", " ")
-        return "[모의 요약] " + trimmed[:240]
+        return prefix + " " + trimmed[:240]
 
     def create_summary_note(self, *, source_path: str, text: str) -> SummaryNoteDraft:
         summary = self.summarize(text)
@@ -136,8 +139,8 @@ class MockModelAdapter(ModelAdapter):
     def stream_respond(self, prompt: str, *, active_preferences: list[dict[str, str]] | None = None):
         yield from self._stream_text(self.respond(prompt, active_preferences=active_preferences))
 
-    def stream_summarize(self, text: str):
-        yield from self._stream_text(self.summarize(text))
+    def stream_summarize(self, text: str, *, active_preferences: list[dict[str, str]] | None = None):
+        yield from self._stream_text(self.summarize(text, active_preferences=active_preferences))
 
     def stream_answer_with_context(
         self,

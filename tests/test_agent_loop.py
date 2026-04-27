@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+from contextlib import nullcontext
 import unittest
 from typing import Any
 
-from core.agent_loop import AgentLoop
+from core.agent_loop import AgentLoop, UserRequest
+from core.contracts import ResponseStatus, StreamEventType
+from model_adapter.base import ModelStreamEvent
 
 
 class _PreferenceStore:
@@ -22,6 +25,34 @@ class _SessionStore:
         return {"per_preference_stats": self._per_preference_stats}
 
 
+class _TaskLogger:
+    def __init__(self) -> None:
+        self.entries: list[dict[str, Any]] = []
+
+    def log(self, *, session_id: str, action: str, detail: dict[str, Any]) -> None:
+        self.entries.append({"session_id": session_id, "action": action, "detail": detail})
+
+
+class _RecordingContextModel:
+    def __init__(self) -> None:
+        self.active_preferences: list[dict[str, str]] | None | str = "not-called"
+
+    def stream_answer_with_context(self, **kwargs: Any) -> list[str]:
+        self.active_preferences = kwargs.get("active_preferences")
+        return ["web answer"]
+
+
+class _RecordingSummaryModel:
+    def __init__(self) -> None:
+        self.active_preferences: list[list[dict[str, str]] | None] = []
+
+    def stream_summarize(
+        self, text: str, *, active_preferences: list[dict[str, str]] | None = None
+    ) -> list[ModelStreamEvent]:
+        self.active_preferences.append(active_preferences)
+        return [ModelStreamEvent(kind=StreamEventType.TEXT_REPLACE, text="요약 결과")]
+
+
 def _build_loop(
     preferences: list[dict[str, Any]] | None,
     per_preference_stats: dict[str, Any] | None = None,
@@ -29,6 +60,43 @@ def _build_loop(
     loop = AgentLoop.__new__(AgentLoop)
     loop.preference_store = _PreferenceStore(preferences) if preferences is not None else None
     loop.session_store = _SessionStore(per_preference_stats)
+    return loop
+
+
+def _build_context_answer_loop(model: _RecordingContextModel) -> AgentLoop:
+    loop = AgentLoop.__new__(AgentLoop)
+    loop.model = model
+    loop.task_logger = _TaskLogger()
+    loop._detect_follow_up_intent = lambda _text: "general"  # type: ignore[method-assign]
+    loop._refine_follow_up_intent_with_context = lambda _text, intent: intent  # type: ignore[method-assign]
+    loop._extract_retry_feedback_label = lambda _request: None  # type: ignore[method-assign]
+    loop._extract_retry_feedback_reason = lambda _request: None  # type: ignore[method-assign]
+    loop._extract_retry_target_message_id = lambda _request: None  # type: ignore[method-assign]
+    loop._build_retry_policy = lambda **_kwargs: {"max_evidence_items": 4, "max_supporting_chunks": 2}  # type: ignore[method-assign]
+    loop._select_retrieval_chunks = lambda **_kwargs: []  # type: ignore[method-assign]
+    loop._compose_retrieved_context_excerpt = lambda **kwargs: kwargs.get("fallback_excerpt", "")  # type: ignore[method-assign]
+    loop._extract_evidence_from_chunks = lambda **_kwargs: []  # type: ignore[method-assign]
+    loop._dedupe_evidence_items = lambda items, **_kwargs: items  # type: ignore[method-assign]
+    loop._filter_evidence_pool_for_retry = lambda **kwargs: kwargs.get("evidence_pool", [])  # type: ignore[method-assign]
+    loop._select_evidence_items = lambda **_kwargs: []  # type: ignore[method-assign]
+    loop._compose_grounded_context_excerpt = lambda **kwargs: kwargs.get("fallback_excerpt", "")  # type: ignore[method-assign]
+    loop._augment_retry_request = lambda **kwargs: kwargs.get("user_request", "")  # type: ignore[method-assign]
+    loop._emit_phase = lambda *_args, **_kwargs: None  # type: ignore[method-assign]
+    loop._routed_model = lambda **_kwargs: nullcontext()  # type: ignore[method-assign]
+    loop._collect_model_stream = lambda stream, **_kwargs: "".join(stream)  # type: ignore[method-assign]
+    loop._apply_context_conversation_mode = lambda **kwargs: kwargs.get("answer", "")  # type: ignore[method-assign]
+    loop._public_active_context = lambda active_context: dict(active_context)  # type: ignore[method-assign]
+    return loop
+
+
+def _build_summary_loop(
+    model: _RecordingSummaryModel,
+    preferences: list[dict[str, Any]],
+    per_preference_stats: dict[str, Any],
+) -> AgentLoop:
+    loop = _build_loop(preferences, per_preference_stats)
+    loop.model = model
+    loop._model_router = None
     return loop
 
 
@@ -115,6 +183,69 @@ class AgentLoopPreferenceTest(unittest.TestCase):
                 {"description": "too few applications", "fingerprint": "fp-too-few"},
             ],
         )
+
+    def test_summarize_text_injects_highly_reliable_preferences(self) -> None:
+        model = _RecordingSummaryModel()
+        loop = _build_summary_loop(
+            model,
+            [
+                {
+                    "description": "요약은 짧게",
+                    "delta_fingerprint": "fp-reliable",
+                    "avg_similarity_score": 0.15,
+                },
+                {
+                    "description": "적용 횟수 부족",
+                    "delta_fingerprint": "fp-too-few",
+                    "avg_similarity_score": 0.15,
+                },
+            ],
+            {
+                "fp-reliable": {"applied_count": 3, "corrected_count": 0},
+                "fp-too-few": {"applied_count": 2, "corrected_count": 0},
+            },
+        )
+
+        summary, chunks = loop._summarize_text_with_chunking(
+            text="짧은 문서 본문입니다.",
+            source_label="sample.txt",
+        )
+
+        self.assertEqual(summary, "요약 결과")
+        self.assertEqual(chunks, [])
+        self.assertEqual(
+            model.active_preferences,
+            [[{"description": "요약은 짧게", "fingerprint": "fp-reliable"}]],
+        )
+
+
+class AgentLoopWebPreferenceInjectionTest(unittest.TestCase):
+    def test_web_investigation_answer_does_not_inject_preferences(self) -> None:
+        model = _RecordingContextModel()
+        loop = _build_context_answer_loop(model)
+        routed_preference_calls: list[dict[str, Any]] = []
+
+        def _routed_preferences(**kwargs: Any) -> list[dict[str, str]]:
+            routed_preference_calls.append(kwargs)
+            return [{"description": "should not be injected", "fingerprint": "fp-pref"}]
+
+        loop._routed_preferences = _routed_preferences  # type: ignore[method-assign]
+
+        response = loop._respond_with_active_context(
+            request=UserRequest(user_text="요약해줘", session_id="session-1"),
+            active_context={
+                "kind": "web_search",
+                "label": "웹 조사 결과",
+                "source_paths": ["https://example.com/a"],
+                "excerpt": "web excerpt",
+            },
+        )
+
+        self.assertEqual(response.status, ResponseStatus.ANSWER)
+        self.assertEqual(response.text, "web answer")
+        self.assertIsNone(model.active_preferences)
+        self.assertIsNone(response.applied_preferences)
+        self.assertEqual(routed_preference_calls, [])
 
 
 if __name__ == "__main__":

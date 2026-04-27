@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import unittest
 
+from core.contracts import StreamEventType
+from model_adapter.base import ModelStreamEvent
 from model_adapter.ollama import OllamaModelAdapter
 from model_adapter.mock import MockModelAdapter
 
@@ -76,3 +78,47 @@ class MockModelPreferenceTest(unittest.TestCase):
             active_preferences=prefs,
         )
         self.assertIsInstance(response, str)
+
+    def test_summarize_with_preferences(self) -> None:
+        model = MockModelAdapter()
+        prefs = [{"description": "요약은 짧게", "fingerprint": "fp"}]
+        response = model.summarize("hello", active_preferences=prefs)
+        self.assertIn("선호 1건 반영", response)
+
+
+class _CaptureSummaryOllamaAdapter(OllamaModelAdapter):
+    def __init__(self) -> None:
+        super().__init__(base_url="http://localhost:11434", model="qwen2.5:32b")
+        self.system_prompts: list[str] = []
+
+    def _stream_generate(self, *, prompt: str, system: str, **kwargs):  # type: ignore[no-untyped-def]
+        self.system_prompts.append(system)
+        yield ModelStreamEvent(kind=StreamEventType.TEXT_REPLACE, text="요약 결과")
+
+    def _generate(self, *, prompt: str, system: str, **kwargs):  # type: ignore[no-untyped-def]
+        self.system_prompts.append(system)
+        return "요약 결과"
+
+
+class OllamaSummarizePreferenceTest(unittest.TestCase):
+    def test_stream_summarize_includes_preferences_in_system_prompt(self) -> None:
+        adapter = _CaptureSummaryOllamaAdapter()
+        prefs = [{"description": "요약은 짧게", "fingerprint": "fp"}]
+
+        events = list(adapter.stream_summarize("document text", active_preferences=prefs))
+
+        self.assertEqual(events[0].text, "요약 결과")
+        self.assertEqual(len(adapter.system_prompts), 1)
+        self.assertIn("User correction preferences", adapter.system_prompts[0])
+        self.assertIn("요약은 짧게", adapter.system_prompts[0])
+        self.assertIn("Summarize the provided document", adapter.system_prompts[0])
+
+    def test_summarize_without_preferences_keeps_existing_system_prompt(self) -> None:
+        adapter = _CaptureSummaryOllamaAdapter()
+
+        result = adapter.summarize("document text", active_preferences=None)
+
+        self.assertEqual(result, "요약 결과")
+        self.assertEqual(len(adapter.system_prompts), 1)
+        self.assertNotIn("User correction preferences", adapter.system_prompts[0])
+        self.assertTrue(adapter.system_prompts[0].startswith("Summarize the provided document"))

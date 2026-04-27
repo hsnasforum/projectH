@@ -151,9 +151,7 @@
 
 ## M48 Direction Candidates
 
-1. Candidate A: conflict detection improvement — weight conflict severity by `is_highly_reliable` so highly reliable preferences can make conflicts more visible without changing approval boundaries.
-2. Candidate B: cross-session preference schema design — approval-gated durable preference direction aligned with the teachable local personal agent north star; this is not shipped behavior.
-3. M48 Axis 1 should be confirmed through advisory in the next session before implementation starts.
+1. Candidate B: cross-session preference schema design — approval-gated durable preference direction aligned with the teachable local personal agent north star; this is not shipped behavior.
 
 ## Internal Operator Tooling Follow-Up
 

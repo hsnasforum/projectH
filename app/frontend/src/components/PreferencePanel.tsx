@@ -62,6 +62,7 @@ export default function PreferencePanel() {
   });
   const [highQualityActiveCount, setHighQualityActiveCount] = useState(0);
   const [highlyReliableActiveCount, setHighlyReliableActiveCount] = useState(0);
+  const [highSeverityConflictCount, setHighSeverityConflictCount] = useState(0);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -96,6 +97,17 @@ export default function PreferencePanel() {
         typeof data.highly_reliable_active_count === "number" && Number.isFinite(data.highly_reliable_active_count)
           ? data.highly_reliable_active_count
           : visible.filter(isActiveHighlyReliablePreference).length,
+      );
+      const dataWithConflict = data as typeof data & { high_severity_conflict_count?: number | null };
+      setHighSeverityConflictCount(
+        typeof dataWithConflict.high_severity_conflict_count === "number" &&
+          Number.isFinite(dataWithConflict.high_severity_conflict_count)
+          ? dataWithConflict.high_severity_conflict_count
+          : visible.filter(
+              (pref) =>
+                pref.status === "active" &&
+                (pref.conflict_info as { conflict_severity?: string } | undefined)?.conflict_severity === "high",
+            ).length,
       );
       setAudit(auditData);
     } catch {
@@ -236,6 +248,11 @@ export default function PreferencePanel() {
                 총 적용 {reliabilityTotals.applied}회 · 총 교정 {reliabilityTotals.corrected}회
                 {highQualityActiveCount > 0 ? ` · 고품질 ${highQualityActiveCount}개` : ""}
                 {highlyReliableActiveCount > 0 ? ` · 신뢰도 높음 ${highlyReliableActiveCount}개` : ""}
+                {highSeverityConflictCount > 0 && (
+                  <span data-testid="high-severity-conflict-count">
+                    {` · 충돌 위험 ${highSeverityConflictCount}건`}
+                  </span>
+                )}
               </span>
             )}
           </span>

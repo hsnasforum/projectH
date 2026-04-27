@@ -151,9 +151,24 @@
 
 ## M48 Direction Candidates
 
-1. Candidate A: conflict detection improvement — weight conflict severity by `is_highly_reliable` so highly reliable preferences can make conflicts more visible without changing approval boundaries.
-2. Candidate B: cross-session preference schema design — approval-gated durable preference direction aligned with the teachable local personal agent north star; this is not shipped behavior.
-3. M48 Axis 1 should be confirmed through advisory in the next session before implementation starts.
+1. Candidate B: cross-session preference schema design — approval-gated durable preference direction aligned with the teachable local personal agent north star; this is not shipped behavior.
+
+## M47/M48 A2 E2E 커버리지 갭 (post-merge 작업)
+
+M47 "신뢰도 높음" 집계 헤더와 M48 Axis 2 "충돌 위험" 헤더
+(`data-testid="high-severity-conflict-count"`)에 대한 E2E 테스트가 없다.
+
+M46 "고품질" 집계 헤더 테스트는 `e2e/tests/web-smoke.spec.mjs` line 11674에 존재한다.
+
+블로커:
+- `app/static/dist` (index.js, index.css, index.html)가 git-tracked
+- `app/frontend/package.json`에 build 스크립트가 없음 (Vite 직접 호출 필요)
+- dist 재빌드 없이는 PreferencePanel M47/M48 A2 렌더링을 E2E로 확인 불가
+
+PR #45 merge 후 수행:
+1. Vite 빌드 명령으로 `app/static/dist` 재빌드
+2. M47/M48 A2 mock-route E2E 테스트 추가
+3. 재빌드된 dist + 새 테스트 커밋
 
 ## Internal Operator Tooling Follow-Up
 

@@ -474,6 +474,7 @@ export default function MessageBubble({
                       );
                       const isEditing = editingPrefId === pref.fingerprint;
                       const displayDescription = fullPref?.description ?? pref.description;
+                      const hasPreferenceConflict = fullPref?.conflict_info?.has_conflict === true;
                       const isHighQualityPreference = fullPref?.quality_info?.is_high_quality === true;
                       const appliedCount = fullPref?.reliability_stats?.applied_count;
                       const correctedCount = fullPref?.reliability_stats?.corrected_count;
@@ -483,6 +484,14 @@ export default function MessageBubble({
                         typeof correctedCount === "number" && Number.isFinite(correctedCount)
                           ? correctedCount
                           : 0;
+                      const isHighSeverityPreferenceConflict =
+                        fullPref?.conflict_info?.conflict_severity === "high";
+                      const conflictingPreferenceIds =
+                        fullPref?.conflict_info?.conflicting_preference_ids ?? [];
+                      const preferenceConflictLabel = isHighSeverityPreferenceConflict ? "높은 충돌 위험" : "충돌";
+                      const preferenceConflictTitle = conflictingPreferenceIds.length > 0
+                        ? `${preferenceConflictLabel}: ${conflictingPreferenceIds.join(", ")}`
+                        : preferenceConflictLabel;
                       return (
                         <div
                           key={pref.fingerprint || pref.description}
@@ -556,6 +565,18 @@ export default function MessageBubble({
                           {isHighQualityPreference && (
                             <span className="w-fit rounded bg-sky-50 px-1 py-0.5 text-[9px] font-medium text-sky-600">
                               고품질
+                            </span>
+                          )}
+                          {hasPreferenceConflict && (
+                            <span
+                              className={`w-fit rounded border px-1 py-0.5 text-[9px] font-medium ${
+                                isHighSeverityPreferenceConflict
+                                  ? "border-amber-300 bg-amber-50 text-amber-700"
+                                  : "border-orange-200 bg-orange-50 text-orange-700"
+                              }`}
+                              title={preferenceConflictTitle}
+                            >
+                              ⚠ 충돌
                             </span>
                           )}
                           {fullPref?.status && fullPref.status !== "active" && (

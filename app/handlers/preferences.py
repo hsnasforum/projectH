@@ -232,6 +232,7 @@ class PreferenceHandlerMixin:
         total_corrected = 0
         high_quality_active_count = 0
         highly_reliable_active_count = 0
+        high_severity_conflict_count = 0
         for pref_copy in enriched:
             if pref_copy.get("status") != "active":
                 continue
@@ -240,6 +241,9 @@ class PreferenceHandlerMixin:
                 high_quality_active_count += 1
             if pref_copy.get("is_highly_reliable") is True:
                 highly_reliable_active_count += 1
+            conflict_info = pref_copy.get("conflict_info")
+            if isinstance(conflict_info, dict) and conflict_info.get("conflict_severity") == "high":
+                high_severity_conflict_count += 1
             reliability_stats = pref_copy.get("reliability_stats")
             if not isinstance(reliability_stats, dict):
                 continue
@@ -258,6 +262,7 @@ class PreferenceHandlerMixin:
             "total_corrected": total_corrected,
             "high_quality_active_count": high_quality_active_count,
             "highly_reliable_active_count": highly_reliable_active_count,
+            "high_severity_conflict_count": high_severity_conflict_count,
         }
 
     def get_preference_audit(self) -> dict[str, Any]:

@@ -4,7 +4,10 @@ from typing import Any
 
 from app.errors import WebApiError
 from core.contracts import CandidateFamily
-from core.delta_analysis import is_high_quality
+from storage.preference_utils import (
+    enrich_preference_reliability,
+    is_highly_reliable_preference,
+)
 
 
 def _jaccard_word_similarity(a: str, b: str) -> float:
@@ -106,21 +109,7 @@ def _preference_exists_for_fingerprint(preference_store: Any, fingerprint: str) 
 
 
 def _is_highly_reliable_preference(preference: dict[str, Any]) -> bool:
-    quality_info = preference.get("quality_info")
-    if not isinstance(quality_info, dict) or quality_info.get("is_high_quality") is not True:
-        return False
-
-    reliability_stats = preference.get("reliability_stats")
-    if not isinstance(reliability_stats, dict):
-        return False
-
-    applied_count = reliability_stats.get("applied_count", 0)
-    corrected_count = reliability_stats.get("corrected_count", 0)
-    if not isinstance(applied_count, int) or not isinstance(corrected_count, int):
-        return False
-    if applied_count < 3:
-        return False
-    return corrected_count / applied_count < 0.15
+    return is_highly_reliable_preference(preference)
 
 
 class PreferenceHandlerMixin:
@@ -136,31 +125,7 @@ class PreferenceHandlerMixin:
 
         enriched = []
         for pref in all_prefs:
-            pref_copy = dict(pref)
-            fingerprint = str(pref_copy.get("fingerprint") or pref_copy.get("delta_fingerprint") or "")
-            stats = per_pref_stats.get(fingerprint, {})
-            if not isinstance(stats, dict):
-                stats = {}
-            applied_count = stats.get("applied_count", 0)
-            corrected_count = stats.get("corrected_count", 0)
-            pref_copy["reliability_stats"] = {
-                "applied_count": applied_count if isinstance(applied_count, int) else 0,
-                "corrected_count": corrected_count if isinstance(corrected_count, int) else 0,
-            }
-            avg_score = pref_copy.get("avg_similarity_score")
-            if avg_score is not None:
-                try:
-                    avg_score_float = float(avg_score)
-                    quality_info = {
-                        "avg_similarity_score": avg_score_float,
-                        "is_high_quality": is_high_quality(avg_score_float),
-                    }
-                except (TypeError, ValueError):
-                    quality_info = {"avg_similarity_score": None, "is_high_quality": None}
-            else:
-                quality_info = {"avg_similarity_score": None, "is_high_quality": None}
-            pref_copy["quality_info"] = quality_info
-            pref_copy["is_highly_reliable"] = _is_highly_reliable_preference(pref_copy)
+            pref_copy = enrich_preference_reliability(pref, per_pref_stats)
             source_ref = _preference_review_source_ref(pref_copy)
             if source_ref is not None:
                 review_reason_note = _as_nonempty_text(source_ref.get("reason_note"))

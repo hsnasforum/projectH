@@ -1075,10 +1075,21 @@ M45의 per-preference `reliability_stats`와 M46의
 - `tests/test_preference_handler.py`: both-high, one-high, neither-high,
   no-conflict severity case를 포함해 18 tests OK.
 
+#### Shipped Infrastructure (Axis 2, 2026-04-27)
+- `app/handlers/preferences.py`: preferences list payload에 active preference 중
+  `conflict_info.conflict_severity == "high"`인 항목 수
+  `high_severity_conflict_count` 추가.
+- `app/frontend/src/components/PreferencePanel.tsx`: count가 1 이상일 때만
+  header aggregate line에 `충돌 위험 N건` 표시.
+- `data-testid="high-severity-conflict-count"`로 header conflict-risk aggregate를
+  smoke/UI contract에서 직접 식별할 수 있게 했다.
+- 기존 per-card conflict badge, `has_conflict`, `conflicting_preference_ids`,
+  activate confirmation 동작은 변경 없음.
+
 ## Next 3 Implementation Priorities
 
 1. **E2E 환경 개선 완료**: `e2e/start-server.sh` healthcheck wrapper no-server / existing-server 두 경로가 정적 감사(09c806d)로 확인됨. operator가 검증 수준을 release gate로 인정(Q1 Option A, operator_request 263). B1 gate closed (2026-04-26).
-2. **M48 Axis 1 shipped**: Preference conflict payload now includes `conflict_severity` (`"high"` / `"normal"` / `"none"`) from per-preference `is_highly_reliable`; `PreferencePanel` elevates only high-severity conflict badges while preserving existing `has_conflict` / `conflicting_preference_ids`, approval, and storage boundaries.
+2. **M48 Axis 1+2 shipped**: Preference conflict payload now includes `conflict_severity` (`"high"` / `"normal"` / `"none"`) from per-preference `is_highly_reliable`; `/api/preferences` also includes active-only `high_severity_conflict_count`; `PreferencePanel` elevates only high-severity conflict badges and shows `충돌 위험 N건` with `data-testid="high-severity-conflict-count"` when the aggregate is greater than zero, while preserving existing `has_conflict` / `conflicting_preference_ids`, approval, and storage boundaries.
 
 ## Do Not Pull Forward
 

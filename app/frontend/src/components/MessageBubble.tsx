@@ -475,6 +475,7 @@ export default function MessageBubble({
                       const isEditing = editingPrefId === pref.fingerprint;
                       const displayDescription = fullPref?.description ?? pref.description;
                       const hasPreferenceConflict = fullPref?.conflict_info?.has_conflict === true;
+                      const isHighQualityPreference = fullPref?.quality_info?.is_high_quality === true;
                       const appliedCount = fullPref?.reliability_stats?.applied_count;
                       const correctedCount = fullPref?.reliability_stats?.corrected_count;
                       const shouldShowReliabilityStats =
@@ -561,6 +562,11 @@ export default function MessageBubble({
                               </button>
                             </div>
                           </div>
+                          {isHighQualityPreference && (
+                            <span className="w-fit rounded bg-sky-50 px-1 py-0.5 text-[9px] font-medium text-sky-600">
+                              고품질
+                            </span>
+                          )}
                           {hasPreferenceConflict && (
                             <span
                               className={`w-fit rounded border px-1 py-0.5 text-[9px] font-medium ${

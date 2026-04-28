@@ -67,6 +67,10 @@ class AggregateHandlerMixin:
             "top_recurring_fingerprints": top_fps,
         }
 
+    def get_correction_list(self, limit: int = 5) -> dict[str, Any]:
+        recent = self.correction_store.list_recent(limit=limit)
+        return {"ok": True, "corrections": list(recent)}
+
     def confirm_correction_pattern(self, payload: dict[str, Any]) -> dict[str, Any]:
         delta_fingerprint = str(payload.get("delta_fingerprint") or "").strip()
         if not delta_fingerprint:

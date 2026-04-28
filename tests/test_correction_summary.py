@@ -61,6 +61,33 @@ class CorrectionSummaryTest(unittest.TestCase):
             self.assertEqual(fps[0].get("original_snippet"), "original text one")
             self.assertEqual(fps[0].get("corrected_snippet"), "corrected text one")
 
+    def test_correction_list_empty_store(self) -> None:
+        with TemporaryDirectory() as d:
+            service = _CorrectionSummaryService(self._make_store(d))
+
+            payload = service.get_correction_list()
+
+            self.assertIs(payload["ok"], True)
+            self.assertEqual(payload["corrections"], [])
+
+    def test_correction_list_returns_recent(self) -> None:
+        with TemporaryDirectory() as d:
+            store = self._make_store(d)
+            record = store.record_correction(
+                artifact_id="art1",
+                session_id="s1",
+                source_message_id="msg1",
+                original_text="original text one",
+                corrected_text="corrected text one",
+            )
+            self.assertIsNotNone(record)
+
+            payload = _CorrectionSummaryService(store).get_correction_list()
+
+            self.assertIs(payload["ok"], True)
+            self.assertEqual(len(payload["corrections"]), 1)
+            self.assertEqual(payload["corrections"][0]["correction_id"], record["correction_id"])
+
 
 if __name__ == "__main__":
     unittest.main()

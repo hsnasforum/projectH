@@ -332,6 +332,26 @@ export async function fetchCorrectionSummary(): Promise<CorrectionSummary> {
   return res.json() as Promise<CorrectionSummary>;
 }
 
+export interface CorrectionListItem {
+  correction_id: string;
+  status: string;
+  original_text?: string;
+  corrected_text?: string;
+  delta_fingerprint?: string;
+  created_at?: string;
+}
+
+export interface CorrectionListResponse {
+  ok: boolean;
+  corrections: CorrectionListItem[];
+}
+
+export async function fetchCorrectionList(): Promise<CorrectionListResponse> {
+  const res = await fetch(`${BASE}/api/corrections/list`);
+  if (!res.ok) throw new Error("correction list fetch failed");
+  return res.json() as Promise<CorrectionListResponse>;
+}
+
 export async function confirmCorrectionPattern(
   delta_fingerprint: string,
 ): Promise<{ ok: boolean; confirmed_count: number }> {

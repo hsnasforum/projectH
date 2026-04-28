@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback } from "react";
-import type { CorrectionSummary, PreferenceAudit, PreferenceRecord } from "../api/client";
+import type { CorrectionListResponse, CorrectionSummary, PreferenceAudit, PreferenceRecord } from "../api/client";
 import {
   confirmCorrectionPattern,
   dismissCorrectionPattern,
+  fetchCorrectionList,
   fetchCorrectionSummary,
   fetchPreferenceAudit,
   fetchPreferences,
@@ -67,6 +68,7 @@ export default function PreferencePanel({ lastAppliedFingerprints = [] }: PanelP
   const [preferences, setPreferences] = useState<PreferenceRecord[]>([]);
   const [audit, setAudit] = useState<PreferenceAudit | null>(null);
   const [correctionSummary, setCorrectionSummary] = useState<CorrectionSummary | null>(null);
+  const [correctionList, setCorrectionList] = useState<CorrectionListResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [expanded, setExpanded] = useState(true);
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
@@ -87,10 +89,11 @@ export default function PreferencePanel({ lastAppliedFingerprints = [] }: PanelP
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [data, auditData, summary] = await Promise.all([
+      const [data, auditData, summary, list] = await Promise.all([
         fetchPreferences(),
         fetchPreferenceAudit(),
         fetchCorrectionSummary().catch(() => null),
+        fetchCorrectionList().catch(() => null),
       ]);
       // Filter out rejected items entirely
       const visible = (data.preferences ?? []).filter((p) => p.status !== "rejected");
@@ -137,6 +140,7 @@ export default function PreferencePanel({ lastAppliedFingerprints = [] }: PanelP
       );
       setAudit(auditData);
       setCorrectionSummary(summary);
+      setCorrectionList(list);
     } catch {
       // silent
     } finally {
@@ -334,6 +338,21 @@ export default function PreferencePanel({ lastAppliedFingerprints = [] }: PanelP
                     >
                       무시
                     </button>
+                  </div>
+                )}
+                {correctionList && correctionList.corrections.length > 0 && (
+                  <div className="px-2 mt-1">
+                    <p className="text-[10px] text-sidebar-muted/60 mb-0.5">최근 교정</p>
+                    {correctionList.corrections.slice(0, 3).map((c) => (
+                      <div
+                        key={c.correction_id}
+                        data-testid="correction-list-item"
+                        className="text-[10px] text-sidebar-muted/50 truncate"
+                        title={c.original_text}
+                      >
+                        [{c.status}] {(c.original_text ?? "").slice(0, 35)}
+                      </div>
+                    ))}
                   </div>
                 )}
               </>

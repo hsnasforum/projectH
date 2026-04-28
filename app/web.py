@@ -354,6 +354,10 @@ class LocalAssistantHandler(BaseHTTPRequestHandler):
             response = self.server.service.get_correction_summary()
             self._send_json(HTTPStatus.OK, response)
             return
+        if parsed.path == "/api/corrections/list":
+            response = self.server.service.get_correction_list()
+            self._send_json(HTTPStatus.OK, response)
+            return
         if parsed.path.startswith("/controller-assets/"):
             self._serve_controller_asset(parsed.path)
             return

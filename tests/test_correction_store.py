@@ -60,6 +60,31 @@ class CorrectionStoreTest(unittest.TestCase):
             store = self._make_store(tmp)
             self.assertIsNone(store.get("correction-nope"))
 
+    def test_invalid_record_is_filtered_from_scan_all(self) -> None:
+        with TemporaryDirectory() as tmp:
+            store = self._make_store(tmp)
+            path = store._path("correction-invalid")
+            path.write_text(
+                json.dumps(
+                    {
+                        "correction_id": "correction-invalid",
+                        "status": CorrectionStatus.RECORDED,
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            self.assertEqual(store._scan_all(), [])
+
+    def test_valid_record_passes_validation(self) -> None:
+        with TemporaryDirectory() as tmp:
+            store = self._make_store(tmp)
+            record = self._record_sample(store)
+
+            scanned = store._scan_all()
+
+            self.assertEqual([item["correction_id"] for item in scanned], [record["correction_id"]])
+
     def test_record_sets_timestamps(self) -> None:
         with TemporaryDirectory() as tmp:
             store = self._make_store(tmp)

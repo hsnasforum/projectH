@@ -535,6 +535,34 @@ class TestSQLiteCorrectionStore(unittest.TestCase):
 
         self.assertEqual(len(matches), 2)
 
+    def test_invalid_sqlite_row_filtered_from_list_recent(self) -> None:
+        self.db.execute(
+            "INSERT INTO corrections "
+            "(correction_id, artifact_id, session_id, delta_fingerprint, status, data, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                "correction-invalid",
+                "artifact-invalid",
+                "session-invalid",
+                "",
+                CorrectionStatus.RECORDED,
+                json.dumps({"correction_id": "correction-invalid"}),
+                "2099-01-01T00:00:00+00:00",
+                "2099-01-01T00:00:00+00:00",
+            ),
+        )
+        self.db.commit()
+        valid = self._record(
+            artifact_id="artifact-valid-row",
+            source_message_id="message-valid-row",
+        )
+
+        matches = self.store.list_recent(10)
+
+        correction_ids = {record["correction_id"] for record in matches}
+        self.assertIn(valid["correction_id"], correction_ids)
+        self.assertNotIn("correction-invalid", correction_ids)
+
     def test_list_incomplete_corrections_returns_only_non_terminal_records(self) -> None:
         recorded = self._record(
             artifact_id="artifact-incomplete-recorded",

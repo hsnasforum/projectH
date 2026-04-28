@@ -27,6 +27,7 @@ from core.contracts import (
     PreferenceStatus,
     TaskLogEntry,
 )
+from storage.correction_store import _is_valid_correction_record
 
 try:
     from storage.preference_store import (
@@ -784,7 +785,11 @@ class SQLiteCorrectionStore:
             "SELECT * FROM corrections ORDER BY created_at DESC LIMIT ?",
             (limit,),
         )
-        return [self._row_to_dict(row) for row in rows]
+        return [
+            record
+            for record in (self._row_to_dict(row) for row in rows)
+            if _is_valid_correction_record(record)
+        ]
 
     def list_filtered(
         self,
@@ -811,7 +816,11 @@ class SQLiteCorrectionStore:
             f"SELECT * FROM corrections {where} ORDER BY updated_at DESC LIMIT ?",
             tuple(params),
         )
-        return [self._row_to_dict(row) for row in rows]
+        return [
+            record
+            for record in (self._row_to_dict(row) for row in rows)
+            if _is_valid_correction_record(record)
+        ]
 
     def list_incomplete_corrections(self) -> list[CorrectionRecord]:
         with self._lock:

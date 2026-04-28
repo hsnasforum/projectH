@@ -1144,6 +1144,13 @@ Axis 2 (CONTROL_SEQ 1181): SQLiteCorrectionStore 반환 타입 통일 — ACTIVE
 `storage/sqlite_store.py` `SQLiteCorrectionStore`의 7개 메서드 반환 타입을
 `CorrectionRecord | None` 또는 `list[CorrectionRecord]`로 업데이트. 단위 테스트 포함.
 
+## M55 Preference Stats Schema
+
+Axis 1 (CONTROL_SEQ 1183): PerPreferenceStats TypedDict — ACTIVE
+`core/contracts.py`에 `PerPreferenceStats(TypedDict, total=False)` 추가 (applied_count, corrected_count);
+`preference_utils.py` `enrich_preference_reliability()` 파라미터 타입 힌트 강화.
+session_store.py setdefault dict 리터럴 타입 수정은 Axis 2 대상.
+
 ## Next 3 Implementation Priorities
 
 1. **M49–M51 shipped**: 선호도 크로스-세션 주입(M49) + 주입 가시성·명시적 피드백 루프(M50) + 신뢰도 저하 경고(M51) 완료. PR #49 대기 중(feat/m50-axis1-axis2-pref-visibility).

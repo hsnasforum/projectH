@@ -444,6 +444,11 @@ class CorrectionRecord(TypedDict, total=False):
     updated_at: str
 
 
+class PerPreferenceStats(TypedDict, total=False):
+    applied_count: int
+    corrected_count: int
+
+
 # ---------------------------------------------------------------------------
 # Preference lifecycle (cross-session)
 # ---------------------------------------------------------------------------

@@ -412,7 +412,7 @@ class CorrectionStatus(StrEnum):
 
 
 CORRECTION_STATUS_TRANSITIONS: dict[CorrectionStatus, tuple[CorrectionStatus, ...]] = {
-    CorrectionStatus.RECORDED: (CorrectionStatus.CONFIRMED,),
+    CorrectionStatus.RECORDED: (CorrectionStatus.CONFIRMED, CorrectionStatus.STOPPED),
     CorrectionStatus.CONFIRMED: (CorrectionStatus.PROMOTED,),
     CorrectionStatus.PROMOTED: (CorrectionStatus.ACTIVE,),
     CorrectionStatus.ACTIVE: (CorrectionStatus.STOPPED,),

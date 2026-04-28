@@ -668,6 +668,48 @@ class TestSQLiteCorrectionStore(unittest.TestCase):
         self.assertEqual(len(global_patterns), 0)
         self.assertEqual(len(session_patterns), 1)
 
+    def test_scan_all_returns_all_records(self) -> None:
+        self._record(artifact_id="art1", session_id="s1", source_message_id="msg1")
+        self._record(
+            artifact_id="art2",
+            session_id="s2",
+            source_message_id="msg2",
+            original_text="beta foo omega",
+            corrected_text="beta bar omega",
+        )
+        result = self.store._scan_all()
+        self.assertEqual(len(result), 2)
+        statuses = {r["status"] for r in result}
+        self.assertEqual(statuses, {"recorded"})
+
+    def test_confirm_by_fingerprint_batch(self) -> None:
+        first = self._record(artifact_id="art1", session_id="s1", source_message_id="msg1")
+        second = self._record(artifact_id="art2", session_id="s2", source_message_id="msg2")
+        self.assertIsNotNone(first)
+        self.assertIsNotNone(second)
+        fp = first["delta_fingerprint"]
+        self.assertEqual(fp, second["delta_fingerprint"])
+
+        confirmed = self.store.confirm_by_fingerprint(fp)
+
+        self.assertEqual(len(confirmed), 2)
+        for r in confirmed:
+            self.assertEqual(r["status"], "confirmed")
+
+    def test_dismiss_by_fingerprint_batch(self) -> None:
+        first = self._record(artifact_id="art1", session_id="s1", source_message_id="msg1")
+        second = self._record(artifact_id="art2", session_id="s2", source_message_id="msg2")
+        self.assertIsNotNone(first)
+        self.assertIsNotNone(second)
+        fp = first["delta_fingerprint"]
+        self.assertEqual(fp, second["delta_fingerprint"])
+
+        dismissed = self.store.dismiss_by_fingerprint(fp)
+
+        self.assertEqual(len(dismissed), 2)
+        for r in dismissed:
+            self.assertEqual(r["status"], "stopped")
+
 
 if __name__ == "__main__":
     unittest.main()

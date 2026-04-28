@@ -39,22 +39,51 @@ class AggregateHandlerMixin:
             by_status[status] = by_status.get(status, 0) + 1
 
         recurring = self.correction_store.find_recurring_patterns()
-        seen: dict[str, int] = {}
-        for rec in recurring:
+        top_raw = sorted(
+            recurring,
+            key=lambda x: int(x.get("recurrence_count") or 1),
+            reverse=True,
+        )[:5]
+        top_fps: list[dict[str, Any]] = []
+        for rec in top_raw:
             fp = str(rec.get("delta_fingerprint") or "")
-            if fp:
-                seen[fp] = max(seen.get(fp, 0), int(rec.get("recurrence_count") or 1))
-        top_patterns = sorted(seen.items(), key=lambda x: x[1], reverse=True)[:5]
+            if not fp:
+                continue
+            orig, corr = _first_correction_snippets(rec.get("corrections") or [])
+            entry: dict[str, Any] = {
+                "delta_fingerprint": fp,
+                "recurrence_count": int(rec.get("recurrence_count") or 1),
+            }
+            if orig:
+                entry["original_snippet"] = orig
+            if corr:
+                entry["corrected_snippet"] = corr
+            top_fps.append(entry)
 
         return {
             "ok": True,
             "total": total,
             "by_status": by_status,
-            "top_recurring_fingerprints": [
-                {"delta_fingerprint": fp, "recurrence_count": count}
-                for fp, count in top_patterns
-            ],
+            "top_recurring_fingerprints": top_fps,
         }
+
+    def get_correction_list(self, limit: int = 5) -> dict[str, Any]:
+        recent = self.correction_store.list_recent(limit=limit)
+        return {"ok": True, "corrections": list(recent)}
+
+    def confirm_correction_pattern(self, payload: dict[str, Any]) -> dict[str, Any]:
+        delta_fingerprint = str(payload.get("delta_fingerprint") or "").strip()
+        if not delta_fingerprint:
+            raise WebApiError(400, "delta_fingerprint 값이 필요합니다.")
+        confirmed = self.correction_store.confirm_by_fingerprint(delta_fingerprint)
+        return {"ok": True, "confirmed_count": len(confirmed)}
+
+    def dismiss_correction_pattern(self, payload: dict[str, Any]) -> dict[str, Any]:
+        delta_fingerprint = str(payload.get("delta_fingerprint") or "").strip()
+        if not delta_fingerprint:
+            raise WebApiError(400, "delta_fingerprint 값이 필요합니다.")
+        dismissed = self.correction_store.dismiss_by_fingerprint(delta_fingerprint)
+        return {"ok": True, "dismissed_count": len(dismissed)}
 
     def submit_candidate_confirmation(self, payload: dict[str, Any]) -> dict[str, Any]:
         session_id = self._normalize_session_id(payload.get("session_id"))

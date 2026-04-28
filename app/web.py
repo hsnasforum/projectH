@@ -354,6 +354,10 @@ class LocalAssistantHandler(BaseHTTPRequestHandler):
             response = self.server.service.get_correction_summary()
             self._send_json(HTTPStatus.OK, response)
             return
+        if parsed.path == "/api/corrections/list":
+            response = self.server.service.get_correction_list()
+            self._send_json(HTTPStatus.OK, response)
+            return
         if parsed.path.startswith("/controller-assets/"):
             self._serve_controller_asset(parsed.path)
             return
@@ -399,6 +403,8 @@ class LocalAssistantHandler(BaseHTTPRequestHandler):
             "/api/preferences/update-description",
             "/api/preferences/record-correction",
             "/api/corrections/sync-adopted-to-candidates",
+            "/api/corrections/confirm-pattern",
+            "/api/corrections/dismiss-pattern",
             "/api/sessions/delete",
             "/api/sessions/delete-all",
         }:
@@ -412,6 +418,14 @@ class LocalAssistantHandler(BaseHTTPRequestHandler):
                 self._send_json(HTTPStatus.OK, response)
                 return
             payload = self._read_json_body()
+            if parsed.path == "/api/corrections/confirm-pattern":
+                response = self.server.service.confirm_correction_pattern(payload)
+                self._send_json(HTTPStatus.OK, response)
+                return
+            if parsed.path == "/api/corrections/dismiss-pattern":
+                response = self.server.service.dismiss_correction_pattern(payload)
+                self._send_json(HTTPStatus.OK, response)
+                return
             if parsed.path == "/api/feedback":
                 response = self.server.service.submit_feedback(payload)
                 self._send_json(HTTPStatus.OK, response)

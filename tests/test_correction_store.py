@@ -227,6 +227,60 @@ class CorrectionStoreTest(unittest.TestCase):
             recent = store.list_recent(limit=1)
             self.assertEqual(len(recent), 1)
 
+    def test_confirm_by_fingerprint(self) -> None:
+        with TemporaryDirectory() as d:
+            store = self._make_store(d)
+            first = store.record_correction(
+                artifact_id="art1",
+                session_id="s1",
+                source_message_id="msg1",
+                original_text="original text one",
+                corrected_text="corrected text one",
+            )
+            second = store.record_correction(
+                artifact_id="art2",
+                session_id="s2",
+                source_message_id="msg2",
+                original_text="original text one",
+                corrected_text="corrected text one",
+            )
+            self.assertIsNotNone(first)
+            self.assertIsNotNone(second)
+            fp = first["delta_fingerprint"]
+
+            confirmed = store.confirm_by_fingerprint(fp)
+
+            self.assertEqual(len(confirmed), 2)
+            for r in confirmed:
+                self.assertEqual(r["status"], "confirmed")
+
+    def test_dismiss_by_fingerprint(self) -> None:
+        with TemporaryDirectory() as d:
+            store = self._make_store(d)
+            first = store.record_correction(
+                artifact_id="art1",
+                session_id="s1",
+                source_message_id="msg1",
+                original_text="original text one",
+                corrected_text="corrected text one",
+            )
+            second = store.record_correction(
+                artifact_id="art2",
+                session_id="s2",
+                source_message_id="msg2",
+                original_text="original text one",
+                corrected_text="corrected text one",
+            )
+            self.assertIsNotNone(first)
+            self.assertIsNotNone(second)
+            fp = first["delta_fingerprint"]
+
+            dismissed = store.dismiss_by_fingerprint(fp)
+
+            self.assertEqual(len(dismissed), 2)
+            for r in dismissed:
+                self.assertEqual(r["status"], "stopped")
+
     def test_list_incomplete_corrections_returns_only_non_terminal_records(self) -> None:
         with TemporaryDirectory() as tmp:
             store = self._make_store(tmp)

@@ -313,7 +313,12 @@ export interface CorrectionSummary {
   ok: boolean;
   total: number;
   by_status: Record<string, number>;
-  top_recurring_fingerprints: { delta_fingerprint: string; recurrence_count: number }[];
+  top_recurring_fingerprints: {
+    delta_fingerprint: string;
+    recurrence_count: number;
+    original_snippet?: string;
+    corrected_snippet?: string;
+  }[];
 }
 
 export async function fetchPreferences(): Promise<PreferencesPayload> {
@@ -325,6 +330,50 @@ export async function fetchCorrectionSummary(): Promise<CorrectionSummary> {
   const res = await fetch(`${BASE}/api/corrections/summary`);
   if (!res.ok) throw new Error("correction summary fetch failed");
   return res.json() as Promise<CorrectionSummary>;
+}
+
+export interface CorrectionListItem {
+  correction_id: string;
+  status: string;
+  original_text?: string;
+  corrected_text?: string;
+  delta_fingerprint?: string;
+  created_at?: string;
+}
+
+export interface CorrectionListResponse {
+  ok: boolean;
+  corrections: CorrectionListItem[];
+}
+
+export async function fetchCorrectionList(): Promise<CorrectionListResponse> {
+  const res = await fetch(`${BASE}/api/corrections/list`);
+  if (!res.ok) throw new Error("correction list fetch failed");
+  return res.json() as Promise<CorrectionListResponse>;
+}
+
+export async function confirmCorrectionPattern(
+  delta_fingerprint: string,
+): Promise<{ ok: boolean; confirmed_count: number }> {
+  const res = await fetch(`${BASE}/api/corrections/confirm-pattern`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ delta_fingerprint }),
+  });
+  if (!res.ok) throw new Error("confirm pattern failed");
+  return res.json() as Promise<{ ok: boolean; confirmed_count: number }>;
+}
+
+export async function dismissCorrectionPattern(
+  delta_fingerprint: string,
+): Promise<{ ok: boolean; dismissed_count: number }> {
+  const res = await fetch(`${BASE}/api/corrections/dismiss-pattern`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ delta_fingerprint }),
+  });
+  if (!res.ok) throw new Error("dismiss pattern failed");
+  return res.json() as Promise<{ ok: boolean; dismissed_count: number }>;
 }
 
 export interface PreferenceAudit {

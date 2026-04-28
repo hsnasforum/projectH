@@ -2425,6 +2425,45 @@ class RuntimeSupervisorTest(unittest.TestCase):
             self.assertEqual(autonomy["operator_policy"], "internal_only")
             self.assertEqual(autonomy["decision_class"], "release_gate")
 
+    def test_ad_hoc_commit_push_pr_creation_bundle_surfaces_as_triage(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            pipeline_dir = root / ".pipeline"
+            operator_path = pipeline_dir / "operator_request.md"
+            operator_path.write_text(
+                "STATUS: needs_operator\n"
+                "CONTROL_SEQ: 1239\n"
+                "REASON_CODE: commit_push_pr_creation_m68_bundle\n"
+                "OPERATOR_POLICY: commit_push_bundle_authorization + pr_creation_gate + internal_only\n"
+                "DECISION_CLASS: publish_boundary\n"
+                "DECISION_REQUIRED: M68 commit + branch push + PR creation\n",
+                encoding="utf-8",
+            )
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+
+            marker, autonomy = supervisor._operator_gate_marker(
+                {
+                    "active_control_file": ".pipeline/operator_request.md",
+                    "active_control_status": "needs_operator",
+                    "active_control_seq": 1239,
+                    "mtime": operator_path.stat().st_mtime,
+                },
+                turn_state={"state": "IDLE", "reason": "operator_request_gated_hibernate"},
+                active_round={"state": "CLOSED"},
+                wrapper_models={},
+            )
+
+            self.assertIsNotNone(marker)
+            assert marker is not None
+            self.assertEqual(marker["reason"], COMMIT_PUSH_BUNDLE_AUTHORIZATION_REASON)
+            self.assertEqual(marker["operator_policy"], "internal_only")
+            self.assertEqual(marker["mode"], "triage")
+            self.assertEqual(marker["routed_to"], "verify_followup")
+            self.assertEqual(autonomy["mode"], "triage")
+            self.assertEqual(autonomy["reason_code"], COMMIT_PUSH_BUNDLE_AUTHORIZATION_REASON)
+            self.assertEqual(autonomy["operator_policy"], "internal_only")
+
     def test_active_verify_round_keeps_codex_surface_working_even_if_wrapper_ready(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -2562,7 +2601,7 @@ class RuntimeSupervisorTest(unittest.TestCase):
             self.assertEqual(status["automation_health"], "attention")
             self.assertEqual(status["automation_reason_code"], "dispatch_stall")
             self.assertEqual(status["automation_incident_family"], "dispatch_stall")
-            self.assertEqual(status["automation_next_action"], "advisory_followup")
+            self.assertEqual(status["automation_next_action"], "verify_followup")
             self.assertEqual(status["active_round"]["state"], "VERIFY_PENDING")
             self.assertEqual(status["active_round"]["note"], "waiting_task_accept_after_dispatch")
             self.assertEqual(status["active_round"]["dispatch_stage"], "task_accept_missing")
@@ -2788,7 +2827,7 @@ class RuntimeSupervisorTest(unittest.TestCase):
             self.assertEqual(status["automation_health"], "attention")
             self.assertEqual(status["automation_reason_code"], "post_accept_completion_stall")
             self.assertEqual(status["automation_incident_family"], "completion_stall")
-            self.assertEqual(status["automation_next_action"], "advisory_followup")
+            self.assertEqual(status["automation_next_action"], "verify_followup")
             self.assertEqual(status["active_round"]["state"], "VERIFY_PENDING")
             self.assertEqual(status["active_round"]["note"], "waiting_task_done_after_accept")
             self.assertEqual(status["active_round"]["completion_stage"], "task_done_missing")

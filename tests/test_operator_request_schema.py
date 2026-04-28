@@ -793,6 +793,59 @@ class OperatorRequestHeaderSchemaTests(unittest.TestCase):
         assert marker is not None
         self.assertEqual(marker["routed_to"], "verify_followup")
 
+    def test_ad_hoc_commit_push_pr_creation_bundle_routes_to_internal_followup(self) -> None:
+        self.assertEqual(
+            normalize_reason_code("commit_push_pr_creation_m68_bundle"),
+            COMMIT_PUSH_BUNDLE_AUTHORIZATION_REASON,
+        )
+        self.assertEqual(
+            normalize_operator_policy(
+                "commit_push_bundle_authorization + pr_creation_gate + internal_only"
+            ),
+            "internal_only",
+        )
+
+        decision = classify_operator_candidate(
+            "STATUS: needs_operator\n"
+            "CONTROL_SEQ: 1239\n"
+            "REASON_CODE: commit_push_pr_creation_m68_bundle\n"
+            "OPERATOR_POLICY: commit_push_bundle_authorization + pr_creation_gate + internal_only\n"
+            "DECISION_CLASS: publish_boundary\n"
+            "DECISION_REQUIRED: M68 commit + branch push + PR creation\n",
+            control_meta={
+                "status": "needs_operator",
+                "control_seq": 1239,
+                "reason_code": "commit_push_pr_creation_m68_bundle",
+                "operator_policy": (
+                    "commit_push_bundle_authorization + pr_creation_gate + internal_only"
+                ),
+                "decision_class": "publish_boundary",
+                "decision_required": "M68 commit + branch push + PR creation",
+            },
+            idle_stable=True,
+            now_ts=1_000.0,
+        )
+
+        marker = operator_gate_marker_from_decision(
+            decision,
+            control_file="operator_request.md",
+            control_seq=1239,
+        )
+
+        self.assertEqual(decision["mode"], "triage")
+        self.assertEqual(decision["suppressed_mode"], "triage")
+        self.assertEqual(decision["routed_to"], "verify_followup")
+        self.assertEqual(
+            decision["reason_code"],
+            COMMIT_PUSH_BUNDLE_AUTHORIZATION_REASON,
+        )
+        self.assertEqual(decision["operator_policy"], "internal_only")
+        self.assertFalse(decision["operator_eligible"])
+        self.assertIsNotNone(marker)
+        assert marker is not None
+        self.assertEqual(marker["reason"], COMMIT_PUSH_BUNDLE_AUTHORIZATION_REASON)
+        self.assertEqual(marker["routed_to"], "verify_followup")
+
     def test_live_legacy_release_gate_file_resolves_via_shared_resolver(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             operator_path = Path(tmp) / ".pipeline" / "operator_request.md"

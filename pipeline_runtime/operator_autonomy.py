@@ -32,6 +32,7 @@ _PUSH_APPROVAL_MARKERS = ("push", "푸시")
 _COMMIT_PUSH_APPROVAL_REASONS = frozenset(
     {"approval_required", COMMIT_PUSH_BUNDLE_AUTHORIZATION_REASON}
 )
+_PR_CREATION_REASON_MARKERS = ("pr_creation", "create_pr", "draft_pr")
 _LETTER_CHOICE_LINE_RE = re.compile(
     r"(?im)^\s*(?:[-*]\s*)?(?:\*\*)?"
     r"(?:(?:option|choice|candidate|proposal|decision)\s*)?"
@@ -353,6 +354,11 @@ def _raw_text(parts: Iterable[object]) -> str:
 
 def normalize_reason_code(value: object) -> str:
     text = _normalize_control_token(value)
+    if _contains_normalized_token(text, "commit_push") and any(
+        _contains_normalized_token(text, marker)
+        for marker in _PR_CREATION_REASON_MARKERS
+    ):
+        return COMMIT_PUSH_BUNDLE_AUTHORIZATION_REASON
     compound_aliases = (
         (COMMIT_PUSH_BUNDLE_AUTHORIZATION_REASON, COMMIT_PUSH_BUNDLE_AUTHORIZATION_REASON),
         (PR_CREATION_GATE_REASON, PR_CREATION_GATE_REASON),

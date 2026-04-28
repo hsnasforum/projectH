@@ -1616,6 +1616,44 @@ class WatcherPromptAssemblyTest(unittest.TestCase):
             self.assertIn("pr_creation_gate + gate_24h + release_gate", prompt)
             self.assertIn("do not hand commit/push/PR work to the implement lane", prompt)
 
+    def test_ad_hoc_commit_push_pr_creation_bundle_routes_to_verify_followup(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            watch_dir = root / "work"
+            base_dir = root / ".pipeline"
+            watch_dir.mkdir(parents=True, exist_ok=True)
+            base_dir.mkdir(parents=True, exist_ok=True)
+            _write_active_profile(root)
+
+            operator_path = base_dir / "operator_request.md"
+            operator_path.write_text(
+                "STATUS: needs_operator\n"
+                "CONTROL_SEQ: 1239\n"
+                "REASON_CODE: commit_push_pr_creation_m68_bundle\n"
+                "OPERATOR_POLICY: commit_push_bundle_authorization + pr_creation_gate + internal_only\n"
+                "DECISION_CLASS: publish_boundary\n"
+                "DECISION_REQUIRED: M68 commit + branch push + PR creation\n",
+                encoding="utf-8",
+            )
+
+            core = watcher_core.WatcherCore(
+                {
+                    "watch_dir": str(watch_dir),
+                    "base_dir": str(base_dir),
+                    "repo_root": str(root),
+                    "dry_run": True,
+                }
+            )
+
+            marker = core._operator_gate_marker()
+            self.assertIsNotNone(marker)
+            assert marker is not None
+            self.assertEqual(marker["reason"], COMMIT_PUSH_BUNDLE_AUTHORIZATION_REASON)
+            self.assertEqual(marker["operator_policy"], "internal_only")
+            self.assertEqual(marker["mode"], "triage")
+            self.assertEqual(marker["routed_to"], "verify_followup")
+            self.assertEqual(core._resolve_turn(), "verify_followup")
+
     def test_pr_merge_gate_internal_only_routes_to_verify_followup_backlog(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

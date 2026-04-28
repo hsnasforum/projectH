@@ -51,6 +51,11 @@ from model_adapter.base import (
 )
 from storage.session_store import SessionStore
 from storage.task_log import TaskLogger
+from storage.preference_utils import (
+    enrich_preference_reliability,
+    is_highly_reliable_preference,
+    preference_fingerprint,
+)
 from storage.web_search_store import (
     LEGACY_ENTITY_SLOT_ALIASES,
     canonicalize_legacy_claim_coverage_progress_summary,
@@ -202,19 +207,43 @@ class AgentLoop:
         except Exception:
             return draft
 
-    def _get_active_preferences(self, budget: int = 10) -> list[dict[str, str]] | None:
+    def _get_active_preferences(
+        self, budget: int = 10, *, highly_reliable_only: bool = True
+    ) -> list[dict[str, str]] | None:
         if not self.preference_store:
             return None
         try:
             prefs = self.preference_store.get_active_preferences()
             if not prefs:
                 return None
+            per_pref_stats = self._get_preference_reliability_stats()
+            enriched_prefs = [
+                enrich_preference_reliability(p, per_pref_stats)
+                for p in prefs
+                if isinstance(p, dict)
+            ]
+            if highly_reliable_only:
+                enriched_prefs = [
+                    p for p in enriched_prefs
+                    if is_highly_reliable_preference(p)
+                ]
             return [
-                {"description": str(p.get("description", "")), "fingerprint": str(p.get("delta_fingerprint", ""))}
-                for p in prefs[:budget]
+                {"description": str(p.get("description", "")), "fingerprint": preference_fingerprint(p)}
+                for p in enriched_prefs[:budget]
             ]
         except Exception:
             return None
+
+    def _get_preference_reliability_stats(self) -> dict[str, Any]:
+        get_summary = getattr(self.session_store, "get_global_audit_summary", None)
+        if not callable(get_summary):
+            return {}
+        try:
+            summary = get_summary()
+        except Exception:
+            return {}
+        per_pref_stats = summary.get("per_preference_stats", {}) if isinstance(summary, dict) else {}
+        return per_pref_stats if isinstance(per_pref_stats, dict) else {}
 
     def _new_grounded_brief_artifact_id(self) -> str:
         return f"artifact-{uuid4().hex[:12]}"

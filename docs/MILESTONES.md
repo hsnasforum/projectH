@@ -1086,6 +1086,16 @@ M45의 per-preference `reliability_stats`와 M46의
 - 기존 per-card conflict badge, `has_conflict`, `conflicting_preference_ids`,
   activate confirmation 동작은 변경 없음.
 
+## M49 Cross-session Preference Application
+
+Axis 1 (CONTROL_SEQ 1152): 선호도 프롬프트 주입 계약 및 스키마 확정 — ACTIVE
+선호도를 실제 모델 프롬프트에 주입하기 위한 계약 표면(주입 포맷, 범위 제한,
+승인 게이팅 요건)을 docs에 정의한다. 구현 없이 계약만 확정하는 단계.
+
+Axis 2 (CONTROL_SEQ 1154): is_highly_reliable 필터 적용 — ACTIVE
+`_get_active_preferences()`가 `is_highly_reliable=True` 선호도만 반환하도록 수정.
+`highly_reliable_only=True`가 기본값; 단위 테스트 포함.
+
 ## Next 3 Implementation Priorities
 
 1. **E2E 환경 개선 완료**: `e2e/start-server.sh` healthcheck wrapper no-server / existing-server 두 경로가 정적 감사(09c806d)로 확인됨. operator가 검증 수준을 release gate로 인정(Q1 Option A, operator_request 263). B1 gate closed (2026-04-26).

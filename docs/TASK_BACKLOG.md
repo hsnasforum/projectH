@@ -848,6 +848,25 @@ PR #45 merge 후 수행:
 5. approval-gated local program operation
 6. personalized local model training
 
+## M49 Direction Candidates
+
+### M49 Axis 1: 선호도 프롬프트 주입 계약 정의
+
+목표: ACTIVE 선호도를 모델 프롬프트에 주입하기 위한 계약 확정.
+
+계약 표면에 포함될 요소:
+- 주입 대상: ACTIVE + `is_highly_reliable=True` 선호도만 (기본값)
+- 주입 포맷: 선호도 목록을 시스템 프롬프트에 삽입하는 텍스트 스키마
+- 범위 제한: document summary / chat 호출에만 적용; 웹 조사 미적용
+- 승인 게이팅: 기존 approval-based save 경계 유지; 주입 자체는 읽기 전용
+- `cross_session_count >= 3` 이미 자동 활성화 조건으로 존재 (M37)
+
+금지:
+- 실제 프롬프트 주입 구현 금지 (Axis 2 이후)
+- `record_reviewed_candidate_preference` 경로 수정 금지
+- cross-session counting 확장 금지
+- 승인 경계 수정 금지
+
 ## Partial / Opt-In
 
 1. SQLite backend (`storage_backend='sqlite'`): opt-in seam for session, artifact, preference, task-log stores. SQLite backend is now the default (config/settings.py DEFAULT_STORAGE_BACKEND = "sqlite", M20 Axis 1). Corrections store is still JSON-only. Full migration (sessions, artifacts, preferences, corrections) runs on first startup with existing JSON data (M37 Axis 1). Service-level parity is verified across 27+ contracts. Browser-level parity gate covers recurrence aggregate emitted-apply-confirm lifecycle, stale-candidate retirement, post-confirm active-lifecycle survival through supporting correction supersession, post-confirm recorded-basis label survival through supporting correction supersession, stop-reverse-conflict cleanup, document-loop save/correction/verdict continuity (saved history vs late reject verdict, reject keeps approval then explicit save supersedes, corrected-save first bridge snapshot at request time, corrected-save stays frozen after later reject + re-correction), core document productivity loop (summary + evidence + summary chunks, browser file picker summary, browser folder picker search, search-only hidden-body + preview-card), PDF/OCR document workflow (scanned/image-only PDF OCR-not-supported guidance, mixed scanned+readable folder search count-only partial-failure notice, mixed scanned+readable folder search+summary partial-failure notice with readable preview, readable text-layer PDF normal summary), reviewed-memory candidate/review-queue surface (candidate confirmation separate from save support and later-correction stale clear, review-queue reject/defer quick-meta + transcript-meta + stale-clear parity with accept, review-queue reject-defer aggregate support visibility), core approval save path (save request reissue before approval, approved write produces the note on disk), core chat shell (streaming cancel interrupts the visible response flow, plain general-chat response omits document-only source-type labels), claim-coverage panel (leading status tags with actionable hints, reinvestigation-target slot progress state, reinforced slot after reinvestigation, regressed slot after reinvestigation), web-search history card header badges (answer-mode + verification-strength + source-role trust badges with `.meta` count/progress composition), history-card initial-render contract (latest-update noisy/mixed/single/news-only zero-count empty-meta no-leak, entity-card noisy/actual-search/dual-probe/store-seeded count-summary meta), history-card click-reload / reload-only contract (entity-card + latest-update WEB badge, answer-mode badges, verification labels, source-role trust badges, source paths, noisy-source exclusion, store-seeded reload-only empty-meta no-leak), and history-card click-reload first-follow-up contract (entity-card + latest-update WEB badge, answer-mode badges, verification labels, source-role trust badges, source paths, noisy-source exclusion, store-seeded follow-up empty-meta no-leak), and history-card click-reload second-follow-up contract (entity-card + latest-update WEB badge, answer-mode badges, verification labels, source-role trust badges, source paths, dual-probe mixed count-summary meta retention, noisy-source exclusion, store-seeded second-follow-up empty-meta no-leak), and history-card natural-reload reload-only contract (`방금 검색한 결과 다시 보여줘` triggered entity-card + latest-update WEB badge, answer-mode badges, verification labels, source-role trust badges, source paths/provenance retention, zero-strong-slot continuity, noisy-source exclusion, store-seeded natural-reload empty-meta no-leak), and history-card natural-reload follow-up / second-follow-up chain contract (entity-card + latest-update WEB badge, answer-mode badges, verification labels, source-role trust badges, source paths/provenance retention, zero-strong-slot missing-only count-summary drift-prevention, dual-probe mixed count-summary meta retention, noisy-source exclusion, store-seeded natural-reload chain empty-meta no-leak), and history-card click-reload composer plain follow-up contract (entity-card top-level claim_coverage retention and latest-update empty claim_coverage surfaces retention through the real browser composer path without `load_web_search_record_id`) via `e2e/playwright.sqlite.config.mjs`.

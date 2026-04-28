@@ -21,6 +21,17 @@ _HEAD_SHA_RE = re.compile(
 _PR_MERGE_COMPLETED = "completed"
 _PR_MERGE_HEAD_MISMATCH = "head_mismatch"
 _PR_MERGE_PENDING = "pending"
+_LOCAL_MERGE_REFS = (
+    "refs/remotes/origin/HEAD",
+    "refs/remotes/origin/main",
+    "origin/main",
+    "refs/heads/main",
+    "main",
+    "refs/remotes/origin/master",
+    "origin/master",
+    "refs/heads/master",
+    "master",
+)
 
 
 @dataclass(frozen=True)
@@ -111,6 +122,26 @@ class PrMergeStatusCache:
         *,
         expected_head_sha: str = "",
     ) -> str:
+        github_state = self._probe_github_pr_merge_state(
+            repo_root,
+            number,
+            expected_head_sha=expected_head_sha,
+        )
+        if github_state != _PR_MERGE_PENDING:
+            return github_state
+        return self._probe_local_pr_merge_state(
+            repo_root,
+            number,
+            expected_head_sha=expected_head_sha,
+        )
+
+    def _probe_github_pr_merge_state(
+        self,
+        repo_root: Path,
+        number: int,
+        *,
+        expected_head_sha: str = "",
+    ) -> str:
         if shutil.which("gh") is None:
             return _PR_MERGE_PENDING
         try:
@@ -140,6 +171,29 @@ class PrMergeStatusCache:
             return _PR_MERGE_HEAD_MISMATCH
         return _PR_MERGE_COMPLETED
 
+    def _probe_local_pr_merge_state(
+        self,
+        repo_root: Path,
+        number: int,
+        *,
+        expected_head_sha: str = "",
+    ) -> str:
+        for ref in _local_merge_refs(repo_root):
+            if expected_head_sha and _git_exit_ok(
+                repo_root,
+                ["merge-base", "--is-ancestor", expected_head_sha, ref],
+                timeout_sec=self.timeout_sec,
+            ):
+                return _PR_MERGE_COMPLETED
+            if not expected_head_sha and _local_ref_has_pr_merge_commit(
+                repo_root,
+                ref,
+                number,
+                timeout_sec=self.timeout_sec,
+            ):
+                return _PR_MERGE_COMPLETED
+        return _PR_MERGE_PENDING
+
 
 def _expected_head_sha(
     control_text: object,
@@ -162,3 +216,91 @@ def _sha_matches(actual_head_sha: str, expected_head_sha: str) -> bool:
     if not actual or not expected:
         return True
     return actual.startswith(expected) or expected.startswith(actual)
+
+
+def _git_output(repo_root: Path, args: list[str], *, timeout_sec: float) -> str:
+    try:
+        result = subprocess.run(
+            ["git", *args],
+            cwd=str(repo_root),
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=timeout_sec,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    if result.returncode != 0:
+        return ""
+    return result.stdout.strip()
+
+
+def _git_exit_ok(repo_root: Path, args: list[str], *, timeout_sec: float) -> bool:
+    try:
+        result = subprocess.run(
+            ["git", *args],
+            cwd=str(repo_root),
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=timeout_sec,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return result.returncode == 0
+
+
+def _local_merge_refs(repo_root: Path) -> tuple[str, ...]:
+    refs: list[str] = []
+    seen: set[str] = set()
+
+    origin_head = _git_output(
+        repo_root,
+        ["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"],
+        timeout_sec=4.0,
+    )
+    if origin_head:
+        refs.append(origin_head)
+
+    for ref in _LOCAL_MERGE_REFS:
+        if ref not in seen:
+            refs.append(ref)
+            seen.add(ref)
+
+    existing: list[str] = []
+    seen.clear()
+    for ref in refs:
+        if ref in seen:
+            continue
+        seen.add(ref)
+        if _git_exit_ok(
+            repo_root,
+            ["rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}"],
+            timeout_sec=4.0,
+        ):
+            existing.append(ref)
+    return tuple(existing)
+
+
+def _local_ref_has_pr_merge_commit(
+    repo_root: Path,
+    ref: str,
+    number: int,
+    *,
+    timeout_sec: float,
+) -> bool:
+    pattern = rf"Merge pull request #{int(number)}([^0-9]|$)"
+    output = _git_output(
+        repo_root,
+        [
+            "log",
+            "--max-count=1",
+            "--format=%H",
+            "--extended-regexp",
+            f"--grep={pattern}",
+            ref,
+            "--",
+        ],
+        timeout_sec=timeout_sec,
+    )
+    return bool(output)

@@ -730,6 +730,10 @@ class SessionStore:
             and normalized.get("artifact_kind") == "grounded_brief"
             and isinstance(normalized.get("original_response_snapshot"), dict)
         )
+        is_applied_preference_response = (
+            normalized.get("role") == "assistant"
+            and bool(normalized.get("applied_preference_ids"))
+        )
         source_message_id = normalize_source_message_id(normalized.get("source_message_id"))
         if source_message_id is None and isinstance(normalized.get("approval"), dict):
             source_message_id = normalize_source_message_id((normalized.get("approval") or {}).get("source_message_id"))
@@ -739,7 +743,7 @@ class SessionStore:
             normalized["source_message_id"] = source_message_id
         else:
             normalized.pop("source_message_id", None)
-        if is_grounded_brief_source and corrected_text is not None:
+        if (is_grounded_brief_source or is_applied_preference_response) and corrected_text is not None:
             normalized["corrected_text"] = corrected_text
         else:
             normalized.pop("corrected_text", None)
@@ -1020,10 +1024,7 @@ class SessionStore:
                         summary["correction_pair_count"] += 1
                     if msg.get("applied_preference_ids"):
                         summary["personalized_response_count"] += 1
-                        is_personalized_correction = (
-                            str(msg.get("artifact_kind") or "") == "grounded_brief"
-                            and msg.get("corrected_text") is not None
-                        )
+                        is_personalized_correction = msg.get("corrected_text") is not None
                         if is_personalized_correction:
                             summary["personalized_correction_count"] += 1
                         for pref_id in msg["applied_preference_ids"]:

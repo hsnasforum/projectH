@@ -350,6 +350,10 @@ class LocalAssistantHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/preferences/audit":
             self._send_json(HTTPStatus.OK, {"ok": True, "audit": self.server.service.get_preference_audit()})
             return
+        if parsed.path == "/api/corrections/summary":
+            response = self.server.service.get_correction_summary()
+            self._send_json(HTTPStatus.OK, response)
+            return
         if parsed.path.startswith("/controller-assets/"):
             self._serve_controller_asset(parsed.path)
             return

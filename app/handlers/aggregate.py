@@ -29,6 +29,33 @@ def _first_correction_snippets(corrections: list[dict[str, Any]]) -> tuple[str |
 class AggregateHandlerMixin:
     """Candidate/aggregate transition methods extracted from WebAppService."""
 
+    def get_correction_summary(self) -> dict[str, Any]:
+        """전체 correction store의 요약 통계를 반환한다."""
+        all_corrections = self.correction_store._scan_all()
+        total = len(all_corrections)
+        by_status: dict[str, int] = {}
+        for record in all_corrections:
+            status = str(record.get("status") or "unknown")
+            by_status[status] = by_status.get(status, 0) + 1
+
+        recurring = self.correction_store.find_recurring_patterns()
+        seen: dict[str, int] = {}
+        for rec in recurring:
+            fp = str(rec.get("delta_fingerprint") or "")
+            if fp:
+                seen[fp] = max(seen.get(fp, 0), int(rec.get("recurrence_count") or 1))
+        top_patterns = sorted(seen.items(), key=lambda x: x[1], reverse=True)[:5]
+
+        return {
+            "ok": True,
+            "total": total,
+            "by_status": by_status,
+            "top_recurring_fingerprints": [
+                {"delta_fingerprint": fp, "recurrence_count": count}
+                for fp, count in top_patterns
+            ],
+        }
+
     def submit_candidate_confirmation(self, payload: dict[str, Any]) -> dict[str, Any]:
         session_id = self._normalize_session_id(payload.get("session_id"))
         message_id = self._normalize_optional_text(payload.get("message_id"))

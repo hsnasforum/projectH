@@ -1206,6 +1206,12 @@ Axis 2 (CONTROL_SEQ 1204): SQLiteTaskLog iter_session_records 반환 타입 — 
 `storage/sqlite_store.py` SQLiteTaskLog의 `iter_session_records()` 반환 타입을
 `list[TaskLogEntry]`로 업데이트. TaskLogEntry 타입 커버리지 완성.
 
+## M61 Correction Analytics
+
+Axis 1 (CONTROL_SEQ 1210): GET /api/corrections/summary 엔드포인트 — ACTIVE
+`AggregateHandlerMixin.get_correction_summary()` — total, by_status, top_recurring_fingerprints;
+`GET /api/corrections/summary` route 추가. 단위 테스트 포함.
+
 ## Next 3 Implementation Priorities
 
 1. **M49–M59 shipped**: 선호도 주입·가시성·피드백·신뢰도 경고(M49-M52) + docs truth-sync(M53, M56, M59) + TypedDict 계약 시리즈(M54-M58: CorrectionRecord, PerPreferenceStats, PreferenceRecord, ArtifactRecord JSON+SQLite) 완료. PR #49 대기 중(feat/m50-axis1-axis2-pref-visibility).

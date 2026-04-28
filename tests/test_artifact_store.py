@@ -94,6 +94,38 @@ class ArtifactStoreTest(unittest.TestCase):
             store = self._make_store(tmp)
             self.assertIsNone(store.get("artifact-doesnotexist"))
 
+    def test_invalid_artifact_record_filtered_from_list_by_session(self) -> None:
+        with TemporaryDirectory() as tmp:
+            store = self._make_store(tmp)
+            valid = self._create_sample(
+                store,
+                artifact_id="artifact-valid",
+                session_id="session-filter",
+            )
+            path = store._path("artifact-invalid")
+            path.write_text(
+                json.dumps(
+                    {
+                        "artifact_id": "artifact-invalid",
+                        "session_id": "session-filter",
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            records = store.list_by_session("session-filter")
+
+            self.assertEqual([record["artifact_id"] for record in records], [valid["artifact_id"]])
+
+    def test_valid_artifact_record_passes_validation(self) -> None:
+        with TemporaryDirectory() as tmp:
+            store = self._make_store(tmp)
+            record = self._create_sample(store, session_id="session-valid")
+
+            records = store.list_by_session("session-valid")
+
+            self.assertEqual([item["artifact_id"] for item in records], [record["artifact_id"]])
+
     def test_create_sets_timestamps(self) -> None:
         with TemporaryDirectory() as tmp:
             store = self._make_store(tmp)

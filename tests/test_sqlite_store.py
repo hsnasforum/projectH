@@ -6,6 +6,7 @@ from time import sleep
 
 from core.contracts import CorrectionStatus, PreferenceStatus
 from storage.sqlite_store import (
+    SQLiteArtifactStore,
     SQLiteCorrectionStore,
     SQLiteDatabase,
     SQLitePreferenceStore,
@@ -95,6 +96,71 @@ class TestMigrationIntegrity(unittest.TestCase):
                 preferences_dir=os.path.join(tmp, "preferences"),
             )
             self.assertEqual(counts2.get("corrections"), 0)
+
+
+class TestSQLiteArtifactStore(unittest.TestCase):
+    def setUp(self) -> None:
+        self.db = SQLiteDatabase(":memory:")
+        self.store = SQLiteArtifactStore(self.db)
+
+    def tearDown(self) -> None:
+        self.db.close()
+
+    def _create(
+        self,
+        *,
+        artifact_id: str = "artifact-valid",
+        session_id: str = "session-artifact",
+    ) -> dict:
+        return self.store.create(
+            artifact_id=artifact_id,
+            artifact_kind="grounded_brief",
+            session_id=session_id,
+            source_message_id=f"message-{artifact_id}",
+            draft_text="sqlite artifact draft",
+        )
+
+    def _insert_invalid_artifact_row(
+        self,
+        *,
+        artifact_id: str = "artifact-invalid",
+        session_id: str = "session-artifact",
+    ) -> None:
+        self.db.execute(
+            "INSERT INTO artifacts "
+            "(artifact_id, artifact_kind, session_id, source_message_id, data, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                artifact_id,
+                "grounded_brief",
+                session_id,
+                f"message-{artifact_id}",
+                json.dumps({"draft_text": "malformed artifact"}),
+                "",
+                "2099-01-01T00:00:00+00:00",
+            ),
+        )
+        self.db.commit()
+
+    def test_invalid_artifact_row_filtered_from_list_by_session(self) -> None:
+        valid = self._create()
+        self._insert_invalid_artifact_row()
+
+        records = self.store.list_by_session("session-artifact")
+
+        artifact_ids = {record["artifact_id"] for record in records}
+        self.assertIn(valid["artifact_id"], artifact_ids)
+        self.assertNotIn("artifact-invalid", artifact_ids)
+
+    def test_invalid_artifact_row_filtered_from_list_recent(self) -> None:
+        valid = self._create()
+        self._insert_invalid_artifact_row()
+
+        records = self.store.list_recent(10)
+
+        artifact_ids = {record["artifact_id"] for record in records}
+        self.assertIn(valid["artifact_id"], artifact_ids)
+        self.assertNotIn("artifact-invalid", artifact_ids)
 
 
 class TestSQLitePreferenceStoreAutoActivation(unittest.TestCase):

@@ -1172,6 +1172,10 @@ Axis 1 (CONTROL_SEQ 1187): PreferenceRecord TypedDict — ACTIVE
 `core/contracts.py`에 `PreferenceRecord(TypedDict, total=False)` 추가;
 `preference_store.py` 반환 타입 통일.
 
+Axis 2 (CONTROL_SEQ 1188): SQLitePreferenceStore 반환 타입 통일 — ACTIVE
+`storage/sqlite_store.py` `SQLitePreferenceStore`의 8개 메서드 반환 타입을
+`PreferenceRecord | None` 또는 `list[PreferenceRecord]`로 업데이트.
+
 ## Next 3 Implementation Priorities
 
 1. **M49–M51 shipped**: 선호도 크로스-세션 주입(M49) + 주입 가시성·명시적 피드백 루프(M50) + 신뢰도 저하 경고(M51) 완료. PR #49 대기 중(feat/m50-axis1-axis2-pref-visibility).

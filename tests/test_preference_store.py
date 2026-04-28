@@ -88,6 +88,30 @@ class PreferenceStoreTest(unittest.TestCase):
                 {"applied_count": 0, "corrected_count": 0},
             )
 
+    def test_sqlite_preference_store_returns_typed_fields(self) -> None:
+        from storage.sqlite_store import SQLiteDatabase, SQLitePreferenceStore
+
+        db = SQLiteDatabase(":memory:")
+        try:
+            store = SQLitePreferenceStore(db)
+            created = store.record_reviewed_candidate_preference(
+                delta_fingerprint="sha256:test_sqlite_preference_record",
+                candidate_family="correction_rewrite",
+                description="SQLite typed preference",
+                source_refs={"candidate_id": "cand-sqlite-typed"},
+            )
+
+            fetched = store.get(created["preference_id"])
+
+            self.assertIsNotNone(fetched)
+            assert fetched is not None
+            typed_record: PreferenceRecord = fetched
+            self.assertEqual(typed_record["preference_id"], created["preference_id"])
+            self.assertEqual(typed_record["delta_fingerprint"], "sha256:test_sqlite_preference_record")
+            self.assertEqual(typed_record["status"], PreferenceStatus.CANDIDATE)
+        finally:
+            db.close()
+
     def test_promote_stores_avg_similarity_score(self) -> None:
         with TemporaryDirectory() as tmp:
             pref, corr = self._make_stores(tmp)

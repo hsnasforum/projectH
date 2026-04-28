@@ -22,6 +22,7 @@ from core.contracts import (
     CORRECTION_STATUS_TRANSITIONS,
     CorrectionRecord,
     CorrectionStatus,
+    PreferenceRecord,
     PreferenceStatus,
 )
 
@@ -464,7 +465,7 @@ class SQLitePreferenceStore:
     def __init__(self, db: SQLiteDatabase) -> None:
         self._db = db
 
-    def get(self, preference_id: str) -> dict[str, Any] | None:
+    def get(self, preference_id: str) -> PreferenceRecord | None:
         row = self._db.fetchone("SELECT * FROM preferences WHERE preference_id = ?", (preference_id,))
         if not row:
             return None
@@ -472,11 +473,11 @@ class SQLitePreferenceStore:
         data.update({"preference_id": row["preference_id"], "description": row["description"], "status": row["status"], "created_at": row["created_at"], "updated_at": row["updated_at"], "activated_at": row["activated_at"]})
         return data
 
-    def get_active_preferences(self) -> list[dict[str, Any]]:
+    def get_active_preferences(self) -> list[PreferenceRecord]:
         rows = self._db.fetchall("SELECT * FROM preferences WHERE status = 'active' ORDER BY activated_at DESC LIMIT 10")
         return [{"preference_id": r["preference_id"], "description": r["description"], "status": r["status"], **json.loads(r["data"])} for r in rows]
 
-    def list_all(self, limit: int = 50) -> list[dict[str, Any]]:
+    def list_all(self, limit: int = 50) -> list[PreferenceRecord]:
         rows = self._db.fetchall("SELECT * FROM preferences ORDER BY updated_at DESC LIMIT ?", (limit,))
         results = []
         for r in rows:
@@ -485,16 +486,16 @@ class SQLitePreferenceStore:
             results.append(data)
         return results
 
-    def activate_preference(self, preference_id: str) -> dict[str, Any] | None:
+    def activate_preference(self, preference_id: str) -> PreferenceRecord | None:
         return self._update_status(preference_id, "active")
 
-    def pause_preference(self, preference_id: str) -> dict[str, Any] | None:
+    def pause_preference(self, preference_id: str) -> PreferenceRecord | None:
         return self._update_status(preference_id, "paused")
 
-    def reject_preference(self, preference_id: str) -> dict[str, Any] | None:
+    def reject_preference(self, preference_id: str) -> PreferenceRecord | None:
         return self._update_status(preference_id, "rejected")
 
-    def update_description(self, preference_id: str, description: str) -> dict[str, Any] | None:
+    def update_description(self, preference_id: str, description: str) -> PreferenceRecord | None:
         """Update the description of an existing preference. Returns None if not found."""
         now = _now_iso()
         row = self._db.fetchone("SELECT * FROM preferences WHERE preference_id = ?", (preference_id,))
@@ -521,7 +522,7 @@ class SQLitePreferenceStore:
         original_snippet: str | None = None,
         corrected_snippet: str | None = None,
         status: str | None = None,
-    ) -> dict[str, Any]:
+    ) -> PreferenceRecord:
         """Persist one local preference candidate from an accepted reviewed candidate."""
         row = self._db.fetchone(
             "SELECT * FROM preferences WHERE delta_fingerprint = ?", (delta_fingerprint,)
@@ -635,7 +636,7 @@ class SQLitePreferenceStore:
             ("active", now, blob, now, preference["preference_id"]),
         )
 
-    def _update_status(self, preference_id: str, new_status: str) -> dict[str, Any] | None:
+    def _update_status(self, preference_id: str, new_status: str) -> PreferenceRecord | None:
         now = _now_iso()
         activated = now if new_status == "active" else None
         cursor = self._db.execute(

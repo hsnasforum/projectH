@@ -32,7 +32,7 @@ class CorrectionStore:
     def _path(self, correction_id: str) -> Path:
         return json_path(self.base_dir, correction_id)
 
-    def _scan_all(self) -> list[dict[str, Any]]:
+    def _scan_all(self) -> list[CorrectionRecord]:
         return [d for d in scan_json_dir(self.base_dir) if isinstance(d.get("correction_id"), str)]
 
     # -- Core operations --
@@ -137,28 +137,28 @@ class CorrectionStore:
 
     # -- Queries --
 
-    def _find_by_fingerprint_unlocked(self, delta_fingerprint: str) -> list[dict[str, Any]]:
+    def _find_by_fingerprint_unlocked(self, delta_fingerprint: str) -> list[CorrectionRecord]:
         return [r for r in self._scan_all() if r.get("delta_fingerprint") == delta_fingerprint]
 
-    def find_by_fingerprint(self, delta_fingerprint: str) -> list[dict[str, Any]]:
+    def find_by_fingerprint(self, delta_fingerprint: str) -> list[CorrectionRecord]:
         with self._lock:
             return self._find_by_fingerprint_unlocked(delta_fingerprint)
 
-    def find_by_artifact(self, artifact_id: str) -> list[dict[str, Any]]:
+    def find_by_artifact(self, artifact_id: str) -> list[CorrectionRecord]:
         with self._lock:
             return [r for r in self._scan_all() if r.get("artifact_id") == artifact_id]
 
-    def find_by_session(self, session_id: str) -> list[dict[str, Any]]:
+    def find_by_session(self, session_id: str) -> list[CorrectionRecord]:
         with self._lock:
             return [r for r in self._scan_all() if r.get("session_id") == session_id]
 
-    def find_recurring_patterns(self, *, session_id: str | None = None) -> list[dict[str, Any]]:
+    def find_recurring_patterns(self, *, session_id: str | None = None) -> list[CorrectionRecord]:
         with self._lock:
             all_records = self._scan_all()
             if session_id:
                 all_records = [r for r in all_records if r.get("session_id") == session_id]
 
-            groups: dict[str, list[dict[str, Any]]] = {}
+            groups: dict[str, list[CorrectionRecord]] = {}
             for r in all_records:
                 fp = r.get("delta_fingerprint", "")
                 if fp:
@@ -177,13 +177,13 @@ class CorrectionStore:
                 if len(records) >= 2
             ]
 
-    def list_recent(self, limit: int = 20) -> list[dict[str, Any]]:
+    def list_recent(self, limit: int = 20) -> list[CorrectionRecord]:
         with self._lock:
             all_records = self._scan_all()
             all_records.sort(key=lambda d: d.get("updated_at", ""), reverse=True)
             return all_records[:limit]
 
-    def list_incomplete_corrections(self) -> list[dict[str, Any]]:
+    def list_incomplete_corrections(self) -> list[CorrectionRecord]:
         _INCOMPLETE = {
             CorrectionStatus.RECORDED,
             CorrectionStatus.CONFIRMED,
@@ -192,7 +192,7 @@ class CorrectionStore:
         with self._lock:
             return [r for r in self._scan_all() if r.get("status") in _INCOMPLETE]
 
-    def find_adopted_corrections(self) -> list[dict[str, Any]]:
+    def find_adopted_corrections(self) -> list[CorrectionRecord]:
         with self._lock:
             adopted = [
                 r for r in self._scan_all()

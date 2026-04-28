@@ -1162,6 +1162,10 @@ line 9 "next phase target" Remaining 갱신 (M54-M55 TypedDict 완료 반영);
 "Not Implemented" item 3 "structured correction-memory schema" → "correction-memory schema — partial" 수정.
 verify/triage 라운드에서 직접 실행 (implementation scope conflict 해소).
 
+Axis 2 (CONTROL_SEQ 1186): CorrectionStore list 반환 annotation — ACTIVE
+`storage/correction_store.py`의 list/query 반환 annotation을
+`list[CorrectionRecord]`로 통일. 저장 로직 변경 없음.
+
 ## Next 3 Implementation Priorities
 
 1. **M49–M51 shipped**: 선호도 크로스-세션 주입(M49) + 주입 가시성·명시적 피드백 루프(M50) + 신뢰도 저하 경고(M51) 완료. PR #49 대기 중(feat/m50-axis1-axis2-pref-visibility).

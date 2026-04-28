@@ -478,6 +478,25 @@ class PreferenceRecord(TypedDict, total=False):
     updated_at: str
 
 
+class ArtifactRecord(TypedDict, total=False):
+    artifact_id: str
+    artifact_kind: str
+    session_id: str
+    source_message_id: str
+    created_at: str
+    updated_at: str
+    draft_text: str
+    source_paths: list[str]
+    response_origin: dict[str, Any] | None
+    summary_chunks: list[dict[str, Any]]
+    evidence: list[dict[str, Any]]
+    corrections: list[dict[str, Any]]
+    saves: list[dict[str, Any]]
+    latest_corrected_text: str | None
+    latest_outcome: dict[str, Any] | str | None
+    content_verdict: str | None
+
+
 # ---------------------------------------------------------------------------
 # Preference lifecycle (cross-session)
 # ---------------------------------------------------------------------------

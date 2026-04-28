@@ -7,6 +7,7 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
+from core.contracts import ArtifactRecord
 from storage.artifact_store import ArtifactStore
 
 
@@ -45,6 +46,25 @@ class ArtifactStoreTest(unittest.TestCase):
             fetched = store.get("artifact-abc123")
             self.assertIsNotNone(fetched)
             self.assertEqual(fetched["artifact_id"], "artifact-abc123")
+
+    def test_create_returns_typed_fields(self) -> None:
+        with TemporaryDirectory() as tmp:
+            store = self._make_store(tmp)
+            record = store.create(
+                artifact_id="art-typed",
+                artifact_kind="grounded_brief",
+                session_id="sess-typed",
+                source_message_id="msg-typed",
+                draft_text="test draft text",
+            )
+
+            typed_record: ArtifactRecord = record
+            self.assertEqual(typed_record["artifact_id"], "art-typed")
+            self.assertEqual(typed_record["artifact_kind"], "grounded_brief")
+            self.assertEqual(typed_record["draft_text"], "test draft text")
+            self.assertEqual(typed_record["corrections"], [])
+            self.assertEqual(typed_record["saves"], [])
+            self.assertIsInstance(typed_record, dict)
 
     def test_get_nonexistent_returns_none(self) -> None:
         with TemporaryDirectory() as tmp:

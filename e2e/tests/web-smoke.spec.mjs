@@ -12338,6 +12338,42 @@ test("correction dismiss pattern button calls dismiss-pattern endpoint", async (
   expect(result.dismissed_count).toBe(2);
 });
 
+test("correction list endpoint returns recent corrections", async ({ page }) => {
+  await page.route(/\/api\/corrections\/list$/, async (route) => {
+    if (route.request().method() === "GET") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          ok: true,
+          corrections: [
+            {
+              correction_id: "correction-abc001",
+              status: "recorded",
+              original_text: "original text one",
+              corrected_text: "corrected text one",
+              delta_fingerprint: "fp-abc001",
+              created_at: "2026-04-28T10:00:00Z",
+            },
+          ],
+        }),
+      });
+    } else {
+      await route.continue();
+    }
+  });
+
+  await page.goto("/app-preview");
+  const result = await page.evaluate(async () => {
+    const res = await fetch("/api/corrections/list");
+    const data = await res.json();
+    return { ok: res.ok, count: data.corrections?.length, first_id: data.corrections?.[0]?.correction_id };
+  });
+  expect(result.ok).toBe(true);
+  expect(result.count).toBe(1);
+  expect(result.first_id).toBe("correction-abc001");
+});
+
 test("reviewed-memory loop: sync 후 활성화하면 이후 채팅 응답에 선호 반영 prefix가 붙습니다", async ({ page }) => {
   const sessionId = buildSessionId("reviewed-memory-loop");
   const preferenceStatement = `reviewed-memory loop accepted preference ${sessionId}`;

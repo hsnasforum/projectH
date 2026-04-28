@@ -12800,6 +12800,66 @@ test("PreferencePanel 헤더에 충돌 위험 N건이 표시됩니다 (M48 A2 hi
   await expect(conflictCountSpan).toContainText("충돌 위험 1건");
 });
 
+test("reviewed-memory loop: low-reliability-count 배지가 신뢰도 저하 활성 선호 존재 시 표시됩니다", async ({ page }) => {
+  await page.route(/\/api\/preferences$/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: true,
+        preferences: [
+          {
+            preference_id: "pref-low-reliability-header-test",
+            delta_fingerprint: "sha256:low-reliability-header-test",
+            description: "신뢰도 저하 헤더 테스트 선호",
+            status: "active",
+            evidence_count: 3,
+            cross_session_count: 1,
+            reliability_stats: { applied_count: 5, corrected_count: 2 },
+            quality_info: { avg_similarity_score: 0.9, is_high_quality: true },
+            is_highly_reliable: false,
+            conflict_info: null,
+            activated_at: "2026-04-28T00:00:00Z",
+            created_at: "2026-04-28T00:00:00Z",
+            updated_at: "2026-04-28T00:00:00Z",
+          },
+        ],
+        active_count: 1,
+        candidate_count: 0,
+        paused_count: 0,
+        total_applied: 5,
+        total_corrected: 2,
+        high_quality_active_count: 1,
+        highly_reliable_active_count: 0,
+        high_severity_conflict_count: 0,
+        low_reliability_active_count: 1,
+      }),
+    });
+  });
+  await page.route(/\/api\/preferences\/audit$/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: true,
+        audit: {
+          total: 1,
+          by_status: { active: 1, candidate: 0 },
+          conflict_pair_count: 0,
+          adopted_corrections_count: 0,
+          available_to_sync_count: 0,
+        },
+      }),
+    });
+  });
+
+  await page.goto("/app-preview");
+  await expect(page.getByText("선호 기억")).toBeVisible({ timeout: 5_000 });
+  const lowReliabilityCount = page.getByTestId("low-reliability-count");
+  await expect(lowReliabilityCount).toBeVisible({ timeout: 5_000 });
+  await expect(lowReliabilityCount).toHaveText(/신뢰도 저하 \d+건/);
+});
+
 test("PreferencePanel 헤더에 신뢰도 높음 N개가 표시됩니다 (M47 highly_reliable_active_count)", async ({ page }) => {
   await page.route(/\/api\/preferences$/, async (route) => {
     await route.fulfill({

@@ -23,6 +23,17 @@ if TYPE_CHECKING:
 AUTO_ACTIVATE_CROSS_SESSION_THRESHOLD = 3
 
 
+_PREFERENCE_REQUIRED_FIELDS = frozenset(
+    {"preference_id", "delta_fingerprint", "status", "created_at"}
+)
+
+
+def _is_valid_preference_record(record: object) -> bool:
+    if not isinstance(record, dict):
+        return False
+    return all(bool(record.get(field)) for field in _PREFERENCE_REQUIRED_FIELDS)
+
+
 def _average_similarity_score(corrections: list[dict[str, Any]]) -> float | None:
     scores = [
         float(c["similarity_score"])
@@ -51,7 +62,7 @@ class PreferenceStore:
         return json_path(self.base_dir, preference_id)
 
     def _scan_all(self) -> list[PreferenceRecord]:
-        return [d for d in scan_json_dir(self.base_dir) if isinstance(d.get("preference_id"), str)]
+        return [d for d in scan_json_dir(self.base_dir) if _is_valid_preference_record(d)]
 
     # -- Core operations --
 

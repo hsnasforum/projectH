@@ -106,6 +106,7 @@ class CorrectionHandlerMixin:
         if not delta_fingerprint:
             raise WebApiError(400, "delta_fingerprint 값이 필요합니다.")
         promoted = self.correction_store.promote_by_fingerprint(delta_fingerprint)
+        activated_count = 0
         for correction in promoted:
             first_original, first_corrected = _first_correction_snippets([correction])
             pref = self.preference_store.record_reviewed_candidate_preference(
@@ -127,5 +128,11 @@ class CorrectionHandlerMixin:
                 corrected_snippet=first_corrected,
             )
             if pref and pref.get("status") == PreferenceStatus.CANDIDATE:
-                self.preference_store.activate_preference(pref["preference_id"])
-        return {"ok": True, "promoted_count": len(promoted)}
+                result = self.preference_store.activate_preference(pref["preference_id"])
+                if result is not None:
+                    activated_count += 1
+        return {
+            "ok": True,
+            "promoted_count": len(promoted),
+            "activated_count": activated_count,
+        }

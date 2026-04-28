@@ -291,7 +291,10 @@ export default function PreferencePanel({ lastAppliedFingerprints = [] }: PanelP
               </span>
             )}
             {correctionSummary && correctionSummary.total > 0 && (
-              <p className="text-[10px] text-sidebar-muted/60 px-2">
+              <p
+                data-testid="correction-summary-compact"
+                className="text-[10px] text-sidebar-muted/60 px-2"
+              >
                 교정 전체 {correctionSummary.total}개
                 {typeof correctionSummary.by_status["active"] === "number"
                   ? ` · 활성 ${correctionSummary.by_status["active"]}개`

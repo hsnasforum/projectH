@@ -1222,6 +1222,8 @@ Axis 1 (CONTROL_SEQ 1214): correction summary frontend 표시 — ACTIVE
 `PreferencePanel.tsx` load() 병렬 fetch + "교정 전체 N개 · 활성 N개" 컴팩트 표시.
 dist 재빌드·E2E는 Axis 2 대상.
 
+Axis 2 (CONTROL_SEQ 1215): dist 재빌드 + data-testid + E2E 격리 — ACTIVE
+
 ## Next 3 Implementation Priorities
 
 1. **M49–M59 shipped**: 선호도 주입·가시성·피드백·신뢰도 경고(M49-M52) + docs truth-sync(M53, M56, M59) + TypedDict 계약 시리즈(M54-M58: CorrectionRecord, PerPreferenceStats, PreferenceRecord, ArtifactRecord JSON+SQLite) 완료. PR #49 대기 중(feat/m50-axis1-axis2-pref-visibility).

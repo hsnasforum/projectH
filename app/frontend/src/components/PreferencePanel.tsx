@@ -391,6 +391,14 @@ export default function PreferencePanel({ lastAppliedFingerprints = [] }: PanelP
                       신뢰도 높음
                     </span>
                   )}
+                  {pref.status === "active" && !isHighlyReliable && reliability.applied >= 3 && (
+                    <span
+                      data-testid="preference-low-reliability-badge"
+                      className="inline-flex items-center rounded-full bg-amber-500/15 px-1 py-0.5 text-[9px] font-semibold text-amber-400"
+                    >
+                      신뢰도 저하
+                    </span>
+                  )}
                   {pref.status === "active" && appliedSet.has(pref.delta_fingerprint ?? "") && (
                     <span
                       data-testid="preference-last-applied-badge"

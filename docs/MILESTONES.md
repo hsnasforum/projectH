@@ -1127,6 +1127,13 @@ applied_count >= 3이고 is_highly_reliable=False인 ACTIVE 선호를 low_reliab
 Axis 2 (CONTROL_SEQ 1173): dist 재빌드 + E2E 격리 시나리오 — ACTIVE
 vite 재빌드(313.44 kB); Playwright isolated 1 passed (8.3s).
 
+## M52 Preference Card Visibility
+
+Axis 1 (CONTROL_SEQ 1174): 개별 선호 카드 신뢰도 저하 배지 — ACTIVE
+PreferencePanel 개별 카드에 data-testid="preference-low-reliability-badge" 추가;
+status=active + is_highly_reliable=false + applied_count>=3 조건.
+dist 재빌드·E2E는 Axis 2 대상.
+
 ## Next 3 Implementation Priorities
 
 1. **M49–M51 shipped**: 선호도 크로스-세션 주입(M49) + 주입 가시성·명시적 피드백 루프(M50) + 신뢰도 저하 경고(M51) 완료. PR #49 대기 중(feat/m50-axis1-axis2-pref-visibility).

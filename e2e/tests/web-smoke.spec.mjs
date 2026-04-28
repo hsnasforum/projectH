@@ -12108,6 +12108,87 @@ test("correction summary compact display shows total and active count", async ({
   await expect(summary).toContainText("활성 3개");
 });
 
+test("correction top pattern compact line shows original snippet", async ({ page }) => {
+  await page.route(/\/api\/preferences$/, async (route) => {
+    if (route.request().method() === "GET") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          ok: true,
+          preferences: [
+            {
+              preference_id: "pref-correction-top-pattern",
+              delta_fingerprint: "sha256:correction-top-pattern",
+              description: "반복 교정 표시용 활성 선호",
+              status: "active",
+              evidence_count: 1,
+              cross_session_count: 1,
+              reliability_stats: { applied_count: 1, corrected_count: 0 },
+              quality_info: { avg_similarity_score: null, is_high_quality: null },
+              is_highly_reliable: null,
+              activated_at: "2026-04-28T00:00:00Z",
+              created_at: "2026-04-28T00:00:00Z",
+              updated_at: "2026-04-28T00:00:00Z",
+            },
+          ],
+          active_count: 1,
+          candidate_count: 0,
+          paused_count: 0,
+          total_applied: 1,
+          total_corrected: 0,
+        }),
+      });
+    } else {
+      await route.continue();
+    }
+  });
+  await page.route(/\/api\/preferences\/audit$/, async (route) => {
+    if (route.request().method() === "GET") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ ok: true, audit: null }),
+      });
+    } else {
+      await route.continue();
+    }
+  });
+  await page.route(/\/api\/corrections\/summary$/, async (route) => {
+    if (route.request().method() === "GET") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          ok: true,
+          total: 3,
+          by_status: { active: 2 },
+          top_recurring_fingerprints: [
+            {
+              delta_fingerprint: "abc123",
+              recurrence_count: 2,
+              original_snippet: "original text one",
+              corrected_snippet: "corrected text one",
+            },
+          ],
+        }),
+      });
+    } else {
+      await route.continue();
+    }
+  });
+
+  await page.goto("/app-preview");
+  const result = await page.evaluate(async () => {
+    const res = await fetch("/api/corrections/summary");
+    const data = await res.json();
+    return { ok: res.ok, snippet: data.top_recurring_fingerprints?.[0]?.original_snippet };
+  });
+  expect(result.ok).toBe(true);
+  expect(result.snippet).toBe("original text one");
+  await expect(page.getByTestId("correction-top-pattern")).toContainText("반복 교정: original text one");
+});
+
 test("reviewed-memory loop: sync 후 활성화하면 이후 채팅 응답에 선호 반영 prefix가 붙습니다", async ({ page }) => {
   const sessionId = buildSessionId("reviewed-memory-loop");
   const preferenceStatement = `reviewed-memory loop accepted preference ${sessionId}`;

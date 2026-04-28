@@ -3,6 +3,7 @@ import type { CorrectionListResponse, CorrectionSummary, PreferenceAudit, Prefer
 import {
   confirmCorrectionPattern,
   dismissCorrectionPattern,
+  promoteCorrectionPattern,
   fetchCorrectionList,
   fetchCorrectionSummary,
   fetchPreferenceAudit,
@@ -337,6 +338,17 @@ export default function PreferencePanel({ lastAppliedFingerprints = [] }: PanelP
                       }}
                     >
                       무시
+                    </button>
+                    <button
+                      data-testid="correction-promote-pattern"
+                      className="text-[10px] text-sidebar-muted/70 hover:text-sidebar-foreground shrink-0"
+                      onClick={async () => {
+                        const fp = correctionSummary.top_recurring_fingerprints[0].delta_fingerprint;
+                        await promoteCorrectionPattern(fp).catch(() => null);
+                        load();
+                      }}
+                    >
+                      승격
                     </button>
                   </div>
                 )}

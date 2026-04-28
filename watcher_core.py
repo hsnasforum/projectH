@@ -441,6 +441,7 @@ class WatcherCore:
         self._last_operator_retriage_fingerprint: str = ""
         self._operator_retriage_started_at: float = 0.0
         self._last_operator_recovery_key: str = ""
+        self._operator_recovery_started_at: float = 0.0
         self._last_session_arbitration_draft_sig: str = self._get_path_sig(self.session_arbitration_draft_path)
         self._last_session_arbitration_fingerprint: str = ""
         self._session_arbitration_snapshot_fingerprints: dict[str, str] = {}
@@ -1651,6 +1652,7 @@ class WatcherCore:
         ):
             return True
         self._last_operator_recovery_key = recovery_key
+        self._operator_recovery_started_at = time.time()
         if operator_sig:
             self._last_operator_request_sig = operator_sig
         log.info("operator request recoverable without operator action: verify follow-up resumes (%s)", recovery_reason)
@@ -2579,38 +2581,61 @@ class WatcherCore:
         if self._get_pending_advisory_request_mtime() > 0.0 or self._get_pending_advisory_advice_mtime() > 0.0:
             return None
 
-        marker = self._operator_gate_marker()
-        if marker is None:
-            return None
-        if not is_verify_followup_route(marker.get("routed_to")):
-            return None
-
         operator_sig = self._get_path_sig(self.operator_request_path)
-        if not operator_sig or operator_sig != self._last_operator_retriage_sig:
+        if not operator_sig:
             return None
         if any(
-            str(pending.get("notify_kind") or "") in {"verify_operator_retriage", "codex_operator_retriage"}
+            str(pending.get("notify_kind") or "") in {
+                "verify_operator_retriage",
+                "codex_operator_retriage",
+                "verify_control_recovery",
+            }
             for pending in self.dispatch_queue.pending_notifications.values()
         ):
             return None
+
+        marker = self._operator_gate_marker()
+        followup_kind = "operator_retriage"
+        started_at = 0.0
+        if marker is not None:
+            if not is_verify_followup_route(marker.get("routed_to")):
+                return None
+            if operator_sig != self._last_operator_retriage_sig:
+                marker = None
+            else:
+                marker_fingerprint = str(marker.get("fingerprint") or "")
+                semantic_started_at = (
+                    self._operator_retriage_started_at
+                    if marker_fingerprint
+                    and marker_fingerprint == self._last_operator_retriage_fingerprint
+                    and self._operator_retriage_started_at > 0.0
+                    else 0.0
+                )
+                started_at = max(self._turn_entered_at, semantic_started_at) if semantic_started_at else max(
+                    self._turn_entered_at,
+                    self._get_path_mtime(self.operator_request_path),
+                )
+
+        if marker is None:
+            recovery_marker = self._operator_recovery_without_idle_marker()
+            if recovery_marker is None:
+                return None
+            recovery_key = self._operator_recovery_key(operator_sig, recovery_marker)
+            if not recovery_key or recovery_key != self._last_operator_recovery_key:
+                return None
+            marker = recovery_marker
+            followup_kind = "operator_recovery"
+            recovery_started_at = self._operator_recovery_started_at if self._operator_recovery_started_at > 0.0 else 0.0
+            started_at = max(self._turn_entered_at, recovery_started_at) if recovery_started_at else max(
+                self._turn_entered_at,
+                self._get_path_mtime(self.operator_request_path),
+            )
 
         operator_seq = control_seq_value(marker.get("control_seq"), default=-1)
         if self._turn_active_control_seq >= 0 and operator_seq < self._turn_active_control_seq:
             return None
 
         now = time.time()
-        marker_fingerprint = str(marker.get("fingerprint") or "")
-        semantic_started_at = (
-            self._operator_retriage_started_at
-            if marker_fingerprint
-            and marker_fingerprint == self._last_operator_retriage_fingerprint
-            and self._operator_retriage_started_at > 0.0
-            else 0.0
-        )
-        started_at = max(self._turn_entered_at, semantic_started_at) if semantic_started_at else max(
-            self._turn_entered_at,
-            self._get_path_mtime(self.operator_request_path),
-        )
         if now - started_at < self.operator_retriage_no_control_sec:
             return None
 
@@ -2623,6 +2648,8 @@ class WatcherCore:
 
         return {
             **marker,
+            "source_reason": str(marker.get("reason") or marker.get("reason_code") or ""),
+            "followup_kind": followup_kind,
             "reason": "operator_retriage_no_next_control",
             "operator_sig": operator_sig,
             "verify_lane_ready": True,
@@ -2650,7 +2677,12 @@ class WatcherCore:
                 read_first.append(path)
         read_first_lines = "\n".join(f"- {path}" for path in read_first)
         operator_seq = control_seq_value(marker.get("control_seq"), default=-1)
-        reason_code = str(marker.get("reason_code") or marker.get("reason") or "slice_ambiguity")
+        reason_code = str(
+            marker.get("reason_code")
+            or marker.get("source_reason")
+            or marker.get("reason")
+            or "slice_ambiguity"
+        )
         decision_class = str(marker.get("decision_class") or "next_slice_selection")
         return (
             "STATUS: request_open\n"
@@ -2721,6 +2753,8 @@ class WatcherCore:
         )
         self._operator_retriage_started_at = 0.0
         self._last_operator_retriage_fingerprint = ""
+        self._last_operator_recovery_key = ""
+        self._operator_recovery_started_at = 0.0
         self._notify_advisory_owner("operator_retriage_no_next_control")
         return True
 
@@ -3732,11 +3766,11 @@ class WatcherCore:
 
         # --- rolling handoff / operator 슬롯 감시 (verify → implement / operator 방향) ---
         self._check_pipeline_signal_updates()
+        if self._promote_operator_retriage_no_next_control():
+            return
         if self._check_operator_recovery_without_signal():
             return
         self._check_operator_wait_idle_timeout()
-        if self._promote_operator_retriage_no_next_control():
-            return
 
         # --- 최신 control signal이 operator stop이면 자동 진행을 멈춤 ---
         _, handoff_mtime = self._get_latest_implement_handoff()

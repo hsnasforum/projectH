@@ -1616,6 +1616,44 @@ class WatcherPromptAssemblyTest(unittest.TestCase):
             self.assertIn("pr_creation_gate + gate_24h + release_gate", prompt)
             self.assertIn("do not hand commit/push/PR work to the implement lane", prompt)
 
+    def test_ad_hoc_commit_push_pr_creation_bundle_routes_to_verify_followup(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            watch_dir = root / "work"
+            base_dir = root / ".pipeline"
+            watch_dir.mkdir(parents=True, exist_ok=True)
+            base_dir.mkdir(parents=True, exist_ok=True)
+            _write_active_profile(root)
+
+            operator_path = base_dir / "operator_request.md"
+            operator_path.write_text(
+                "STATUS: needs_operator\n"
+                "CONTROL_SEQ: 1239\n"
+                "REASON_CODE: commit_push_pr_creation_m68_bundle\n"
+                "OPERATOR_POLICY: commit_push_bundle_authorization + pr_creation_gate + internal_only\n"
+                "DECISION_CLASS: publish_boundary\n"
+                "DECISION_REQUIRED: M68 commit + branch push + PR creation\n",
+                encoding="utf-8",
+            )
+
+            core = watcher_core.WatcherCore(
+                {
+                    "watch_dir": str(watch_dir),
+                    "base_dir": str(base_dir),
+                    "repo_root": str(root),
+                    "dry_run": True,
+                }
+            )
+
+            marker = core._operator_gate_marker()
+            self.assertIsNotNone(marker)
+            assert marker is not None
+            self.assertEqual(marker["reason"], COMMIT_PUSH_BUNDLE_AUTHORIZATION_REASON)
+            self.assertEqual(marker["operator_policy"], "internal_only")
+            self.assertEqual(marker["mode"], "triage")
+            self.assertEqual(marker["routed_to"], "verify_followup")
+            self.assertEqual(core._resolve_turn(), "verify_followup")
+
     def test_pr_merge_gate_internal_only_routes_to_verify_followup_backlog(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -5756,6 +5794,77 @@ class RollingSignalTransitionTest(unittest.TestCase):
             self.assertIn("SUPERSEDES: .pipeline/operator_request.md CONTROL_SEQ 31", request_text)
             raw_text = (base_dir / "logs" / "experimental" / "raw.jsonl").read_text(encoding="utf-8")
             self.assertIn("operator_retriage_no_next_control", raw_text)
+
+    def test_pr_merge_recovery_no_next_control_promotes_to_advisory_request(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            watch_dir = root / "work"
+            base_dir = root / ".pipeline"
+            watch_dir.mkdir(parents=True, exist_ok=True)
+            base_dir.mkdir(parents=True, exist_ok=True)
+            _write_active_profile(root)
+
+            operator_path = base_dir / "operator_request.md"
+            operator_path.write_text(
+                "\n".join(
+                    [
+                        "STATUS: needs_operator",
+                        "CONTROL_SEQ: 41",
+                        f"REASON_CODE: {PR_MERGE_GATE_REASON}",
+                        "OPERATOR_POLICY: internal_only",
+                        "DECISION_CLASS: merge_gate",
+                        "DECISION_REQUIRED: PR #53 merge approval",
+                        "PR #53: https://github.com/hsnasforum/projectH/pull/53",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            core = watcher_core.WatcherCore(
+                {
+                    "watch_dir": str(watch_dir),
+                    "base_dir": str(base_dir),
+                    "repo_root": str(root),
+                    "dry_run": True,
+                    "operator_retriage_no_control_sec": 0,
+                }
+            )
+
+            with (
+                mock.patch.object(
+                    core._pr_merge_status_cache,
+                    "control_resolution",
+                    return_value=PrMergeGateResolution(completed_pr_numbers=(53,)),
+                ),
+                mock.patch.object(core, "_notify_verify_control_recovery") as recovery_notify,
+            ):
+                self.assertTrue(core._check_operator_recovery_without_signal())
+                recovery_notify.assert_called_once()
+
+            self.assertEqual(core._current_turn_state, WatcherTurnState.VERIFY_FOLLOWUP)
+            self.assertEqual(core._turn_active_control_seq, 41)
+
+            with (
+                mock.patch.object(
+                    core._pr_merge_status_cache,
+                    "control_resolution",
+                    return_value=PrMergeGateResolution(completed_pr_numbers=(53,)),
+                ),
+                mock.patch("watcher_core._shared_capture_pane_text", return_value="openai codex\n> "),
+                mock.patch.object(core, "_notify_advisory_owner") as notify,
+            ):
+                promoted = core._promote_operator_retriage_no_next_control()
+
+            self.assertTrue(promoted)
+            notify.assert_called_once_with("operator_retriage_no_next_control")
+            self.assertEqual(core._current_turn_state, WatcherTurnState.ADVISORY_ACTIVE)
+            self.assertEqual(core._turn_active_control_seq, 42)
+            request_text = (base_dir / "advisory_request.md").read_text(encoding="utf-8")
+            self.assertIn("STATUS: request_open", request_text)
+            self.assertIn("CONTROL_SEQ: 42", request_text)
+            self.assertIn("SOURCE: watcher operator_retriage_no_next_control", request_text)
+            self.assertIn("classified as `pr_merge_completed`", request_text)
+            self.assertIn("SUPERSEDES: .pipeline/operator_request.md CONTROL_SEQ 41", request_text)
 
     def test_operator_retriage_seq_only_bump_preserves_no_next_control_age(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -347,6 +347,7 @@ controller browser UI의 active runtime contract는 아래로 제한합니다.
 - operator는 stale stop 파일만 보고 automation을 계속 막지 말고, 최신 `/verify` 또는 다음 control 생성 여부를 먼저 확인해야 합니다.
 - stale stop suppression은 operator 문서를 삭제하거나 rewrite하는 동작이 아니라 supervisor read-model 정규화입니다.
 - watcher는 이 상태에서 startup/rolling turn을 `VERIFY_FOLLOWUP`으로 다시 열고, verify/handoff owner에게 다음 canonical control outcome을 다시 쓰도록 1회 control-recovery prompt를 보낼 수 있습니다.
+- control-recovery prompt 이후 verify/handoff owner가 새 `implement_handoff.md`, `advisory_request.md`, 또는 `operator_request.md`를 쓰지 않고 idle로 돌아오면 watcher가 `operator_retriage_no_next_control` advisory request를 씁니다. `pr_merge_completed`처럼 이미 완료된 merge gate도 이 no-silent-stall guard에 포함됩니다.
 - 이때 browser/TUI 표면에서는 `control=none`이더라도 active verify/handoff-owner lane이 `WORKING` / `followup`으로 보일 수 있습니다.
 
 ## 6.10 gated operator candidate

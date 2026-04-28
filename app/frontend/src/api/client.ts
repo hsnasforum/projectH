@@ -376,6 +376,18 @@ export async function dismissCorrectionPattern(
   return res.json() as Promise<{ ok: boolean; dismissed_count: number }>;
 }
 
+export async function promoteCorrectionPattern(
+  delta_fingerprint: string,
+): Promise<{ ok: boolean; promoted_count: number }> {
+  const res = await fetch(`${BASE}/api/corrections/promote-pattern`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ delta_fingerprint }),
+  });
+  if (!res.ok) throw new Error("promote pattern failed");
+  return res.json() as Promise<{ ok: boolean; promoted_count: number }>;
+}
+
 export interface PreferenceAudit {
   total: number;
   by_status: Record<string, number>;

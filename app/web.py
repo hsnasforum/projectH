@@ -405,6 +405,7 @@ class LocalAssistantHandler(BaseHTTPRequestHandler):
             "/api/corrections/sync-adopted-to-candidates",
             "/api/corrections/confirm-pattern",
             "/api/corrections/dismiss-pattern",
+            "/api/corrections/promote-pattern",
             "/api/sessions/delete",
             "/api/sessions/delete-all",
         }:
@@ -424,6 +425,10 @@ class LocalAssistantHandler(BaseHTTPRequestHandler):
                 return
             if parsed.path == "/api/corrections/dismiss-pattern":
                 response = self.server.service.dismiss_correction_pattern(payload)
+                self._send_json(HTTPStatus.OK, response)
+                return
+            if parsed.path == "/api/corrections/promote-pattern":
+                response = self.server.service.promote_correction_pattern(payload)
                 self._send_json(HTTPStatus.OK, response)
                 return
             if parsed.path == "/api/feedback":

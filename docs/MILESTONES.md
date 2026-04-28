@@ -1155,6 +1155,13 @@ Axis 2 (CONTROL_SEQ 1184): session_store.py setdefault annotation — ACTIVE
 `per_preference_stats.setdefault()` 반환값 `pstats`/`event_stats` 로컬 변수에
 `PerPreferenceStats` annotation 추가. 타입 생성→소비 체인 완성.
 
+## M56 TASK_BACKLOG Truth Sync
+
+Axis 1 (CONTROL_SEQ 1185/1186): TASK_BACKLOG 현행화 — ACTIVE
+line 9 "next phase target" Remaining 갱신 (M54-M55 TypedDict 완료 반영);
+"Not Implemented" item 3 "structured correction-memory schema" → "correction-memory schema — partial" 수정.
+verify/triage 라운드에서 직접 실행 (implementation scope conflict 해소).
+
 ## Next 3 Implementation Priorities
 
 1. **M49–M51 shipped**: 선호도 크로스-세션 주입(M49) + 주입 가시성·명시적 피드백 루프(M50) + 신뢰도 저하 경고(M51) 완료. PR #49 대기 중(feat/m50-axis1-axis2-pref-visibility).

@@ -22,7 +22,7 @@ class _RecordingOllamaAdapter(OllamaModelAdapter):
     def is_model_available(self, model_name: str) -> bool:
         return model_name in self.available_models
 
-    def stream_summarize(self, text: str):
+    def stream_summarize(self, text: str, *, active_preferences=None):
         self.calls.append(("summarize", self._effective_model))
         yield ModelStreamEvent(kind=StreamEventType.TEXT_REPLACE, text="요약 결과")
 

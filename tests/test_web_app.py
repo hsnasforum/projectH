@@ -43,7 +43,7 @@ class _SlowStreamingModel(ModelAdapter):
     def respond(self, prompt: str, *, active_preferences: list[dict[str, str]] | None = None) -> str:
         return f"응답: {prompt}"
 
-    def summarize(self, text: str) -> str:
+    def summarize(self, text: str, *, active_preferences: list[dict[str, str]] | None = None) -> str:
         return f"요약: {text[:20]}"
 
     def create_summary_note(self, *, source_path: str, text: str) -> SummaryNoteDraft:
@@ -76,7 +76,7 @@ class _SlowStreamingModel(ModelAdapter):
             detail="느린 스트리밍 테스트 모델입니다.",
         )
 
-    def stream_summarize(self, text: str):
+    def stream_summarize(self, text: str, *, active_preferences: list[dict[str, str]] | None = None):
         for chunk in ("첫 번째 조각 ", "두 번째 조각 ", "세 번째 조각"):
             time.sleep(0.02)
             yield ModelStreamEvent(kind="text_delta", text=chunk)

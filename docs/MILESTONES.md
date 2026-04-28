@@ -1096,6 +1096,11 @@ Axis 2 (CONTROL_SEQ 1154): is_highly_reliable 필터 적용 — ACTIVE
 `_get_active_preferences()`가 `is_highly_reliable=True` 선호도만 반환하도록 수정.
 `highly_reliable_only=True`가 기본값; 단위 테스트 포함.
 
+Axis 3 (CONTROL_SEQ 1159): summarization 주입 + 웹 조사 제외 — ACTIVE
+`stream_summarize()`에 `active_preferences` 추가;
+`_is_web=True`이면 context-answer 경로에 `active_preferences=None` 전달.
+단위 테스트 포함.
+
 ## Next 3 Implementation Priorities
 
 1. **E2E 환경 개선 완료**: `e2e/start-server.sh` healthcheck wrapper no-server / existing-server 두 경로가 정적 감사(09c806d)로 확인됨. operator가 검증 수준을 release gate로 인정(Q1 Option A, operator_request 263). B1 gate closed (2026-04-26).

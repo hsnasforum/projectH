@@ -4,7 +4,7 @@ from __future__ import annotations
 from typing import Any
 
 from app.errors import WebApiError
-from core.contracts import CandidateFamily
+from core.contracts import CandidateFamily, PreferenceStatus
 
 
 def _first_correction_snippets(
@@ -108,7 +108,7 @@ class CorrectionHandlerMixin:
         promoted = self.correction_store.promote_by_fingerprint(delta_fingerprint)
         for correction in promoted:
             first_original, first_corrected = _first_correction_snippets([correction])
-            self.preference_store.record_reviewed_candidate_preference(
+            pref = self.preference_store.record_reviewed_candidate_preference(
                 delta_fingerprint=delta_fingerprint,
                 candidate_family=str(
                     correction.get("pattern_family") or CandidateFamily.CORRECTION_REWRITE
@@ -126,4 +126,6 @@ class CorrectionHandlerMixin:
                 original_snippet=first_original,
                 corrected_snippet=first_corrected,
             )
+            if pref and pref.get("status") == PreferenceStatus.CANDIDATE:
+                self.preference_store.activate_preference(pref["preference_id"])
         return {"ok": True, "promoted_count": len(promoted)}

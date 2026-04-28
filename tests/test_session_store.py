@@ -364,6 +364,81 @@ class SessionStoreTest(unittest.TestCase):
             self.assertEqual(per["pref-B"]["applied_count"], 1)
             self.assertEqual(per["pref-B"]["corrected_count"], 1)
 
+    def test_corrected_count_includes_non_grounded_brief_corrections(self) -> None:
+        """applied_preference_ids + corrected_text가 있는 chat 응답도 corrected_count에 반영된다."""
+        with TemporaryDirectory() as base_dir:
+            store = SessionStore(base_dir=base_dir)
+            session_id = "chat-correction-session"
+            data = store.get_session(session_id)
+
+            data["messages"].append({
+                "message_id": "msg-chat1",
+                "role": "assistant",
+                "applied_preference_ids": ["pref-X"],
+                "corrected_text": "사용자 교정 텍스트",
+                "text": "원본 응답",
+            })
+            data["messages"].append({
+                "message_id": "msg-chat2",
+                "role": "assistant",
+                "applied_preference_ids": ["pref-X"],
+                "text": "교정 없는 응답",
+            })
+            store._save(session_id, data)
+
+            summary = store.get_global_audit_summary()
+            per = summary["per_preference_stats"]
+            self.assertEqual(per["pref-X"]["applied_count"], 2)
+            self.assertEqual(per["pref-X"]["corrected_count"], 1)
+
+    def test_preference_correction_events_increment_corrected_count(self) -> None:
+        """preference_correction_events가 corrected_count에 산입된다."""
+        with TemporaryDirectory() as base_dir:
+            store = SessionStore(base_dir=base_dir)
+            session_id = "explicit-correction-session"
+            data = store.get_session(session_id)
+
+            data["messages"].append({
+                "message_id": "msg-ec1",
+                "role": "assistant",
+                "applied_preference_ids": ["fp-X"],
+                "text": "응답",
+            })
+            store._save(session_id, data)
+
+            recorded = store.record_preference_explicit_correction(
+                session_id,
+                message_id="msg-ec1",
+                fingerprint="fp-X",
+            )
+            self.assertTrue(recorded)
+
+            summary = store.get_global_audit_summary()
+            per = summary["per_preference_stats"]
+            self.assertGreaterEqual(per["fp-X"]["applied_count"], 1)
+            self.assertEqual(per["fp-X"]["corrected_count"], 1)
+
+    def test_preference_correction_events_reject_unknown_fingerprint(self) -> None:
+        """applied_preference_ids에 없는 fingerprint는 기록 거부된다."""
+        with TemporaryDirectory() as base_dir:
+            store = SessionStore(base_dir=base_dir)
+            session_id = "reject-fp-session"
+            data = store.get_session(session_id)
+            data["messages"].append({
+                "message_id": "msg-rej1",
+                "role": "assistant",
+                "applied_preference_ids": ["fp-A"],
+                "text": "응답",
+            })
+            store._save(session_id, data)
+
+            recorded = store.record_preference_explicit_correction(
+                session_id,
+                message_id="msg-rej1",
+                fingerprint="fp-UNKNOWN",
+            )
+            self.assertFalse(recorded)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -10,6 +10,8 @@ import threading
 from pathlib import Path
 from typing import Any
 
+from core.contracts import ArtifactRecord
+
 from .json_store_base import utc_now_iso, json_path, atomic_write, read_json, scan_json_dir
 
 
@@ -36,10 +38,10 @@ class ArtifactStore:
         response_origin: dict[str, Any] | None = None,
         summary_chunks: list[dict[str, Any]] | None = None,
         evidence: list[dict[str, Any]] | None = None,
-    ) -> dict[str, Any]:
+    ) -> ArtifactRecord:
         with self._lock:
             now = utc_now_iso()
-            record: dict[str, Any] = {
+            record: ArtifactRecord = {
                 "artifact_id": artifact_id,
                 "artifact_kind": artifact_kind,
                 "session_id": session_id,
@@ -60,7 +62,7 @@ class ArtifactStore:
             atomic_write(self._path(artifact_id), record)
             return record
 
-    def get(self, artifact_id: str) -> dict[str, Any] | None:
+    def get(self, artifact_id: str) -> ArtifactRecord | None:
         with self._lock:
             return read_json(self._path(artifact_id))
 
@@ -70,7 +72,7 @@ class ArtifactStore:
         *,
         corrected_text: str,
         outcome: str = "corrected",
-    ) -> dict[str, Any] | None:
+    ) -> ArtifactRecord | None:
         with self._lock:
             record = self.get(artifact_id)
             if record is None:
@@ -94,7 +96,7 @@ class ArtifactStore:
         saved_note_path: str,
         save_content_source: str,
         approval_id: str | None = None,
-    ) -> dict[str, Any] | None:
+    ) -> ArtifactRecord | None:
         with self._lock:
             record = self.get(artifact_id)
             if record is None:
@@ -116,7 +118,7 @@ class ArtifactStore:
         *,
         outcome: str,
         content_verdict: str | None = None,
-    ) -> dict[str, Any] | None:
+    ) -> ArtifactRecord | None:
         with self._lock:
             record = self.get(artifact_id)
             if record is None:
@@ -130,12 +132,12 @@ class ArtifactStore:
 
     # -- Queries --
 
-    def list_by_session(self, session_id: str) -> list[dict[str, Any]]:
+    def list_by_session(self, session_id: str) -> list[ArtifactRecord]:
         with self._lock:
             results = [d for d in scan_json_dir(self.base_dir) if d.get("session_id") == session_id]
             return sorted(results, key=lambda d: d.get("created_at", ""), reverse=True)
 
-    def list_recent(self, limit: int = 20) -> list[dict[str, Any]]:
+    def list_recent(self, limit: int = 20) -> list[ArtifactRecord]:
         with self._lock:
             all_records = scan_json_dir(self.base_dir)
             all_records.sort(key=lambda d: d.get("updated_at", ""), reverse=True)

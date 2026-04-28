@@ -18,9 +18,12 @@ from typing import Any
 from uuid import uuid4
 
 from core.contracts import (
+    ArtifactRecord,
     CandidateFamily,
     CORRECTION_STATUS_TRANSITIONS,
+    CorrectionRecord,
     CorrectionStatus,
+    PreferenceRecord,
     PreferenceStatus,
 )
 
@@ -419,7 +422,7 @@ class SQLiteArtifactStore:
                source_message_id: str, draft_text: str, source_paths: list[str] | None = None,
                response_origin: dict[str, Any] | None = None,
                summary_chunks: list[dict[str, Any]] | None = None,
-               evidence: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+               evidence: list[dict[str, Any]] | None = None) -> ArtifactRecord:
         now = _now_iso()
         data = {
             "draft_text": draft_text,
@@ -438,7 +441,7 @@ class SQLiteArtifactStore:
         self._db.commit()
         return {"artifact_id": artifact_id, "artifact_kind": artifact_kind, "session_id": session_id, **data, "created_at": now}
 
-    def get(self, artifact_id: str) -> dict[str, Any] | None:
+    def get(self, artifact_id: str) -> ArtifactRecord | None:
         row = self._db.fetchone("SELECT * FROM artifacts WHERE artifact_id = ?", (artifact_id,))
         if not row:
             return None
@@ -446,11 +449,11 @@ class SQLiteArtifactStore:
         data.update({"artifact_id": row["artifact_id"], "artifact_kind": row["artifact_kind"], "session_id": row["session_id"], "created_at": row["created_at"], "updated_at": row["updated_at"]})
         return data
 
-    def list_by_session(self, session_id: str) -> list[dict[str, Any]]:
+    def list_by_session(self, session_id: str) -> list[ArtifactRecord]:
         rows = self._db.fetchall("SELECT * FROM artifacts WHERE session_id = ? ORDER BY created_at DESC", (session_id,))
         return [{"artifact_id": r["artifact_id"], **json.loads(r["data"]), "created_at": r["created_at"]} for r in rows]
 
-    def list_recent(self, limit: int = 20) -> list[dict[str, Any]]:
+    def list_recent(self, limit: int = 20) -> list[ArtifactRecord]:
         rows = self._db.fetchall("SELECT * FROM artifacts ORDER BY created_at DESC LIMIT ?", (limit,))
         return [{"artifact_id": r["artifact_id"], **json.loads(r["data"]), "created_at": r["created_at"]} for r in rows]
 
@@ -463,7 +466,7 @@ class SQLitePreferenceStore:
     def __init__(self, db: SQLiteDatabase) -> None:
         self._db = db
 
-    def get(self, preference_id: str) -> dict[str, Any] | None:
+    def get(self, preference_id: str) -> PreferenceRecord | None:
         row = self._db.fetchone("SELECT * FROM preferences WHERE preference_id = ?", (preference_id,))
         if not row:
             return None
@@ -471,11 +474,11 @@ class SQLitePreferenceStore:
         data.update({"preference_id": row["preference_id"], "description": row["description"], "status": row["status"], "created_at": row["created_at"], "updated_at": row["updated_at"], "activated_at": row["activated_at"]})
         return data
 
-    def get_active_preferences(self) -> list[dict[str, Any]]:
+    def get_active_preferences(self) -> list[PreferenceRecord]:
         rows = self._db.fetchall("SELECT * FROM preferences WHERE status = 'active' ORDER BY activated_at DESC LIMIT 10")
         return [{"preference_id": r["preference_id"], "description": r["description"], "status": r["status"], **json.loads(r["data"])} for r in rows]
 
-    def list_all(self, limit: int = 50) -> list[dict[str, Any]]:
+    def list_all(self, limit: int = 50) -> list[PreferenceRecord]:
         rows = self._db.fetchall("SELECT * FROM preferences ORDER BY updated_at DESC LIMIT ?", (limit,))
         results = []
         for r in rows:
@@ -484,16 +487,16 @@ class SQLitePreferenceStore:
             results.append(data)
         return results
 
-    def activate_preference(self, preference_id: str) -> dict[str, Any] | None:
+    def activate_preference(self, preference_id: str) -> PreferenceRecord | None:
         return self._update_status(preference_id, "active")
 
-    def pause_preference(self, preference_id: str) -> dict[str, Any] | None:
+    def pause_preference(self, preference_id: str) -> PreferenceRecord | None:
         return self._update_status(preference_id, "paused")
 
-    def reject_preference(self, preference_id: str) -> dict[str, Any] | None:
+    def reject_preference(self, preference_id: str) -> PreferenceRecord | None:
         return self._update_status(preference_id, "rejected")
 
-    def update_description(self, preference_id: str, description: str) -> dict[str, Any] | None:
+    def update_description(self, preference_id: str, description: str) -> PreferenceRecord | None:
         """Update the description of an existing preference. Returns None if not found."""
         now = _now_iso()
         row = self._db.fetchone("SELECT * FROM preferences WHERE preference_id = ?", (preference_id,))
@@ -520,7 +523,7 @@ class SQLitePreferenceStore:
         original_snippet: str | None = None,
         corrected_snippet: str | None = None,
         status: str | None = None,
-    ) -> dict[str, Any]:
+    ) -> PreferenceRecord:
         """Persist one local preference candidate from an accepted reviewed candidate."""
         row = self._db.fetchone(
             "SELECT * FROM preferences WHERE delta_fingerprint = ?", (delta_fingerprint,)
@@ -634,7 +637,7 @@ class SQLitePreferenceStore:
             ("active", now, blob, now, preference["preference_id"]),
         )
 
-    def _update_status(self, preference_id: str, new_status: str) -> dict[str, Any] | None:
+    def _update_status(self, preference_id: str, new_status: str) -> PreferenceRecord | None:
         now = _now_iso()
         activated = now if new_status == "active" else None
         cursor = self._db.execute(
@@ -666,7 +669,7 @@ class SQLiteCorrectionStore:
         corrected_text: str,
         pattern_family: str = CandidateFamily.CORRECTION_REWRITE,
         applied_preference_ids: list[str] | None = None,
-    ) -> dict[str, Any] | None:
+    ) -> CorrectionRecord | None:
         """Record a correction and compute its delta. Returns None if no delta."""
         from core.delta_analysis import compute_correction_delta
 
@@ -748,41 +751,41 @@ class SQLiteCorrectionStore:
             self._db.commit()
             return record
 
-    def get(self, correction_id: str) -> dict[str, Any] | None:
+    def get(self, correction_id: str) -> CorrectionRecord | None:
         row = self._db.fetchone("SELECT * FROM corrections WHERE correction_id = ?", (correction_id,))
         if not row:
             return None
         return self._row_to_dict(row)
 
-    def find_by_fingerprint(self, delta_fingerprint: str) -> list[dict[str, Any]]:
+    def find_by_fingerprint(self, delta_fingerprint: str) -> list[CorrectionRecord]:
         rows = self._db.fetchall(
             "SELECT * FROM corrections WHERE delta_fingerprint = ? ORDER BY created_at",
             (delta_fingerprint,),
         )
         return [self._row_to_dict(row) for row in rows]
 
-    def find_by_artifact(self, artifact_id: str) -> list[dict[str, Any]]:
+    def find_by_artifact(self, artifact_id: str) -> list[CorrectionRecord]:
         rows = self._db.fetchall(
             "SELECT * FROM corrections WHERE artifact_id = ? ORDER BY created_at",
             (artifact_id,),
         )
         return [self._row_to_dict(row) for row in rows]
 
-    def find_by_session(self, session_id: str) -> list[dict[str, Any]]:
+    def find_by_session(self, session_id: str) -> list[CorrectionRecord]:
         rows = self._db.fetchall(
             "SELECT * FROM corrections WHERE session_id = ? ORDER BY created_at",
             (session_id,),
         )
         return [self._row_to_dict(row) for row in rows]
 
-    def list_recent(self, limit: int = 20) -> list[dict[str, Any]]:
+    def list_recent(self, limit: int = 20) -> list[CorrectionRecord]:
         rows = self._db.fetchall(
             "SELECT * FROM corrections ORDER BY created_at DESC LIMIT ?",
             (limit,),
         )
         return [self._row_to_dict(row) for row in rows]
 
-    def list_incomplete_corrections(self) -> list[dict[str, Any]]:
+    def list_incomplete_corrections(self) -> list[CorrectionRecord]:
         with self._lock:
             rows = self._db.fetchall(
                 "SELECT * FROM corrections WHERE status IN (?, ?, ?) ORDER BY created_at ASC",

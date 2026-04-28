@@ -27,6 +27,7 @@ from core.contracts import (
     CandidateReviewSuggestedScope,
     ContentReasonLabel,
     ContentReasonScope,
+    PerPreferenceStats,
     SESSION_LOCAL_MEMORY_SIGNAL_VERSION,
     WebSearchPermission,
 )
@@ -730,6 +731,10 @@ class SessionStore:
             and normalized.get("artifact_kind") == "grounded_brief"
             and isinstance(normalized.get("original_response_snapshot"), dict)
         )
+        is_applied_preference_response = (
+            normalized.get("role") == "assistant"
+            and bool(normalized.get("applied_preference_ids"))
+        )
         source_message_id = normalize_source_message_id(normalized.get("source_message_id"))
         if source_message_id is None and isinstance(normalized.get("approval"), dict):
             source_message_id = normalize_source_message_id((normalized.get("approval") or {}).get("source_message_id"))
@@ -739,7 +744,7 @@ class SessionStore:
             normalized["source_message_id"] = source_message_id
         else:
             normalized.pop("source_message_id", None)
-        if is_grounded_brief_source and corrected_text is not None:
+        if (is_grounded_brief_source or is_applied_preference_response) and corrected_text is not None:
             normalized["corrected_text"] = corrected_text
         else:
             normalized.pop("corrected_text", None)
@@ -1020,19 +1025,26 @@ class SessionStore:
                         summary["correction_pair_count"] += 1
                     if msg.get("applied_preference_ids"):
                         summary["personalized_response_count"] += 1
-                        is_personalized_correction = (
-                            str(msg.get("artifact_kind") or "") == "grounded_brief"
-                            and msg.get("corrected_text") is not None
-                        )
+                        is_personalized_correction = msg.get("corrected_text") is not None
                         if is_personalized_correction:
                             summary["personalized_correction_count"] += 1
                         for pref_id in msg["applied_preference_ids"]:
-                            pstats = summary["per_preference_stats"].setdefault(
+                            pstats: PerPreferenceStats = summary["per_preference_stats"].setdefault(
                                 pref_id, {"applied_count": 0, "corrected_count": 0}
                             )
                             pstats["applied_count"] += 1
                             if is_personalized_correction:
                                 pstats["corrected_count"] += 1
+                    for event in msg.get("preference_correction_events", []):
+                        if not isinstance(event, dict):
+                            continue
+                        event_fingerprint = str(event.get("fingerprint") or "").strip()
+                        if not event_fingerprint:
+                            continue
+                        event_stats: PerPreferenceStats = summary["per_preference_stats"].setdefault(
+                            event_fingerprint, {"applied_count": 0, "corrected_count": 0}
+                        )
+                        event_stats["corrected_count"] += 1
                     count_feedback(msg.get("feedback"))
                 count_feedback(data.get("feedback"))
                 for action in data.get("operator_action_history", []):
@@ -1216,6 +1228,42 @@ class SessionStore:
 
             self._save(session_id, data)
             return updated_message
+
+    def record_preference_explicit_correction(
+        self,
+        session_id: str,
+        *,
+        message_id: str,
+        fingerprint: str,
+    ) -> bool:
+        """applied-preference 응답에 대한 명시적 교정 신호를 기록한다."""
+        normalized_message_id = str(message_id or "").strip()
+        normalized_fingerprint = str(fingerprint or "").strip()
+        if not normalized_message_id or not normalized_fingerprint:
+            return False
+
+        with self._lock:
+            data = self.get_session(session_id)
+            for message in data.get("messages", []):
+                if str(message.get("message_id") or "").strip() != normalized_message_id:
+                    continue
+                if message.get("role") != "assistant":
+                    return False
+                applied_preference_ids = [
+                    str(item).strip()
+                    for item in (message.get("applied_preference_ids") or [])
+                    if str(item).strip()
+                ]
+                if normalized_fingerprint not in applied_preference_ids:
+                    return False
+                events = message.setdefault("preference_correction_events", [])
+                if not isinstance(events, list):
+                    events = []
+                    message["preference_correction_events"] = events
+                events.append({"fingerprint": normalized_fingerprint, "ts": self._now()})
+                self._save(session_id, data)
+                return True
+        return False
 
     def record_corrected_outcome_for_artifact(
         self,

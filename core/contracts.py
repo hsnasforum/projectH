@@ -7,7 +7,7 @@ Frontend JS constants are generated from this file.
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import TypedDict
+from typing import Any, TypedDict
 
 
 # ---------------------------------------------------------------------------
@@ -417,6 +417,84 @@ CORRECTION_STATUS_TRANSITIONS: dict[CorrectionStatus, tuple[CorrectionStatus, ..
     CorrectionStatus.PROMOTED: (CorrectionStatus.ACTIVE,),
     CorrectionStatus.ACTIVE: (CorrectionStatus.STOPPED,),
 }
+
+
+class CorrectionRecord(TypedDict, total=False):
+    correction_id: str
+    artifact_id: str
+    session_id: str
+    source_message_id: str
+    original_text: str
+    corrected_text: str
+    delta_fingerprint: str
+    delta_summary: dict[str, Any]
+    similarity_score: float | None
+    rewrite_dimensions: list[str]
+    pattern_family: str
+    applied_preference_ids: list[str] | None
+    recurrence_count: int
+    first_seen_at: str
+    last_seen_at: str
+    status: str
+    confirmed_at: str | None
+    promoted_at: str | None
+    activated_at: str | None
+    stopped_at: str | None
+    created_at: str
+    updated_at: str
+
+
+class PerPreferenceStats(TypedDict, total=False):
+    applied_count: int
+    corrected_count: int
+
+
+class PreferenceRecord(TypedDict, total=False):
+    preference_id: str
+    delta_fingerprint: str
+    description: str
+    status: str
+    evidence_count: int
+    cross_session_count: int
+    source_corrections: list[dict[str, Any]]
+    reviewed_candidate_source_refs: list[dict[str, Any]]
+    original_text: str | None
+    corrected_text: str | None
+    original_snippet: str | None
+    corrected_snippet: str | None
+    delta_summary: dict[str, Any]
+    similarity_score: float | None
+    pattern_family: str | None
+    avg_similarity_score: float | None
+    reliability_stats: PerPreferenceStats
+    quality_info: dict[str, Any] | None
+    is_highly_reliable: bool | None
+    activated_at: str | None
+    rejected_at: str | None
+    paused_at: str | None
+    first_seen_at: str | None
+    last_seen_at: str | None
+    created_at: str
+    updated_at: str
+
+
+class ArtifactRecord(TypedDict, total=False):
+    artifact_id: str
+    artifact_kind: str
+    session_id: str
+    source_message_id: str
+    created_at: str
+    updated_at: str
+    draft_text: str
+    source_paths: list[str]
+    response_origin: dict[str, Any] | None
+    summary_chunks: list[dict[str, Any]]
+    evidence: list[dict[str, Any]]
+    corrections: list[dict[str, Any]]
+    saves: list[dict[str, Any]]
+    latest_corrected_text: str | None
+    latest_outcome: dict[str, Any] | str | None
+    content_verdict: str | None
 
 
 # ---------------------------------------------------------------------------

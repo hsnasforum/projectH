@@ -393,6 +393,7 @@ class LocalAssistantHandler(BaseHTTPRequestHandler):
             "/api/preferences/pause",
             "/api/preferences/reject",
             "/api/preferences/update-description",
+            "/api/preferences/record-correction",
             "/api/corrections/sync-adopted-to-candidates",
             "/api/sessions/delete",
             "/api/sessions/delete-all",
@@ -473,6 +474,10 @@ class LocalAssistantHandler(BaseHTTPRequestHandler):
                 return
             if parsed.path == "/api/preferences/update-description":
                 response = self.server.service.update_preference_description(payload)
+                self._send_json(HTTPStatus.OK, response)
+                return
+            if parsed.path == "/api/preferences/record-correction":
+                response = self.server.service.record_explicit_preference_correction(payload)
                 self._send_json(HTTPStatus.OK, response)
                 return
             if parsed.path == "/api/sessions/delete":

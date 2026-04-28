@@ -95,6 +95,20 @@ export async function postCorrection(
   });
 }
 
+export async function postPreferenceExplicitCorrection(
+  sessionId: string,
+  messageId: string,
+  fingerprint: string,
+): Promise<{ ok: boolean }> {
+  const res = await fetch(`${BASE}/api/preferences/record-correction`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ session_id: sessionId, message_id: messageId, fingerprint }),
+  });
+  if (!res.ok) throw new Error("preference correction 전송 실패");
+  return res.json() as Promise<{ ok: boolean }>;
+}
+
 // -- Candidate review API --
 
 export async function postCandidateReview(
@@ -292,6 +306,7 @@ export interface PreferencesPayload {
   total_corrected?: number | null;
   high_quality_active_count?: number | null;
   highly_reliable_active_count?: number | null;
+  low_reliability_active_count?: number | null;
 }
 
 export async function fetchPreferences(): Promise<PreferencesPayload> {

@@ -198,6 +198,7 @@ class PreferenceHandlerMixin:
         high_quality_active_count = 0
         highly_reliable_active_count = 0
         high_severity_conflict_count = 0
+        low_reliability_active_count = 0
         for pref_copy in enriched:
             if pref_copy.get("status") != "active":
                 continue
@@ -209,6 +210,15 @@ class PreferenceHandlerMixin:
             conflict_info = pref_copy.get("conflict_info")
             if isinstance(conflict_info, dict) and conflict_info.get("conflict_severity") == "high":
                 high_severity_conflict_count += 1
+            reliability_stats_for_lr = pref_copy.get("reliability_stats")
+            if isinstance(reliability_stats_for_lr, dict):
+                lr_applied = reliability_stats_for_lr.get("applied_count", 0)
+                if (
+                    isinstance(lr_applied, int)
+                    and lr_applied >= 3
+                    and pref_copy.get("is_highly_reliable") is not True
+                ):
+                    low_reliability_active_count += 1
             reliability_stats = pref_copy.get("reliability_stats")
             if not isinstance(reliability_stats, dict):
                 continue
@@ -228,6 +238,7 @@ class PreferenceHandlerMixin:
             "high_quality_active_count": high_quality_active_count,
             "highly_reliable_active_count": highly_reliable_active_count,
             "high_severity_conflict_count": high_severity_conflict_count,
+            "low_reliability_active_count": low_reliability_active_count,
         }
 
     def get_preference_audit(self) -> dict[str, Any]:
@@ -358,3 +369,16 @@ class PreferenceHandlerMixin:
             detail={"preference_id": preference_id},
         )
         return {"ok": True, "preference": result}
+
+    def record_explicit_preference_correction(self, payload: dict[str, Any]) -> dict[str, Any]:
+        session_id = str(payload.get("session_id") or "").strip()
+        message_id = str(payload.get("message_id") or "").strip()
+        fingerprint = str(payload.get("fingerprint") or "").strip()
+        if not session_id or not message_id or not fingerprint:
+            return {"ok": False, "error": "session_id, message_id, fingerprint 필수"}
+        recorded = self.session_store.record_preference_explicit_correction(
+            session_id,
+            message_id=message_id,
+            fingerprint=fingerprint,
+        )
+        return {"ok": recorded}

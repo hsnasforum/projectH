@@ -7,7 +7,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from time import sleep
 
-from core.contracts import PreferenceStatus
+from core.contracts import PreferenceRecord, PreferenceStatus
 from storage.correction_store import CorrectionStore
 from storage.preference_store import PreferenceStore
 
@@ -69,6 +69,48 @@ class PreferenceStoreTest(unittest.TestCase):
             self.assertEqual(result["cross_session_count"], 2)
             self.assertEqual(result["evidence_count"], 2)
             self.assertTrue(result["description"])
+
+    def test_promote_from_corrections_returns_typed_preference_fields(self) -> None:
+        with TemporaryDirectory() as tmp:
+            pref, corr = self._make_stores(tmp)
+            fp = self._seed_corrections(corr, sessions=["s1", "s2"])
+
+            result = pref.promote_from_corrections(fp, corr)
+
+            self.assertIsNotNone(result)
+            assert result is not None
+            typed_record: PreferenceRecord = result
+            self.assertTrue(typed_record["preference_id"].startswith("pref-"))
+            self.assertEqual(typed_record["delta_fingerprint"], fp)
+            self.assertEqual(typed_record["status"], PreferenceStatus.CANDIDATE)
+            self.assertEqual(
+                typed_record["reliability_stats"],
+                {"applied_count": 0, "corrected_count": 0},
+            )
+
+    def test_sqlite_preference_store_returns_typed_fields(self) -> None:
+        from storage.sqlite_store import SQLiteDatabase, SQLitePreferenceStore
+
+        db = SQLiteDatabase(":memory:")
+        try:
+            store = SQLitePreferenceStore(db)
+            created = store.record_reviewed_candidate_preference(
+                delta_fingerprint="sha256:test_sqlite_preference_record",
+                candidate_family="correction_rewrite",
+                description="SQLite typed preference",
+                source_refs={"candidate_id": "cand-sqlite-typed"},
+            )
+
+            fetched = store.get(created["preference_id"])
+
+            self.assertIsNotNone(fetched)
+            assert fetched is not None
+            typed_record: PreferenceRecord = fetched
+            self.assertEqual(typed_record["preference_id"], created["preference_id"])
+            self.assertEqual(typed_record["delta_fingerprint"], "sha256:test_sqlite_preference_record")
+            self.assertEqual(typed_record["status"], PreferenceStatus.CANDIDATE)
+        finally:
+            db.close()
 
     def test_promote_stores_avg_similarity_score(self) -> None:
         with TemporaryDirectory() as tmp:

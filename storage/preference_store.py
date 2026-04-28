@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, TYPE_CHECKING
 from uuid import uuid4
 
-from core.contracts import CandidateFamily, PreferenceStatus
+from core.contracts import CandidateFamily, PreferenceRecord, PreferenceStatus
 
 from .json_store_base import utc_now_iso, json_path, atomic_write, read_json, scan_json_dir
 
@@ -50,7 +50,7 @@ class PreferenceStore:
     def _path(self, preference_id: str) -> Path:
         return json_path(self.base_dir, preference_id)
 
-    def _scan_all(self) -> list[dict[str, Any]]:
+    def _scan_all(self) -> list[PreferenceRecord]:
         return [d for d in scan_json_dir(self.base_dir) if isinstance(d.get("preference_id"), str)]
 
     # -- Core operations --
@@ -59,7 +59,7 @@ class PreferenceStore:
         self,
         delta_fingerprint: str,
         correction_store: CorrectionStore,
-    ) -> dict[str, Any] | None:
+    ) -> PreferenceRecord | None:
         with self._lock:
             existing = self.find_by_fingerprint(delta_fingerprint)
             if existing is not None:
@@ -89,7 +89,7 @@ class PreferenceStore:
 
             now = utc_now_iso()
             preference_id = f"pref-{uuid4().hex[:12]}"
-            record: dict[str, Any] = {
+            record: PreferenceRecord = {
                 "preference_id": preference_id,
                 "delta_fingerprint": delta_fingerprint,
                 "pattern_family": corrections[0].get("pattern_family", CandidateFamily.CORRECTION_REWRITE),
@@ -98,6 +98,7 @@ class PreferenceStore:
                 "evidence_count": len(corrections),
                 "cross_session_count": len(session_ids),
                 "avg_similarity_score": avg_similarity_score,
+                "reliability_stats": {"applied_count": 0, "corrected_count": 0},
                 "original_snippet": original_snippet,
                 "corrected_snippet": corrected_snippet,
                 "delta_summary": delta_summary,
@@ -114,10 +115,10 @@ class PreferenceStore:
 
     def _refresh_evidence(
         self,
-        preference: dict[str, Any],
+        preference: PreferenceRecord,
         delta_fingerprint: str,
         correction_store: CorrectionStore,
-    ) -> dict[str, Any]:
+    ) -> PreferenceRecord:
         corrections = correction_store.find_by_fingerprint(delta_fingerprint)
         session_ids = {c.get("session_id") for c in corrections if c.get("session_id")}
 
@@ -135,6 +136,7 @@ class PreferenceStore:
         preference["evidence_count"] = len(corrections)
         preference["cross_session_count"] = len(session_ids)
         preference["avg_similarity_score"] = _average_similarity_score(corrections)
+        preference.setdefault("reliability_stats", {"applied_count": 0, "corrected_count": 0})
         original_snippet, corrected_snippet = _first_correction_snippets(corrections)
         if original_snippet is not None:
             preference["original_snippet"] = original_snippet
@@ -146,7 +148,7 @@ class PreferenceStore:
         atomic_write(self._path(preference["preference_id"]), preference)
         return preference
 
-    def _auto_activate_candidate_if_ready(self, preference: dict[str, Any], now: str) -> None:
+    def _auto_activate_candidate_if_ready(self, preference: PreferenceRecord, now: str) -> None:
         if preference.get("status") != PreferenceStatus.CANDIDATE:
             return
         try:
@@ -186,18 +188,18 @@ class PreferenceStore:
 
     # -- CRUD --
 
-    def get(self, preference_id: str) -> dict[str, Any] | None:
+    def get(self, preference_id: str) -> PreferenceRecord | None:
         with self._lock:
             return read_json(self._path(preference_id))
 
-    def find_by_fingerprint(self, delta_fingerprint: str) -> dict[str, Any] | None:
+    def find_by_fingerprint(self, delta_fingerprint: str) -> PreferenceRecord | None:
         with self._lock:
             for r in self._scan_all():
                 if r.get("delta_fingerprint") == delta_fingerprint:
                     return r
             return None
 
-    def get_active_preferences(self) -> list[dict[str, Any]]:
+    def get_active_preferences(self) -> list[PreferenceRecord]:
         with self._lock:
             active = [
                 r for r in self._scan_all()
@@ -205,7 +207,7 @@ class PreferenceStore:
             ]
             return sorted(active, key=lambda d: d.get("activated_at", ""))
 
-    def get_candidates(self) -> list[dict[str, Any]]:
+    def get_candidates(self) -> list[PreferenceRecord]:
         with self._lock:
             return [
                 r for r in self._scan_all()
@@ -214,7 +216,7 @@ class PreferenceStore:
 
     # -- Lifecycle transitions --
 
-    def _transition(self, preference_id: str, status: str, ts_field: str) -> dict[str, Any] | None:
+    def _transition(self, preference_id: str, status: str, ts_field: str) -> PreferenceRecord | None:
         with self._lock:
             record = read_json(self._path(preference_id))
             if record is None:
@@ -226,16 +228,16 @@ class PreferenceStore:
             atomic_write(self._path(preference_id), record)
             return record
 
-    def activate_preference(self, preference_id: str) -> dict[str, Any] | None:
+    def activate_preference(self, preference_id: str) -> PreferenceRecord | None:
         return self._transition(preference_id, PreferenceStatus.ACTIVE, "activated_at")
 
-    def pause_preference(self, preference_id: str) -> dict[str, Any] | None:
+    def pause_preference(self, preference_id: str) -> PreferenceRecord | None:
         return self._transition(preference_id, PreferenceStatus.PAUSED, "paused_at")
 
-    def reject_preference(self, preference_id: str) -> dict[str, Any] | None:
+    def reject_preference(self, preference_id: str) -> PreferenceRecord | None:
         return self._transition(preference_id, PreferenceStatus.REJECTED, "rejected_at")
 
-    def update_description(self, preference_id: str, description: str) -> dict[str, Any] | None:
+    def update_description(self, preference_id: str, description: str) -> PreferenceRecord | None:
         """Update the description of an existing preference. Returns None if not found."""
         with self._lock:
             record = read_json(self._path(preference_id))
@@ -257,7 +259,7 @@ class PreferenceStore:
         original_snippet: str | None = None,
         corrected_snippet: str | None = None,
         status: str | None = None,
-    ) -> dict[str, Any]:
+    ) -> PreferenceRecord:
         """Persist one local preference candidate from an accepted reviewed candidate.
 
         Idempotent on *delta_fingerprint*: refreshes timestamps and source_refs
@@ -291,7 +293,7 @@ class PreferenceStore:
 
             now = utc_now_iso()
             preference_id = f"pref-{uuid4().hex[:12]}"
-            record: dict[str, Any] = {
+            record: PreferenceRecord = {
                 "preference_id": preference_id,
                 "delta_fingerprint": delta_fingerprint,
                 "pattern_family": candidate_family,
@@ -301,6 +303,7 @@ class PreferenceStore:
                 "evidence_count": 1,
                 "cross_session_count": 0,
                 "avg_similarity_score": avg_similarity_score,
+                "reliability_stats": {"applied_count": 0, "corrected_count": 0},
                 "original_snippet": original_snippet,
                 "corrected_snippet": corrected_snippet,
                 "delta_summary": {},
@@ -314,7 +317,7 @@ class PreferenceStore:
             atomic_write(self._path(preference_id), record)
             return record
 
-    def list_all(self, limit: int = 50) -> list[dict[str, Any]]:
+    def list_all(self, limit: int = 50) -> list[PreferenceRecord]:
         with self._lock:
             all_records = self._scan_all()
             all_records.sort(key=lambda d: d.get("updated_at", ""), reverse=True)

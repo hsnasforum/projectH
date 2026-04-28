@@ -13,6 +13,7 @@ interface Props {
   settings: AppSettings;
   reviewQueueItems: ReviewQueueItem[];
   reviewQueueCount: number;
+  lastAppliedFingerprints?: string[];
   onSelectSession: (id: string) => void;
   onNewSession: () => void;
   onDeleteSession: (id?: string) => void;
@@ -48,6 +49,7 @@ export default function Sidebar({
   settings,
   reviewQueueItems,
   reviewQueueCount,
+  lastAppliedFingerprints,
   onSelectSession,
   onNewSession,
   onDeleteSession,
@@ -200,7 +202,7 @@ export default function Sidebar({
           </svg>
           선호 기억
         </p>
-        <PreferencePanel />
+        <PreferencePanel lastAppliedFingerprints={lastAppliedFingerprints ?? []} />
       </div>
 
       {/* Settings */}

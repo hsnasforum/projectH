@@ -48,7 +48,7 @@ class ModelAdapter(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def summarize(self, text: str) -> str:
+    def summarize(self, text: str, *, active_preferences: list[dict[str, str]] | None = None) -> str:
         raise NotImplementedError
 
     @abstractmethod
@@ -81,8 +81,13 @@ class ModelAdapter(ABC):
     def stream_respond(self, prompt: str, *, active_preferences: list[dict[str, str]] | None = None) -> Iterator[ModelStreamEvent]:
         yield ModelStreamEvent(kind=StreamEventType.TEXT_REPLACE, text=self.respond(prompt, active_preferences=active_preferences))
 
-    def stream_summarize(self, text: str) -> Iterator[ModelStreamEvent]:
-        yield ModelStreamEvent(kind=StreamEventType.TEXT_REPLACE, text=self.summarize(text))
+    def stream_summarize(
+        self, text: str, *, active_preferences: list[dict[str, str]] | None = None
+    ) -> Iterator[ModelStreamEvent]:
+        yield ModelStreamEvent(
+            kind=StreamEventType.TEXT_REPLACE,
+            text=self.summarize(text, active_preferences=active_preferences),
+        )
 
     def stream_answer_with_context(
         self,

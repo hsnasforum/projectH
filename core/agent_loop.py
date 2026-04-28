@@ -1483,6 +1483,7 @@ class AgentLoop:
         cancel_requested: Callable[[], bool] | None = None,
         chunk_threshold: int = 4200,
     ) -> tuple[str, list[dict[str, Any]]]:
+        _summary_prefs = self._routed_preferences(task="summarize")
         if len(text) <= chunk_threshold:
             short_summary_prompt = self._build_short_summary_prompt(
                 source_label=source_label,
@@ -1497,7 +1498,7 @@ class AgentLoop:
             ):
                 return (
                     self._collect_model_stream(
-                        self.model.stream_summarize(short_summary_prompt),
+                        self.model.stream_summarize(short_summary_prompt, active_preferences=_summary_prefs),
                         stream_event_callback=stream_event_callback,
                         cancel_requested=cancel_requested,
                     ),
@@ -1520,7 +1521,7 @@ class AgentLoop:
             ):
                 return (
                     self._collect_model_stream(
-                        self.model.stream_summarize(short_summary_prompt),
+                        self.model.stream_summarize(short_summary_prompt, active_preferences=_summary_prefs),
                         stream_event_callback=stream_event_callback,
                         cancel_requested=cancel_requested,
                     ),
@@ -1550,7 +1551,7 @@ class AgentLoop:
                 has_web_sources=reduce_source_type == "search_results",
             ):
                 chunk_summary = self._collect_model_stream(
-                    self.model.stream_summarize(chunk_summary_prompt),
+                    self.model.stream_summarize(chunk_summary_prompt, active_preferences=_summary_prefs),
                     cancel_requested=cancel_requested,
                 )
             chunk_text = str(chunk.get("text") or "")
@@ -1594,7 +1595,7 @@ class AgentLoop:
                 has_web_sources=reduce_source_type == "search_results",
             ):
                 final_summary = self._collect_model_stream(
-                    self.model.stream_summarize(reduce_prompt),
+                    self.model.stream_summarize(reduce_prompt, active_preferences=_summary_prefs),
                     stream_event_callback=stream_event_callback,
                     cancel_requested=cancel_requested,
                 ).strip()
@@ -7176,7 +7177,9 @@ class AgentLoop:
                         else str(active_context.get("summary_hint") or "")
                     ),
                     evidence_items=selected_evidence,
-                    active_preferences=(_ctx_prefs := self._routed_preferences(**_routing_kwargs)),
+                    active_preferences=(
+                        _ctx_prefs := (None if _is_web else self._routed_preferences(**_routing_kwargs))
+                    ),
                 ),
                 stream_event_callback=stream_event_callback,
                 cancel_requested=cancel_requested,

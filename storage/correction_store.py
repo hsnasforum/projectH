@@ -12,7 +12,12 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from core.contracts import CandidateFamily, CORRECTION_STATUS_TRANSITIONS, CorrectionStatus
+from core.contracts import (
+    CandidateFamily,
+    CORRECTION_STATUS_TRANSITIONS,
+    CorrectionRecord,
+    CorrectionStatus,
+)
 from core.delta_analysis import compute_correction_delta
 
 from .json_store_base import utc_now_iso, json_path, atomic_write, read_json, scan_json_dir
@@ -27,7 +32,7 @@ class CorrectionStore:
     def _path(self, correction_id: str) -> Path:
         return json_path(self.base_dir, correction_id)
 
-    def _scan_all(self) -> list[dict[str, Any]]:
+    def _scan_all(self) -> list[CorrectionRecord]:
         return [d for d in scan_json_dir(self.base_dir) if isinstance(d.get("correction_id"), str)]
 
     # -- Core operations --
@@ -42,7 +47,7 @@ class CorrectionStore:
         corrected_text: str,
         pattern_family: str = CandidateFamily.CORRECTION_REWRITE,
         applied_preference_ids: list[str] | None = None,
-    ) -> dict[str, Any] | None:
+    ) -> CorrectionRecord | None:
         """Record a correction and compute its delta. Returns None if no delta."""
         delta = compute_correction_delta(original_text, corrected_text)
         if delta is None:
@@ -96,13 +101,13 @@ class CorrectionStore:
             atomic_write(self._path(correction_id), record)
             return record
 
-    def get(self, correction_id: str) -> dict[str, Any] | None:
+    def get(self, correction_id: str) -> CorrectionRecord | None:
         with self._lock:
             return read_json(self._path(correction_id))
 
     # -- Lifecycle transitions --
 
-    def _transition(self, correction_id: str, status: str, timestamp_field: str) -> dict[str, Any] | None:
+    def _transition(self, correction_id: str, status: str, timestamp_field: str) -> CorrectionRecord | None:
         with self._lock:
             record = read_json(self._path(correction_id))
             if record is None:
@@ -132,28 +137,28 @@ class CorrectionStore:
 
     # -- Queries --
 
-    def _find_by_fingerprint_unlocked(self, delta_fingerprint: str) -> list[dict[str, Any]]:
+    def _find_by_fingerprint_unlocked(self, delta_fingerprint: str) -> list[CorrectionRecord]:
         return [r for r in self._scan_all() if r.get("delta_fingerprint") == delta_fingerprint]
 
-    def find_by_fingerprint(self, delta_fingerprint: str) -> list[dict[str, Any]]:
+    def find_by_fingerprint(self, delta_fingerprint: str) -> list[CorrectionRecord]:
         with self._lock:
             return self._find_by_fingerprint_unlocked(delta_fingerprint)
 
-    def find_by_artifact(self, artifact_id: str) -> list[dict[str, Any]]:
+    def find_by_artifact(self, artifact_id: str) -> list[CorrectionRecord]:
         with self._lock:
             return [r for r in self._scan_all() if r.get("artifact_id") == artifact_id]
 
-    def find_by_session(self, session_id: str) -> list[dict[str, Any]]:
+    def find_by_session(self, session_id: str) -> list[CorrectionRecord]:
         with self._lock:
             return [r for r in self._scan_all() if r.get("session_id") == session_id]
 
-    def find_recurring_patterns(self, *, session_id: str | None = None) -> list[dict[str, Any]]:
+    def find_recurring_patterns(self, *, session_id: str | None = None) -> list[CorrectionRecord]:
         with self._lock:
             all_records = self._scan_all()
             if session_id:
                 all_records = [r for r in all_records if r.get("session_id") == session_id]
 
-            groups: dict[str, list[dict[str, Any]]] = {}
+            groups: dict[str, list[CorrectionRecord]] = {}
             for r in all_records:
                 fp = r.get("delta_fingerprint", "")
                 if fp:
@@ -172,13 +177,13 @@ class CorrectionStore:
                 if len(records) >= 2
             ]
 
-    def list_recent(self, limit: int = 20) -> list[dict[str, Any]]:
+    def list_recent(self, limit: int = 20) -> list[CorrectionRecord]:
         with self._lock:
             all_records = self._scan_all()
             all_records.sort(key=lambda d: d.get("updated_at", ""), reverse=True)
             return all_records[:limit]
 
-    def list_incomplete_corrections(self) -> list[dict[str, Any]]:
+    def list_incomplete_corrections(self) -> list[CorrectionRecord]:
         _INCOMPLETE = {
             CorrectionStatus.RECORDED,
             CorrectionStatus.CONFIRMED,
@@ -187,7 +192,7 @@ class CorrectionStore:
         with self._lock:
             return [r for r in self._scan_all() if r.get("status") in _INCOMPLETE]
 
-    def find_adopted_corrections(self) -> list[dict[str, Any]]:
+    def find_adopted_corrections(self) -> list[CorrectionRecord]:
         with self._lock:
             adopted = [
                 r for r in self._scan_all()

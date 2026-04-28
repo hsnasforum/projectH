@@ -103,7 +103,7 @@ class _NarrativeReduceModel(MockModelAdapter):
         super().__init__()
         self.summary_inputs: list[str] = []
 
-    def summarize(self, text: str) -> str:
+    def summarize(self, text: str, *, active_preferences: list[dict[str, str]] | None = None) -> str:
         self.summary_inputs.append(text)
         normalized = " ".join(text.split())
         if "Summary mode: merged_chunk_outline" in text:
@@ -118,7 +118,7 @@ class _NarrativeReduceModel(MockModelAdapter):
             return "전시 이후 영희는 오늘이 끝난 게 아니라고 다시 신호를 보냅니다."
         if "못 들은 척 못 하겠어" in normalized:
             return "태양과 영희는 더는 감정을 모른 척할 수 없게 됩니다."
-        return super().summarize(text)
+        return super().summarize(text, active_preferences=active_preferences)
 
 
 class _SearchReduceModel(MockModelAdapter):
@@ -126,14 +126,14 @@ class _SearchReduceModel(MockModelAdapter):
         super().__init__()
         self.summary_inputs: list[str] = []
 
-    def summarize(self, text: str) -> str:
+    def summarize(self, text: str, *, active_preferences: list[dict[str, str]] | None = None) -> str:
         self.summary_inputs.append(text)
         if "Summary mode: merged_chunk_outline" in text and "Summary source type: search_results" in text:
             return (
                 "여러 검색 결과를 종합하면 예산 통제와 승인 기반 저장 유지가 공통으로 강조되고, "
                 "문서마다 실행 항목의 우선순위와 범위에는 차이가 있다는 점이 함께 드러납니다."
             )
-        return super().summarize(text)
+        return super().summarize(text, active_preferences=active_preferences)
 
 
 class _ShortSummaryCaptureModel(MockModelAdapter):
@@ -141,7 +141,7 @@ class _ShortSummaryCaptureModel(MockModelAdapter):
         super().__init__()
         self.summary_inputs: list[str] = []
 
-    def summarize(self, text: str) -> str:
+    def summarize(self, text: str, *, active_preferences: list[dict[str, str]] | None = None) -> str:
         self.summary_inputs.append(text)
         if "Summary mode: short_summary" in text and "Summary source type: search_results" in text:
             return (
@@ -153,7 +153,7 @@ class _ShortSummaryCaptureModel(MockModelAdapter):
                 "태양과 영희의 긴장이 커지고 철수는 변화를 놓친 채 일정을 밀어붙이며, "
                 "마지막에는 관계가 아직 끝나지 않았다는 신호가 남습니다."
             )
-        return super().summarize(text)
+        return super().summarize(text, active_preferences=active_preferences)
 
 
 class SmokeTest(unittest.TestCase):

@@ -28,6 +28,7 @@ from core.contracts import (
     TaskLogEntry,
 )
 from storage.correction_store import _is_valid_correction_record
+from storage.preference_store import _is_valid_preference_record
 
 try:
     from storage.preference_store import (
@@ -478,7 +479,19 @@ class SQLitePreferenceStore:
 
     def get_active_preferences(self) -> list[PreferenceRecord]:
         rows = self._db.fetchall("SELECT * FROM preferences WHERE status = 'active' ORDER BY activated_at DESC LIMIT 10")
-        return [{"preference_id": r["preference_id"], "description": r["description"], "status": r["status"], **json.loads(r["data"])} for r in rows]
+        return [
+            record
+            for record in (
+                {
+                    "preference_id": r["preference_id"],
+                    "description": r["description"],
+                    "status": r["status"],
+                    **json.loads(r["data"]),
+                }
+                for r in rows
+            )
+            if _is_valid_preference_record(record)
+        ]
 
     def list_all(self, limit: int = 50) -> list[PreferenceRecord]:
         rows = self._db.fetchall("SELECT * FROM preferences ORDER BY updated_at DESC LIMIT ?", (limit,))
@@ -486,7 +499,8 @@ class SQLitePreferenceStore:
         for r in rows:
             data = json.loads(r["data"])
             data.update({"preference_id": r["preference_id"], "description": r["description"], "status": r["status"], "delta_fingerprint": r["delta_fingerprint"], "created_at": r["created_at"], "updated_at": r["updated_at"], "activated_at": r["activated_at"]})
-            results.append(data)
+            if _is_valid_preference_record(data):
+                results.append(data)
         return results
 
     def activate_preference(self, preference_id: str) -> PreferenceRecord | None:

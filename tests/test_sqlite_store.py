@@ -257,6 +257,32 @@ class TestSQLitePreferenceStoreAutoActivation(unittest.TestCase):
         self.assertIsNotNone(fetched)
         self.assertEqual(fetched["status"], PreferenceStatus.REJECTED)
 
+    def test_malformed_preference_row_filtered_from_get_active(self) -> None:
+        valid = self._record(candidate_id="candidate-valid-active")
+        self.store.activate_preference(valid["preference_id"])
+        self.db.execute(
+            "INSERT INTO preferences "
+            "(preference_id, delta_fingerprint, description, status, data, created_at, updated_at, activated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                "pref-invalid-active",
+                "",
+                "Malformed active preference",
+                PreferenceStatus.ACTIVE,
+                json.dumps({"preference_id": "pref-invalid-active"}),
+                "2099-01-01T00:00:00+00:00",
+                "2099-01-01T00:00:00+00:00",
+                "2099-01-01T00:00:00+00:00",
+            ),
+        )
+        self.db.commit()
+
+        active = self.store.get_active_preferences()
+
+        preference_ids = {record["preference_id"] for record in active}
+        self.assertIn(valid["preference_id"], preference_ids)
+        self.assertNotIn("pref-invalid-active", preference_ids)
+
 
 class TestSQLiteCorrectionStore(unittest.TestCase):
     def setUp(self) -> None:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -267,6 +268,36 @@ class PreferenceStoreTest(unittest.TestCase):
         with TemporaryDirectory() as tmp:
             pref, _ = self._make_stores(tmp)
             self.assertIsNone(pref.get("pref-nope"))
+
+    def test_invalid_preference_record_filtered_from_scan_all(self) -> None:
+        with TemporaryDirectory() as tmp:
+            pref, _ = self._make_stores(tmp)
+            path = pref._path("pref-invalid")
+            path.write_text(
+                json.dumps(
+                    {
+                        "preference_id": "pref-invalid",
+                        "status": PreferenceStatus.ACTIVE,
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            self.assertEqual(pref._scan_all(), [])
+
+    def test_valid_preference_record_passes_validation(self) -> None:
+        with TemporaryDirectory() as tmp:
+            pref, _ = self._make_stores(tmp)
+            record = pref.record_reviewed_candidate_preference(
+                delta_fingerprint="sha256:test_valid_preference_record",
+                candidate_family="correction_rewrite",
+                description="검증용 선호",
+                source_refs={"candidate_id": "cand-valid-preference"},
+            )
+
+            scanned = pref._scan_all()
+
+            self.assertEqual([item["preference_id"] for item in scanned], [record["preference_id"]])
 
     def test_activate_preference(self) -> None:
         with TemporaryDirectory() as tmp:

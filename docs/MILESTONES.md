@@ -1187,10 +1187,19 @@ Axis 2 (CONTROL_SEQ 1192): SQLiteArtifactStore 반환 타입 통일 — ACTIVE
 `storage/sqlite_store.py` `SQLiteArtifactStore`의 4개 메서드 반환 타입을
 `ArtifactRecord` 또는 `list[ArtifactRecord]`로 업데이트.
 
+## M59 TASK_BACKLOG Truth Sync
+
+Axis 1 (CONTROL_SEQ 1193): TASK_BACKLOG M56-M58 반영 — ACTIVE
+TASK_BACKLOG line 9 Remaining: M57 PreferenceRecord + M58 ArtifactRecord 추가;
+Not Implemented item 3: M57-M58 TypedDict 계약 반영.
+
+Axis 2 (CONTROL_SEQ 1195): MILESTONES M59 항목 + Next Priorities 갱신 — ACTIVE
+TypedDict 시리즈(M54-M58) 완료 후 MILESTONES 정리 및 자연 종착점 기록.
+
 ## Next 3 Implementation Priorities
 
-1. **M49–M51 shipped**: 선호도 크로스-세션 주입(M49) + 주입 가시성·명시적 피드백 루프(M50) + 신뢰도 저하 경고(M51) 완료. PR #49 대기 중(feat/m50-axis1-axis2-pref-visibility).
-2. **PR 머지 백로그**: #47 (M47/M48) → #48 (M49 Axis 3) → #49 (M50–M51) 머지 순서 대기 중.
+1. **M49–M59 shipped**: 선호도 주입·가시성·피드백·신뢰도 경고(M49-M52) + docs truth-sync(M53, M56, M59) + TypedDict 계약 시리즈(M54-M58: CorrectionRecord, PerPreferenceStats, PreferenceRecord, ArtifactRecord JSON+SQLite) 완료. PR #49 대기 중(feat/m50-axis1-axis2-pref-visibility).
+2. **PR 머지 백로그**: operator_request CONTROL_SEQ 1190 — #47 (M47/M48) → #48 (M49 Axis 3) → #49 (M50–M59) 순서 대기 중. 머지 후 main 기준 새 브랜치에서 M60+ 시작.
 
 ## Do Not Pull Forward
 

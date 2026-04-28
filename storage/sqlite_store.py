@@ -786,6 +786,33 @@ class SQLiteCorrectionStore:
         )
         return [self._row_to_dict(row) for row in rows]
 
+    def list_filtered(
+        self,
+        *,
+        query: str | None = None,
+        status: str | None = None,
+        limit: int = 20,
+    ) -> list[CorrectionRecord]:
+        clauses: list[str] = []
+        params: list[object] = []
+        if query:
+            clauses.append(
+                "(COALESCE(json_extract(data, '$.original_text'), '') LIKE ? "
+                "OR COALESCE(json_extract(data, '$.corrected_text'), '') LIKE ?)"
+            )
+            like = f"%{query}%"
+            params.extend([like, like])
+        if status:
+            clauses.append("status = ?")
+            params.append(status)
+        where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+        params.append(limit)
+        rows = self._db.fetchall(
+            f"SELECT * FROM corrections {where} ORDER BY updated_at DESC LIMIT ?",
+            tuple(params),
+        )
+        return [self._row_to_dict(row) for row in rows]
+
     def list_incomplete_corrections(self) -> list[CorrectionRecord]:
         with self._lock:
             rows = self._db.fetchall(

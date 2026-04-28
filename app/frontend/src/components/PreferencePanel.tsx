@@ -70,6 +70,7 @@ export default function PreferencePanel({ lastAppliedFingerprints = [] }: PanelP
   const [audit, setAudit] = useState<PreferenceAudit | null>(null);
   const [correctionSummary, setCorrectionSummary] = useState<CorrectionSummary | null>(null);
   const [correctionList, setCorrectionList] = useState<CorrectionListResponse | null>(null);
+  const [correctionQuery, setCorrectionQuery] = useState("");
   const [loading, setLoading] = useState(false);
   const [expanded, setExpanded] = useState(true);
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
@@ -94,7 +95,9 @@ export default function PreferencePanel({ lastAppliedFingerprints = [] }: PanelP
         fetchPreferences(),
         fetchPreferenceAudit(),
         fetchCorrectionSummary().catch(() => null),
-        fetchCorrectionList().catch(() => null),
+        fetchCorrectionList(
+          correctionQuery ? { query: correctionQuery } : undefined,
+        ).catch(() => null),
       ]);
       // Filter out rejected items entirely
       const visible = (data.preferences ?? []).filter((p) => p.status !== "rejected");
@@ -147,9 +150,9 @@ export default function PreferencePanel({ lastAppliedFingerprints = [] }: PanelP
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [correctionQuery]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => { load(); }, []);
 
   const handleAction = useCallback(async (
     pref: PreferenceRecord,
@@ -352,8 +355,17 @@ export default function PreferencePanel({ lastAppliedFingerprints = [] }: PanelP
                     </button>
                   </div>
                 )}
-                {correctionList && correctionList.corrections.length > 0 && (
+                {correctionList && (
                   <div className="px-2 mt-1">
+                    <input
+                      type="text"
+                      data-testid="correction-search-input"
+                      className="w-full text-[10px] bg-transparent border-b border-sidebar-muted/20 text-sidebar-foreground placeholder:text-sidebar-muted/40 px-2 py-0.5 mb-0.5 outline-none"
+                      placeholder="교정 검색..."
+                      value={correctionQuery}
+                      onChange={(e) => setCorrectionQuery(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === "Enter") load(); }}
+                    />
                     <p className="text-[10px] text-sidebar-muted/60 mb-0.5">최근 교정</p>
                     {correctionList.corrections.slice(0, 3).map((c) => (
                       <div
@@ -362,6 +374,14 @@ export default function PreferencePanel({ lastAppliedFingerprints = [] }: PanelP
                         className="text-[10px] text-sidebar-muted/50 truncate"
                         title={c.original_text}
                       >
+                        {c.has_active_preference && (
+                          <span
+                            data-testid="correction-conflict-badge"
+                            className="text-[9px] text-yellow-500 mr-1"
+                          >
+                            [충돌]
+                          </span>
+                        )}
                         [{c.status}] {(c.original_text ?? "").slice(0, 35)}
                       </div>
                     ))}

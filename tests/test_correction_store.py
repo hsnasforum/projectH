@@ -227,6 +227,83 @@ class CorrectionStoreTest(unittest.TestCase):
             recent = store.list_recent(limit=1)
             self.assertEqual(len(recent), 1)
 
+    def test_list_filtered_by_query_matches_original_or_corrected_text(self) -> None:
+        with TemporaryDirectory() as tmp:
+            store = self._make_store(tmp)
+            original_match = self._record_sample(
+                store,
+                artifact_id="a-query-original",
+                source_message_id="m-query-original",
+                original_text="needle original text",
+                corrected_text="plain corrected text",
+            )
+            corrected_match = self._record_sample(
+                store,
+                artifact_id="a-query-corrected",
+                source_message_id="m-query-corrected",
+                original_text="plain original text",
+                corrected_text="needle corrected text",
+            )
+            self._record_sample(
+                store,
+                artifact_id="a-query-miss",
+                source_message_id="m-query-miss",
+                original_text="other original text",
+                corrected_text="other corrected text",
+            )
+
+            results = store.list_filtered(query="needle")
+
+            self.assertEqual(
+                {record["correction_id"] for record in results},
+                {original_match["correction_id"], corrected_match["correction_id"]},
+            )
+
+    def test_list_filtered_by_status(self) -> None:
+        with TemporaryDirectory() as tmp:
+            store = self._make_store(tmp)
+            recorded = self._record_sample(store, artifact_id="a-recorded-filter", source_message_id="m-recorded-filter")
+            confirmed = self._record_sample(store, artifact_id="a-confirmed-filter", source_message_id="m-confirmed-filter")
+            store.confirm_correction(confirmed["correction_id"])
+
+            results = store.list_filtered(status=CorrectionStatus.CONFIRMED)
+
+            self.assertEqual([record["correction_id"] for record in results], [confirmed["correction_id"]])
+            self.assertNotIn(recorded["correction_id"], {record["correction_id"] for record in results})
+
+    def test_list_filtered_applies_query_and_status(self) -> None:
+        with TemporaryDirectory() as tmp:
+            store = self._make_store(tmp)
+            recorded_match = self._record_sample(
+                store,
+                artifact_id="a-recorded-query-filter",
+                source_message_id="m-recorded-query-filter",
+                original_text="needle recorded original",
+                corrected_text="needle recorded corrected",
+            )
+            confirmed_match = self._record_sample(
+                store,
+                artifact_id="a-confirmed-query-filter",
+                source_message_id="m-confirmed-query-filter",
+                original_text="needle confirmed original",
+                corrected_text="needle confirmed corrected",
+            )
+            store.confirm_correction(confirmed_match["correction_id"])
+
+            results = store.list_filtered(query="needle", status=CorrectionStatus.CONFIRMED)
+
+            self.assertEqual([record["correction_id"] for record in results], [confirmed_match["correction_id"]])
+            self.assertNotIn(recorded_match["correction_id"], {record["correction_id"] for record in results})
+
+    def test_list_filtered_empty_result(self) -> None:
+        with TemporaryDirectory() as tmp:
+            store = self._make_store(tmp)
+            self._record_sample(store)
+
+            results = store.list_filtered(query="missing needle")
+
+            self.assertEqual(results, [])
+
     def test_confirm_by_fingerprint(self) -> None:
         with TemporaryDirectory() as d:
             store = self._make_store(d)

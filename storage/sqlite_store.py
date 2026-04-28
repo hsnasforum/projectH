@@ -25,6 +25,7 @@ from core.contracts import (
     CorrectionStatus,
     PreferenceRecord,
     PreferenceStatus,
+    TaskLogEntry,
 )
 
 try:
@@ -386,7 +387,7 @@ class SQLiteTaskLogger:
         )
         self._db.commit()
 
-    def iter_session_records(self, session_id: str) -> list[dict[str, Any]]:
+    def iter_session_records(self, session_id: str) -> list[TaskLogEntry]:
         normalized = (session_id or "").strip() or None
         if normalized is None:
             return []

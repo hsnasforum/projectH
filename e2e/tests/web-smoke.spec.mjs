@@ -12255,6 +12255,140 @@ test("reviewed-memory loop: 활성화된 선호가 PreferencePanel 이번 응답
   });
 });
 
+test("reviewed-memory loop: preference-not-applied-btn 클릭 시 record-correction이 호출됩니다", async ({ page }) => {
+  const preferenceId = "pref-record-correction";
+  const preferenceFingerprint = "sha256:record-correction";
+  const preferenceDescription = "record-correction 버튼 테스트 선호";
+  const responseMessageId = `msg-record-correction-${Date.now().toString(36)}`;
+  const recordCorrectionRequests = [];
+
+  const preferencePayload = () => ({
+    preference_id: preferenceId,
+    delta_fingerprint: preferenceFingerprint,
+    description: preferenceDescription,
+    status: "active",
+    evidence_count: 3,
+    cross_session_count: 1,
+    reliability_stats: { applied_count: 3, corrected_count: 0 },
+    quality_info: { avg_similarity_score: 0.94, is_high_quality: true },
+    is_highly_reliable: true,
+    conflict_info: null,
+    activated_at: "2026-04-28T00:00:00Z",
+    created_at: "2026-04-28T00:00:00Z",
+    updated_at: "2026-04-28T00:00:00Z",
+  });
+
+  await page.route(/\/api\/preferences$/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: true,
+        preferences: [preferencePayload()],
+        active_count: 1,
+        candidate_count: 0,
+        paused_count: 0,
+        total_applied: 3,
+        total_corrected: 0,
+        high_quality_active_count: 1,
+        highly_reliable_active_count: 1,
+        high_severity_conflict_count: 0,
+      }),
+    });
+  });
+  await page.route(/\/api\/preferences\/audit$/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: true,
+        audit: {
+          total: 1,
+          by_status: { active: 1, candidate: 0 },
+          conflict_pair_count: 0,
+          adopted_corrections_count: 0,
+          available_to_sync_count: 0,
+        },
+      }),
+    });
+  });
+  await page.route(/\/api\/preferences\/activate$/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ ok: true, preference: preferencePayload() }),
+    });
+  });
+  await page.route(/\/api\/preferences\/record-correction$/, async (route) => {
+    expect(route.request().method()).toBe("POST");
+    recordCorrectionRequests.push(route.request().postDataJSON());
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ ok: true }),
+    });
+  });
+  await page.route(/\/api\/chat\/stream$/, async (route) => {
+    const responseText = "[모의 응답, 선호 1건 반영] 선호 교정 버튼 테스트 응답입니다.";
+    await route.fulfill({
+      status: 200,
+      contentType: "application/x-ndjson",
+      body: [
+        JSON.stringify({
+          event: "text_delta",
+          text: responseText,
+        }),
+        JSON.stringify({
+          event: "final",
+          data: {
+            ok: true,
+            response: {
+              message_id: responseMessageId,
+              status: "answer",
+              text: responseText,
+              response_origin: {
+                provider: "mock",
+                badge: "MOCK",
+                label: "모의 데모 응답",
+                kind: "chat",
+              },
+              applied_preferences: [
+                {
+                  description: preferenceDescription,
+                  fingerprint: preferenceFingerprint,
+                },
+              ],
+            },
+          },
+        }),
+        "",
+      ].join("\n"),
+    });
+  });
+
+  await page.goto("/app-preview");
+  await page.getByRole("button", { name: /설정/ }).click();
+  await page.getByLabel("프로바이더").selectOption("mock");
+
+  await page.getByPlaceholder(/메시지를 입력하세요/).fill("선호 교정 버튼 호출을 확인해 주세요.");
+  await page.getByTitle("전송").click();
+
+  const badge = page.getByTestId("applied-preferences-badge").first();
+  await expect(badge).toBeVisible({ timeout: 10_000 });
+  await badge.click();
+
+  const notAppliedButton = page.getByTestId("preference-not-applied-btn").first();
+  await expect(notAppliedButton).toBeVisible({ timeout: 5_000 });
+  await notAppliedButton.click();
+
+  await expect.poll(() => recordCorrectionRequests.length).toBe(1);
+  expect(recordCorrectionRequests[0]).toMatchObject({
+    session_id: "demo-session",
+    message_id: responseMessageId,
+    fingerprint: preferenceFingerprint,
+  });
+});
+
 test("reviewed-memory loop: badge 클릭 시 popover가 열리고 선호를 일시중지할 수 있습니다", async ({ page }) => {
   const sessionId = buildSessionId("reviewed-memory-badge-pause");
   const preferenceStatement = `reviewed-memory badge pause accepted preference ${sessionId}`;

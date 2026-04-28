@@ -54,6 +54,7 @@ interface Props {
   onContentReasonNote?: (messageId: string, note: string) => void;
   onContentReasonLabel?: (messageId: string, label: string) => void;
   onCorrectedSave?: (messageId: string) => void;
+  onPrefCorrection?: (fingerprint: string, messageId: string) => void;
 }
 
 export default function MessageBubble({
@@ -64,6 +65,7 @@ export default function MessageBubble({
   onContentReasonNote,
   onContentReasonLabel,
   onCorrectedSave,
+  onPrefCorrection,
 }: Props) {
   const isUser = message.role === "user";
   const [hovered, setHovered] = useState(false);
@@ -560,6 +562,19 @@ export default function MessageBubble({
                               >
                                 일시중지
                               </button>
+                              {onPrefCorrection && (
+                                <button
+                                  type="button"
+                                  data-testid="preference-not-applied-btn"
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    onPrefCorrection(pref.fingerprint, message.message_id);
+                                  }}
+                                  className="whitespace-nowrap rounded border border-stone-200 px-1.5 py-0.5 text-[10px] text-stone-500 hover:border-red-300 hover:text-red-600"
+                                >
+                                  반영 안 됨
+                                </button>
+                              )}
                             </div>
                           </div>
                           {isHighQualityPreference && (

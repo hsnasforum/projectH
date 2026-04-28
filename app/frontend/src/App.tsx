@@ -12,6 +12,7 @@ import {
   postCorrection,
   postCandidateReview,
   postFeedback,
+  postPreferenceExplicitCorrection,
 } from "./api/client";
 import { DEFAULT_SETTINGS } from "./types";
 import type { AppSettings } from "./types";
@@ -51,6 +52,14 @@ export default function App() {
       addToast("error", "피드백 제출에 실패했습니다.");
     }
   }, [chat.sessionId, chat.loadSession, addToast]);
+
+  const handlePrefCorrection = useCallback(async (fingerprint: string, messageId: string) => {
+    try {
+      await postPreferenceExplicitCorrection(chat.sessionId, messageId, fingerprint);
+    } catch {
+      addToast("error", "선호 교정 전송에 실패했습니다.");
+    }
+  }, [chat.sessionId, addToast]);
 
   const handleContentVerdict = useCallback(async (messageId: string, verdict: string) => {
     try {
@@ -191,6 +200,7 @@ export default function App() {
         onContentReasonNote={handleContentReasonNote}
         onContentReasonLabel={handleContentReasonLabel}
         onCorrectedSave={handleCorrectedSave}
+        onPrefCorrection={handlePrefCorrection}
         onToggleSidebar={toggleSidebar}
         sessionTitle={chat.sessionTitle}
         reviewQueueCount={chat.reviewQueueCount}

@@ -281,6 +281,52 @@ class CorrectionStoreTest(unittest.TestCase):
             for r in dismissed:
                 self.assertEqual(r["status"], "stopped")
 
+    def test_promote_by_fingerprint_promotes_only_confirmed(self) -> None:
+        with TemporaryDirectory() as d:
+            store = self._make_store(d)
+            confirmed = store.record_correction(
+                artifact_id="art-confirmed",
+                session_id="s1",
+                source_message_id="msg-confirmed",
+                original_text="original text one",
+                corrected_text="corrected text one",
+            )
+            recorded = store.record_correction(
+                artifact_id="art-recorded",
+                session_id="s2",
+                source_message_id="msg-recorded",
+                original_text="original text one",
+                corrected_text="corrected text one",
+            )
+            stopped = store.record_correction(
+                artifact_id="art-stopped",
+                session_id="s3",
+                source_message_id="msg-stopped",
+                original_text="original text one",
+                corrected_text="corrected text one",
+            )
+            self.assertIsNotNone(confirmed)
+            self.assertIsNotNone(recorded)
+            self.assertIsNotNone(stopped)
+            fp = confirmed["delta_fingerprint"]
+            store.confirm_correction(confirmed["correction_id"])
+            store.stop_correction(stopped["correction_id"])
+
+            promoted = store.promote_by_fingerprint(fp)
+
+            self.assertEqual([r["correction_id"] for r in promoted], [confirmed["correction_id"]])
+            self.assertEqual(promoted[0]["status"], CorrectionStatus.PROMOTED)
+            self.assertEqual(store.get(recorded["correction_id"])["status"], CorrectionStatus.RECORDED)
+            self.assertEqual(store.get(stopped["correction_id"])["status"], CorrectionStatus.STOPPED)
+
+    def test_promote_by_fingerprint_missing_returns_empty(self) -> None:
+        with TemporaryDirectory() as d:
+            store = self._make_store(d)
+
+            promoted = store.promote_by_fingerprint("sha256:missing")
+
+            self.assertEqual(promoted, [])
+
     def test_list_incomplete_corrections_returns_only_non_terminal_records(self) -> None:
         with TemporaryDirectory() as tmp:
             store = self._make_store(tmp)

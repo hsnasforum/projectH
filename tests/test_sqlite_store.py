@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from time import sleep
 
-from core.contracts import PreferenceStatus
+from core.contracts import CorrectionStatus, PreferenceStatus
 from storage.sqlite_store import (
     SQLiteCorrectionStore,
     SQLiteDatabase,
@@ -709,6 +709,42 @@ class TestSQLiteCorrectionStore(unittest.TestCase):
         self.assertEqual(len(dismissed), 2)
         for r in dismissed:
             self.assertEqual(r["status"], "stopped")
+
+    def test_promote_by_fingerprint_promotes_only_confirmed(self) -> None:
+        confirmed = self._record(
+            artifact_id="art-promote-confirmed",
+            session_id="s1",
+            source_message_id="msg-promote-confirmed",
+        )
+        recorded = self._record(
+            artifact_id="art-promote-recorded",
+            session_id="s2",
+            source_message_id="msg-promote-recorded",
+        )
+        stopped = self._record(
+            artifact_id="art-promote-stopped",
+            session_id="s3",
+            source_message_id="msg-promote-stopped",
+        )
+        fp = confirmed["delta_fingerprint"]
+        self.assertEqual(fp, recorded["delta_fingerprint"])
+        self.assertEqual(fp, stopped["delta_fingerprint"])
+        self.assertIsNotNone(self.store.confirm_correction(confirmed["correction_id"]))
+        self.assertIsNotNone(self.store.stop_correction(stopped["correction_id"]))
+
+        promoted = self.store.promote_by_fingerprint(fp)
+
+        self.assertEqual([r["correction_id"] for r in promoted], [confirmed["correction_id"]])
+        self.assertEqual(promoted[0]["status"], CorrectionStatus.PROMOTED)
+        stored_recorded = self.store.get(recorded["correction_id"])
+        stored_stopped = self.store.get(stopped["correction_id"])
+        self.assertIsNotNone(stored_recorded)
+        self.assertIsNotNone(stored_stopped)
+        self.assertEqual(stored_recorded["status"], CorrectionStatus.RECORDED)
+        self.assertEqual(stored_stopped["status"], CorrectionStatus.STOPPED)
+
+    def test_promote_by_fingerprint_missing_returns_empty(self) -> None:
+        self.assertEqual(self.store.promote_by_fingerprint("sha256:missing"), [])
 
 
 if __name__ == "__main__":

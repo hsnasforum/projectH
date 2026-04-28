@@ -923,6 +923,17 @@ class SQLiteCorrectionStore:
                 confirmed.append(result)
         return confirmed
 
+    def promote_by_fingerprint(self, delta_fingerprint: str) -> list[CorrectionRecord]:
+        records = self.find_by_fingerprint(delta_fingerprint)
+        promoted: list[CorrectionRecord] = []
+        for r in records:
+            if r.get("status") != CorrectionStatus.CONFIRMED:
+                continue
+            result = self.promote_correction(str(r.get("correction_id") or ""))
+            if result is not None:
+                promoted.append(result)
+        return promoted
+
     def dismiss_by_fingerprint(self, delta_fingerprint: str) -> list[CorrectionRecord]:
         records = self.find_by_fingerprint(delta_fingerprint)
         dismissed: list[CorrectionRecord] = []

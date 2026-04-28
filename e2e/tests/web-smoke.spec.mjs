@@ -12457,6 +12457,89 @@ test("correction promote pattern button calls promote-pattern endpoint", async (
   expect(result.promoted_count).toBe(1);
 });
 
+test("correction list search endpoint filters by query parameter", async ({ page }) => {
+  await page.route(/\/api\/preferences$/, async (route) => {
+    if (route.request().method() === "GET") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ ok: true, preferences: [], audit: null }),
+      });
+    } else {
+      await route.continue();
+    }
+  });
+  await page.route(/\/api\/preferences\/audit$/, async (route) => {
+    if (route.request().method() === "GET") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ ok: true, audit: null }),
+      });
+    } else {
+      await route.continue();
+    }
+  });
+  await page.route(/\/api\/corrections\/summary$/, async (route) => {
+    if (route.request().method() === "GET") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ ok: true, total: 0, by_status: {}, top_recurring_fingerprints: [] }),
+      });
+    } else {
+      await route.continue();
+    }
+  });
+  await page.route(/\/api\/corrections\/list(\?.*)?$/, async (route) => {
+    if (route.request().method() === "GET") {
+      const url = new URL(route.request().url());
+      const query = url.searchParams.get("query") || "";
+      const corrections = query
+        ? [
+            {
+              correction_id: "correction-search-001",
+              status: "recorded",
+              original_text: `search match: ${query}`,
+              corrected_text: "corrected search text",
+              delta_fingerprint: "fp-search-001",
+              created_at: "2026-04-28T10:00:00Z",
+            },
+          ]
+        : [];
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ ok: true, corrections }),
+      });
+    } else {
+      await route.continue();
+    }
+  });
+
+  await page.goto("/app-preview");
+  const noQuery = await page.evaluate(async () => {
+    const res = await fetch("/api/corrections/list");
+    const data = await res.json();
+    return { ok: res.ok, count: data.corrections?.length };
+  });
+  expect(noQuery.ok).toBe(true);
+  expect(noQuery.count).toBe(0);
+
+  const withQuery = await page.evaluate(async () => {
+    const res = await fetch("/api/corrections/list?query=hello");
+    const data = await res.json();
+    return {
+      ok: res.ok,
+      count: data.corrections?.length,
+      matches: data.corrections?.[0]?.original_text?.includes("hello"),
+    };
+  });
+  expect(withQuery.ok).toBe(true);
+  expect(withQuery.count).toBe(1);
+  expect(withQuery.matches).toBe(true);
+});
+
 test("reviewed-memory loop: sync 후 활성화하면 이후 채팅 응답에 선호 반영 prefix가 붙습니다", async ({ page }) => {
   const sessionId = buildSessionId("reviewed-memory-loop");
   const preferenceStatement = `reviewed-memory loop accepted preference ${sessionId}`;

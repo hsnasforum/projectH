@@ -27,6 +27,7 @@ from core.contracts import (
     PreferenceStatus,
     TaskLogEntry,
 )
+from storage.artifact_store import _is_valid_artifact_record
 from storage.correction_store import _is_valid_correction_record
 from storage.preference_store import _is_valid_preference_record
 
@@ -454,11 +455,35 @@ class SQLiteArtifactStore:
 
     def list_by_session(self, session_id: str) -> list[ArtifactRecord]:
         rows = self._db.fetchall("SELECT * FROM artifacts WHERE session_id = ? ORDER BY created_at DESC", (session_id,))
-        return [{"artifact_id": r["artifact_id"], **json.loads(r["data"]), "created_at": r["created_at"]} for r in rows]
+        return [
+            record
+            for record in (
+                {
+                    "artifact_id": r["artifact_id"],
+                    "session_id": r["session_id"],
+                    **json.loads(r["data"]),
+                    "created_at": r["created_at"],
+                }
+                for r in rows
+            )
+            if _is_valid_artifact_record(record)
+        ]
 
     def list_recent(self, limit: int = 20) -> list[ArtifactRecord]:
         rows = self._db.fetchall("SELECT * FROM artifacts ORDER BY created_at DESC LIMIT ?", (limit,))
-        return [{"artifact_id": r["artifact_id"], **json.loads(r["data"]), "created_at": r["created_at"]} for r in rows]
+        return [
+            record
+            for record in (
+                {
+                    "artifact_id": r["artifact_id"],
+                    "session_id": r["session_id"],
+                    **json.loads(r["data"]),
+                    "created_at": r["created_at"],
+                }
+                for r in rows
+            )
+            if _is_valid_artifact_record(record)
+        ]
 
 
 # ── SQLite Preference Store ───────────────────────────────────────

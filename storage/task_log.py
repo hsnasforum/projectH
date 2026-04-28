@@ -41,5 +41,7 @@ class TaskLogger:
                     continue
                 if (loaded.get("session_id") or "").strip() != normalized:
                     continue
+                if not loaded.get("ts") or not loaded.get("action"):
+                    continue
                 records.append(loaded)
         return records

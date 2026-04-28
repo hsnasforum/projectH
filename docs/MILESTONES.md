@@ -1151,6 +1151,10 @@ Axis 1 (CONTROL_SEQ 1183): PerPreferenceStats TypedDict — ACTIVE
 `preference_utils.py` `enrich_preference_reliability()` 파라미터 타입 힌트 강화.
 session_store.py setdefault dict 리터럴 타입 수정은 Axis 2 대상.
 
+Axis 2 (CONTROL_SEQ 1184): session_store.py setdefault annotation — ACTIVE
+`per_preference_stats.setdefault()` 반환값 `pstats`/`event_stats` 로컬 변수에
+`PerPreferenceStats` annotation 추가. 타입 생성→소비 체인 완성.
+
 ## Next 3 Implementation Priorities
 
 1. **M49–M51 shipped**: 선호도 크로스-세션 주입(M49) + 주입 가시성·명시적 피드백 루프(M50) + 신뢰도 저하 경고(M51) 완료. PR #49 대기 중(feat/m50-axis1-axis2-pref-visibility).

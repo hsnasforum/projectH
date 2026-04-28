@@ -27,6 +27,7 @@ from core.contracts import (
     CandidateReviewSuggestedScope,
     ContentReasonLabel,
     ContentReasonScope,
+    PerPreferenceStats,
     SESSION_LOCAL_MEMORY_SIGNAL_VERSION,
     WebSearchPermission,
 )
@@ -1028,7 +1029,7 @@ class SessionStore:
                         if is_personalized_correction:
                             summary["personalized_correction_count"] += 1
                         for pref_id in msg["applied_preference_ids"]:
-                            pstats = summary["per_preference_stats"].setdefault(
+                            pstats: PerPreferenceStats = summary["per_preference_stats"].setdefault(
                                 pref_id, {"applied_count": 0, "corrected_count": 0}
                             )
                             pstats["applied_count"] += 1
@@ -1040,7 +1041,7 @@ class SessionStore:
                         event_fingerprint = str(event.get("fingerprint") or "").strip()
                         if not event_fingerprint:
                             continue
-                        event_stats = summary["per_preference_stats"].setdefault(
+                        event_stats: PerPreferenceStats = summary["per_preference_stats"].setdefault(
                             event_fingerprint, {"applied_count": 0, "corrected_count": 0}
                         )
                         event_stats["corrected_count"] += 1

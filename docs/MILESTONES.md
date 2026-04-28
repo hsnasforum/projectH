@@ -1243,6 +1243,12 @@ dist 재빌드·E2E는 Axis 2 대상.
 
 Axis 2 (CONTROL_SEQ 1222): dist 재빌드 + E2E 격리 — ACTIVE
 
+## M65 SQLite CorrectionStore Parity
+
+Axis 1 (CONTROL_SEQ 1224): `SQLiteCorrectionStore._scan_all()` + `confirm_by_fingerprint()` — ACTIVE
+`/api/corrections/summary` + `/api/corrections/confirm-pattern` SQLite 백엔드 크래시 해소.
+frontend 변경 없음.
+
 ## Next 3 Implementation Priorities
 
 1. **M49–M59 shipped**: 선호도 주입·가시성·피드백·신뢰도 경고(M49-M52) + docs truth-sync(M53, M56, M59) + TypedDict 계약 시리즈(M54-M58: CorrectionRecord, PerPreferenceStats, PreferenceRecord, ArtifactRecord JSON+SQLite) 완료. PR #49 대기 중(feat/m50-axis1-axis2-pref-visibility).

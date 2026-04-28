@@ -1,9 +1,3 @@
-"""Backward-compatible re-export wrapper for storage.sqlite.*
-
-All public names are re-exported from storage/sqlite/ subpackage.
-Import sites (app/web.py, tests/) continue to work unchanged.
-"""
-
 from storage.sqlite.database import SQLiteDatabase
 from storage.sqlite.session import SQLiteSessionStore
 from storage.sqlite.task_log import SQLiteTaskLogger

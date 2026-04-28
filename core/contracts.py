@@ -449,6 +449,35 @@ class PerPreferenceStats(TypedDict, total=False):
     corrected_count: int
 
 
+class PreferenceRecord(TypedDict, total=False):
+    preference_id: str
+    delta_fingerprint: str
+    description: str
+    status: str
+    evidence_count: int
+    cross_session_count: int
+    source_corrections: list[dict[str, Any]]
+    reviewed_candidate_source_refs: list[dict[str, Any]]
+    original_text: str | None
+    corrected_text: str | None
+    original_snippet: str | None
+    corrected_snippet: str | None
+    delta_summary: dict[str, Any]
+    similarity_score: float | None
+    pattern_family: str | None
+    avg_similarity_score: float | None
+    reliability_stats: PerPreferenceStats
+    quality_info: dict[str, Any] | None
+    is_highly_reliable: bool | None
+    activated_at: str | None
+    rejected_at: str | None
+    paused_at: str | None
+    first_seen_at: str | None
+    last_seen_at: str | None
+    created_at: str
+    updated_at: str
+
+
 # ---------------------------------------------------------------------------
 # Preference lifecycle (cross-session)
 # ---------------------------------------------------------------------------

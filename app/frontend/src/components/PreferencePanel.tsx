@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
-import type { PreferenceAudit, PreferenceRecord } from "../api/client";
+import type { CorrectionSummary, PreferenceAudit, PreferenceRecord } from "../api/client";
 import {
+  fetchCorrectionSummary,
   fetchPreferenceAudit,
   fetchPreferences,
   activatePreference,
@@ -63,6 +64,7 @@ function isActiveLowReliabilityPreference(pref: PreferenceRecord) {
 export default function PreferencePanel({ lastAppliedFingerprints = [] }: PanelProps) {
   const [preferences, setPreferences] = useState<PreferenceRecord[]>([]);
   const [audit, setAudit] = useState<PreferenceAudit | null>(null);
+  const [correctionSummary, setCorrectionSummary] = useState<CorrectionSummary | null>(null);
   const [loading, setLoading] = useState(false);
   const [expanded, setExpanded] = useState(true);
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
@@ -83,9 +85,10 @@ export default function PreferencePanel({ lastAppliedFingerprints = [] }: PanelP
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [data, auditData] = await Promise.all([
+      const [data, auditData, summary] = await Promise.all([
         fetchPreferences(),
         fetchPreferenceAudit(),
+        fetchCorrectionSummary().catch(() => null),
       ]);
       // Filter out rejected items entirely
       const visible = (data.preferences ?? []).filter((p) => p.status !== "rejected");
@@ -131,6 +134,7 @@ export default function PreferencePanel({ lastAppliedFingerprints = [] }: PanelP
             ).length,
       );
       setAudit(auditData);
+      setCorrectionSummary(summary);
     } catch {
       // silent
     } finally {
@@ -285,6 +289,14 @@ export default function PreferencePanel({ lastAppliedFingerprints = [] }: PanelP
                   </span>
                 )}
               </span>
+            )}
+            {correctionSummary && correctionSummary.total > 0 && (
+              <p className="text-[10px] text-sidebar-muted/60 px-2">
+                교정 전체 {correctionSummary.total}개
+                {typeof correctionSummary.by_status["active"] === "number"
+                  ? ` · 활성 ${correctionSummary.by_status["active"]}개`
+                  : ""}
+              </p>
             )}
           </span>
         </span>

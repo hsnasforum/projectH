@@ -1258,6 +1258,8 @@ Axis 1 (CONTROL_SEQ 1227): pattern-level 일괄 무시 — ACTIVE
 `PreferencePanel.tsx` 무시 버튼.
 dist 재빌드·E2E는 Axis 2 대상.
 
+Axis 2 (CONTROL_SEQ 1228): dist 재빌드 + E2E 격리 — ACTIVE
+
 ## Next 3 Implementation Priorities
 
 1. **M49–M59 shipped**: 선호도 주입·가시성·피드백·신뢰도 경고(M49-M52) + docs truth-sync(M53, M56, M59) + TypedDict 계약 시리즈(M54-M58: CorrectionRecord, PerPreferenceStats, PreferenceRecord, ArtifactRecord JSON+SQLite) 완료. PR #49 대기 중(feat/m50-axis1-axis2-pref-visibility).

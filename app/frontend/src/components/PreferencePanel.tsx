@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import type { CorrectionSummary, PreferenceAudit, PreferenceRecord } from "../api/client";
 import {
   confirmCorrectionPattern,
+  dismissCorrectionPattern,
   fetchCorrectionSummary,
   fetchPreferenceAudit,
   fetchPreferences,
@@ -321,6 +322,17 @@ export default function PreferencePanel({ lastAppliedFingerprints = [] }: PanelP
                       }}
                     >
                       승인
+                    </button>
+                    <button
+                      data-testid="correction-dismiss-pattern"
+                      className="text-[10px] text-sidebar-muted/70 hover:text-sidebar-foreground shrink-0"
+                      onClick={async () => {
+                        const fp = correctionSummary.top_recurring_fingerprints[0].delta_fingerprint;
+                        await dismissCorrectionPattern(fp).catch(() => null);
+                        load();
+                      }}
+                    >
+                      무시
                     </button>
                   </div>
                 )}

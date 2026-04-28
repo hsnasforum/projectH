@@ -344,6 +344,18 @@ export async function confirmCorrectionPattern(
   return res.json() as Promise<{ ok: boolean; confirmed_count: number }>;
 }
 
+export async function dismissCorrectionPattern(
+  delta_fingerprint: string,
+): Promise<{ ok: boolean; dismissed_count: number }> {
+  const res = await fetch(`${BASE}/api/corrections/dismiss-pattern`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ delta_fingerprint }),
+  });
+  if (!res.ok) throw new Error("dismiss pattern failed");
+  return res.json() as Promise<{ ok: boolean; dismissed_count: number }>;
+}
+
 export interface PreferenceAudit {
   total: number;
   by_status: Record<string, number>;

@@ -696,6 +696,20 @@ class TestSQLiteCorrectionStore(unittest.TestCase):
         for r in confirmed:
             self.assertEqual(r["status"], "confirmed")
 
+    def test_dismiss_by_fingerprint_batch(self) -> None:
+        first = self._record(artifact_id="art1", session_id="s1", source_message_id="msg1")
+        second = self._record(artifact_id="art2", session_id="s2", source_message_id="msg2")
+        self.assertIsNotNone(first)
+        self.assertIsNotNone(second)
+        fp = first["delta_fingerprint"]
+        self.assertEqual(fp, second["delta_fingerprint"])
+
+        dismissed = self.store.dismiss_by_fingerprint(fp)
+
+        self.assertEqual(len(dismissed), 2)
+        for r in dismissed:
+            self.assertEqual(r["status"], "stopped")
+
 
 if __name__ == "__main__":
     unittest.main()

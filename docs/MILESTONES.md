@@ -1249,6 +1249,15 @@ Axis 1 (CONTROL_SEQ 1224): `SQLiteCorrectionStore._scan_all()` + `confirm_by_fin
 `/api/corrections/summary` + `/api/corrections/confirm-pattern` SQLite 백엔드 크래시 해소.
 frontend 변경 없음.
 
+## M66 Correction Pattern Dismiss
+
+Axis 1 (CONTROL_SEQ 1227): pattern-level 일괄 무시 — ACTIVE
+`CORRECTION_STATUS_TRANSITIONS[RECORDED]` STOPPED 전이 추가;
+`dismiss_by_fingerprint()` JSON + SQLite parity;
+`POST /api/corrections/dismiss-pattern` endpoint;
+`PreferencePanel.tsx` 무시 버튼.
+dist 재빌드·E2E는 Axis 2 대상.
+
 ## Next 3 Implementation Priorities
 
 1. **M49–M59 shipped**: 선호도 주입·가시성·피드백·신뢰도 경고(M49-M52) + docs truth-sync(M53, M56, M59) + TypedDict 계약 시리즈(M54-M58: CorrectionRecord, PerPreferenceStats, PreferenceRecord, ArtifactRecord JSON+SQLite) 완료. PR #49 대기 중(feat/m50-axis1-axis2-pref-visibility).

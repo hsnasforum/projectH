@@ -74,6 +74,13 @@ class AggregateHandlerMixin:
         confirmed = self.correction_store.confirm_by_fingerprint(delta_fingerprint)
         return {"ok": True, "confirmed_count": len(confirmed)}
 
+    def dismiss_correction_pattern(self, payload: dict[str, Any]) -> dict[str, Any]:
+        delta_fingerprint = str(payload.get("delta_fingerprint") or "").strip()
+        if not delta_fingerprint:
+            raise WebApiError(400, "delta_fingerprint 값이 필요합니다.")
+        dismissed = self.correction_store.dismiss_by_fingerprint(delta_fingerprint)
+        return {"ok": True, "dismissed_count": len(dismissed)}
+
     def submit_candidate_confirmation(self, payload: dict[str, Any]) -> dict[str, Any]:
         session_id = self._normalize_session_id(payload.get("session_id"))
         message_id = self._normalize_optional_text(payload.get("message_id"))

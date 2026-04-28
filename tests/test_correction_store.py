@@ -304,6 +304,27 @@ class CorrectionStoreTest(unittest.TestCase):
             path.write_text("not json", encoding="utf-8")
             self.assertIsNone(store.get("correction-corrupt"))
 
+    def test_record_correction_returns_typed_fields(self) -> None:
+        """record_correction이 CorrectionRecord 계약 필드를 포함한다."""
+        from core.contracts import CorrectionRecord
+        with TemporaryDirectory() as base_dir:
+            store = CorrectionStore(base_dir=base_dir)
+            record = store.record_correction(
+                artifact_id="art-typed",
+                session_id="sess-typed",
+                source_message_id="msg-typed",
+                original_text="original text for typing test",
+                corrected_text="corrected text for typing test",
+                applied_preference_ids=["fp-abc"],
+            )
+            assert record is not None
+            typed_record: CorrectionRecord = record
+            assert "correction_id" in typed_record
+            assert "delta_fingerprint" in typed_record
+            assert "status" in typed_record
+            assert typed_record.get("applied_preference_ids") == ["fp-abc"]
+            assert isinstance(typed_record, dict)
+
 
 class SQLiteCorrectionStoreAdoptionTest(unittest.TestCase):
     def setUp(self) -> None:

@@ -1134,6 +1134,12 @@ PreferencePanel 개별 카드에 data-testid="preference-low-reliability-badge" 
 status=active + is_highly_reliable=false + applied_count>=3 조건.
 dist 재빌드·E2E는 Axis 2 대상.
 
+## M54 Structured Correction Memory
+
+Axis 1 (CONTROL_SEQ 1180): CorrectionRecord TypedDict — ACTIVE
+`core/contracts.py`에 `CorrectionRecord(TypedDict, total=False)` 22개 필드 추가;
+`correction_store.py` 반환 타입 annotation 업데이트. 단위 테스트 포함.
+
 ## Next 3 Implementation Priorities
 
 1. **M49–M51 shipped**: 선호도 크로스-세션 주입(M49) + 주입 가시성·명시적 피드백 루프(M50) + 신뢰도 저하 경고(M51) 완료. PR #49 대기 중(feat/m50-axis1-axis2-pref-visibility).

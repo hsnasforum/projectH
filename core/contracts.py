@@ -7,7 +7,7 @@ Frontend JS constants are generated from this file.
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import TypedDict
+from typing import Any, TypedDict
 
 
 # ---------------------------------------------------------------------------
@@ -417,6 +417,31 @@ CORRECTION_STATUS_TRANSITIONS: dict[CorrectionStatus, tuple[CorrectionStatus, ..
     CorrectionStatus.PROMOTED: (CorrectionStatus.ACTIVE,),
     CorrectionStatus.ACTIVE: (CorrectionStatus.STOPPED,),
 }
+
+
+class CorrectionRecord(TypedDict, total=False):
+    correction_id: str
+    artifact_id: str
+    session_id: str
+    source_message_id: str
+    original_text: str
+    corrected_text: str
+    delta_fingerprint: str
+    delta_summary: dict[str, Any]
+    similarity_score: float | None
+    rewrite_dimensions: list[str]
+    pattern_family: str
+    applied_preference_ids: list[str] | None
+    recurrence_count: int
+    first_seen_at: str
+    last_seen_at: str
+    status: str
+    confirmed_at: str | None
+    promoted_at: str | None
+    activated_at: str | None
+    stopped_at: str | None
+    created_at: str
+    updated_at: str
 
 
 # ---------------------------------------------------------------------------

@@ -12,7 +12,12 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from core.contracts import CandidateFamily, CORRECTION_STATUS_TRANSITIONS, CorrectionStatus
+from core.contracts import (
+    CandidateFamily,
+    CORRECTION_STATUS_TRANSITIONS,
+    CorrectionRecord,
+    CorrectionStatus,
+)
 from core.delta_analysis import compute_correction_delta
 
 from .json_store_base import utc_now_iso, json_path, atomic_write, read_json, scan_json_dir
@@ -42,7 +47,7 @@ class CorrectionStore:
         corrected_text: str,
         pattern_family: str = CandidateFamily.CORRECTION_REWRITE,
         applied_preference_ids: list[str] | None = None,
-    ) -> dict[str, Any] | None:
+    ) -> CorrectionRecord | None:
         """Record a correction and compute its delta. Returns None if no delta."""
         delta = compute_correction_delta(original_text, corrected_text)
         if delta is None:
@@ -96,13 +101,13 @@ class CorrectionStore:
             atomic_write(self._path(correction_id), record)
             return record
 
-    def get(self, correction_id: str) -> dict[str, Any] | None:
+    def get(self, correction_id: str) -> CorrectionRecord | None:
         with self._lock:
             return read_json(self._path(correction_id))
 
     # -- Lifecycle transitions --
 
-    def _transition(self, correction_id: str, status: str, timestamp_field: str) -> dict[str, Any] | None:
+    def _transition(self, correction_id: str, status: str, timestamp_field: str) -> CorrectionRecord | None:
         with self._lock:
             record = read_json(self._path(correction_id))
             if record is None:

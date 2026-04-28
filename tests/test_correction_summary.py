@@ -1,4 +1,4 @@
-"""Tests for GET /api/corrections/summary via AggregateHandlerMixin."""
+"""Tests for GET /api/corrections/summary via CorrectionHandlerMixin."""
 
 from __future__ import annotations
 
@@ -6,11 +6,11 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from app.handlers.aggregate import AggregateHandlerMixin
+from app.handlers.corrections import CorrectionHandlerMixin
 from storage.correction_store import CorrectionStore
 
 
-class _CorrectionSummaryService(AggregateHandlerMixin):
+class _CorrectionSummaryService(CorrectionHandlerMixin):
     def __init__(self, store: CorrectionStore) -> None:
         self.correction_store = store
 

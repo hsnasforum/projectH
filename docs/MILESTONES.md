@@ -1113,6 +1113,10 @@ session_store 크로스-세션 집계에서 artifact_kind 제한 제거;
 applied_preference_ids + corrected_text 조합이면 grounded_brief 외 chat 응답도 corrected_count 산입.
 단위 테스트 포함.
 
+Axis 3 (CONTROL_SEQ 1169): 명시적 선호도 교정 엔드포인트 (backend) — ACTIVE
+POST /api/preferences/record-correction → session message의 preference_correction_events에 기록;
+session_store scanner가 corrected_count에 산입. 프론트엔드 버튼은 다음 슬라이스(Axis 3b).
+
 ## Next 3 Implementation Priorities
 
 1. **E2E 환경 개선 완료**: `e2e/start-server.sh` healthcheck wrapper no-server / existing-server 두 경로가 정적 감사(09c806d)로 확인됨. operator가 검증 수준을 release gate로 인정(Q1 Option A, operator_request 263). B1 gate closed (2026-04-26).

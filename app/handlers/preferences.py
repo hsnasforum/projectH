@@ -358,3 +358,16 @@ class PreferenceHandlerMixin:
             detail={"preference_id": preference_id},
         )
         return {"ok": True, "preference": result}
+
+    def record_explicit_preference_correction(self, payload: dict[str, Any]) -> dict[str, Any]:
+        session_id = str(payload.get("session_id") or "").strip()
+        message_id = str(payload.get("message_id") or "").strip()
+        fingerprint = str(payload.get("fingerprint") or "").strip()
+        if not session_id or not message_id or not fingerprint:
+            return {"ok": False, "error": "session_id, message_id, fingerprint 필수"}
+        recorded = self.session_store.record_preference_explicit_correction(
+            session_id,
+            message_id=message_id,
+            fingerprint=fingerprint,
+        )
+        return {"ok": recorded}

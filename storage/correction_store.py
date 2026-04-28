@@ -23,6 +23,17 @@ from core.delta_analysis import compute_correction_delta
 from .json_store_base import utc_now_iso, json_path, atomic_write, read_json, scan_json_dir
 
 
+_CORRECTION_REQUIRED_FIELDS = frozenset(
+    {"correction_id", "delta_fingerprint", "status", "created_at"}
+)
+
+
+def _is_valid_correction_record(record: object) -> bool:
+    if not isinstance(record, dict):
+        return False
+    return all(bool(record.get(field)) for field in _CORRECTION_REQUIRED_FIELDS)
+
+
 class CorrectionStore:
     def __init__(self, base_dir: str = "data/corrections") -> None:
         self.base_dir = Path(base_dir)
@@ -33,7 +44,7 @@ class CorrectionStore:
         return json_path(self.base_dir, correction_id)
 
     def _scan_all(self) -> list[CorrectionRecord]:
-        return [d for d in scan_json_dir(self.base_dir) if isinstance(d.get("correction_id"), str)]
+        return [d for d in scan_json_dir(self.base_dir) if _is_valid_correction_record(d)]
 
     # -- Core operations --
 

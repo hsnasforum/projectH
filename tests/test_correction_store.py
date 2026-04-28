@@ -381,3 +381,24 @@ class SQLiteCorrectionStoreAdoptionTest(unittest.TestCase):
             [record["correction_id"] for record in adopted],
             [earlier["correction_id"], later["correction_id"]],
         )
+
+    def test_sqlite_record_correction_returns_typed_fields(self) -> None:
+        """SQLiteCorrectionStore.record_correction이 CorrectionRecord 계약 필드를 포함한다."""
+        from core.contracts import CorrectionRecord
+
+        record = self.store.record_correction(
+            artifact_id="art-sqlite-typed",
+            session_id="sess-sqlite-typed",
+            source_message_id="msg-sqlite-typed",
+            original_text="sqlite original text for typing",
+            corrected_text="sqlite corrected text for typing",
+            applied_preference_ids=["fp-sqlite"],
+        )
+
+        assert record is not None
+        typed_record: CorrectionRecord = record
+        assert "correction_id" in typed_record
+        assert "delta_fingerprint" in typed_record
+        assert "status" in typed_record
+        assert typed_record.get("applied_preference_ids") == ["fp-sqlite"]
+        assert isinstance(typed_record, dict)

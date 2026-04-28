@@ -20,6 +20,7 @@ from uuid import uuid4
 from core.contracts import (
     CandidateFamily,
     CORRECTION_STATUS_TRANSITIONS,
+    CorrectionRecord,
     CorrectionStatus,
     PreferenceStatus,
 )
@@ -666,7 +667,7 @@ class SQLiteCorrectionStore:
         corrected_text: str,
         pattern_family: str = CandidateFamily.CORRECTION_REWRITE,
         applied_preference_ids: list[str] | None = None,
-    ) -> dict[str, Any] | None:
+    ) -> CorrectionRecord | None:
         """Record a correction and compute its delta. Returns None if no delta."""
         from core.delta_analysis import compute_correction_delta
 
@@ -748,41 +749,41 @@ class SQLiteCorrectionStore:
             self._db.commit()
             return record
 
-    def get(self, correction_id: str) -> dict[str, Any] | None:
+    def get(self, correction_id: str) -> CorrectionRecord | None:
         row = self._db.fetchone("SELECT * FROM corrections WHERE correction_id = ?", (correction_id,))
         if not row:
             return None
         return self._row_to_dict(row)
 
-    def find_by_fingerprint(self, delta_fingerprint: str) -> list[dict[str, Any]]:
+    def find_by_fingerprint(self, delta_fingerprint: str) -> list[CorrectionRecord]:
         rows = self._db.fetchall(
             "SELECT * FROM corrections WHERE delta_fingerprint = ? ORDER BY created_at",
             (delta_fingerprint,),
         )
         return [self._row_to_dict(row) for row in rows]
 
-    def find_by_artifact(self, artifact_id: str) -> list[dict[str, Any]]:
+    def find_by_artifact(self, artifact_id: str) -> list[CorrectionRecord]:
         rows = self._db.fetchall(
             "SELECT * FROM corrections WHERE artifact_id = ? ORDER BY created_at",
             (artifact_id,),
         )
         return [self._row_to_dict(row) for row in rows]
 
-    def find_by_session(self, session_id: str) -> list[dict[str, Any]]:
+    def find_by_session(self, session_id: str) -> list[CorrectionRecord]:
         rows = self._db.fetchall(
             "SELECT * FROM corrections WHERE session_id = ? ORDER BY created_at",
             (session_id,),
         )
         return [self._row_to_dict(row) for row in rows]
 
-    def list_recent(self, limit: int = 20) -> list[dict[str, Any]]:
+    def list_recent(self, limit: int = 20) -> list[CorrectionRecord]:
         rows = self._db.fetchall(
             "SELECT * FROM corrections ORDER BY created_at DESC LIMIT ?",
             (limit,),
         )
         return [self._row_to_dict(row) for row in rows]
 
-    def list_incomplete_corrections(self) -> list[dict[str, Any]]:
+    def list_incomplete_corrections(self) -> list[CorrectionRecord]:
         with self._lock:
             rows = self._db.fetchall(
                 "SELECT * FROM corrections WHERE status IN (?, ?, ?) ORDER BY created_at ASC",

@@ -135,6 +135,15 @@ class CorrectionStore:
     def stop_correction(self, correction_id: str) -> dict[str, Any] | None:
         return self._transition(correction_id, CorrectionStatus.STOPPED, "stopped_at")
 
+    def confirm_by_fingerprint(self, delta_fingerprint: str) -> list[CorrectionRecord]:
+        records = self.find_by_fingerprint(delta_fingerprint)
+        confirmed: list[CorrectionRecord] = []
+        for r in records:
+            result = self.confirm_correction(str(r.get("correction_id") or ""))
+            if result is not None:
+                confirmed.append(result)
+        return confirmed
+
     # -- Queries --
 
     def _find_by_fingerprint_unlocked(self, delta_fingerprint: str) -> list[CorrectionRecord]:

@@ -332,6 +332,18 @@ export async function fetchCorrectionSummary(): Promise<CorrectionSummary> {
   return res.json() as Promise<CorrectionSummary>;
 }
 
+export async function confirmCorrectionPattern(
+  delta_fingerprint: string,
+): Promise<{ ok: boolean; confirmed_count: number }> {
+  const res = await fetch(`${BASE}/api/corrections/confirm-pattern`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ delta_fingerprint }),
+  });
+  if (!res.ok) throw new Error("confirm pattern failed");
+  return res.json() as Promise<{ ok: boolean; confirmed_count: number }>;
+}
+
 export interface PreferenceAudit {
   total: number;
   by_status: Record<string, number>;

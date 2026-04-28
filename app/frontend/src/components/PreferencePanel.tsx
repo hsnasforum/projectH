@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import type { CorrectionSummary, PreferenceAudit, PreferenceRecord } from "../api/client";
 import {
+  confirmCorrectionPattern,
   fetchCorrectionSummary,
   fetchPreferenceAudit,
   fetchPreferences,
@@ -302,13 +303,26 @@ export default function PreferencePanel({ lastAppliedFingerprints = [] }: PanelP
                     : ""}
                 </p>
                 {correctionSummary.top_recurring_fingerprints[0]?.original_snippet && (
-                  <p
-                    data-testid="correction-top-pattern"
-                    className="text-[10px] text-sidebar-muted/50 px-2 truncate"
-                    title={correctionSummary.top_recurring_fingerprints[0].original_snippet}
-                  >
-                    반복 교정: {correctionSummary.top_recurring_fingerprints[0].original_snippet.slice(0, 40)}
-                  </p>
+                  <div className="flex items-center gap-1 px-2">
+                    <p
+                      data-testid="correction-top-pattern"
+                      className="text-[10px] text-sidebar-muted/50 truncate flex-1"
+                      title={correctionSummary.top_recurring_fingerprints[0].original_snippet}
+                    >
+                      반복 교정: {correctionSummary.top_recurring_fingerprints[0].original_snippet.slice(0, 40)}
+                    </p>
+                    <button
+                      data-testid="correction-confirm-pattern"
+                      className="text-[10px] text-sidebar-muted/70 hover:text-sidebar-foreground shrink-0"
+                      onClick={async () => {
+                        const fp = correctionSummary.top_recurring_fingerprints[0].delta_fingerprint;
+                        await confirmCorrectionPattern(fp).catch(() => null);
+                        load();
+                      }}
+                    >
+                      승인
+                    </button>
+                  </div>
                 )}
               </>
             )}

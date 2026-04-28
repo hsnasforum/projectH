@@ -1117,6 +1117,13 @@ Axis 3 (CONTROL_SEQ 1169): 명시적 선호도 교정 엔드포인트 (backend) 
 POST /api/preferences/record-correction → session message의 preference_correction_events에 기록;
 session_store scanner가 corrected_count에 산입. 프론트엔드 버튼은 다음 슬라이스(Axis 3b).
 
+## M51 Preference Reliability Warning
+
+Axis 1 (CONTROL_SEQ 1172): 신뢰도 저하 활성 선호 경고 — ACTIVE
+applied_count >= 3이고 is_highly_reliable=False인 ACTIVE 선호를 low_reliability_active_count로
+집계; PreferencePanel에 "신뢰도 저하 N건" 배지(data-testid="low-reliability-count") 표시.
+dist 재빌드·E2E는 다음 슬라이스(Axis 2) 대상.
+
 ## Next 3 Implementation Priorities
 
 1. **E2E 환경 개선 완료**: `e2e/start-server.sh` healthcheck wrapper no-server / existing-server 두 경로가 정적 감사(09c806d)로 확인됨. operator가 검증 수준을 release gate로 인정(Q1 Option A, operator_request 263). B1 gate closed (2026-04-26).

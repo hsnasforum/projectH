@@ -315,6 +315,82 @@ class PreferenceHandlerTest(unittest.TestCase):
 
         self.assertEqual(no_active_highly_reliable_payload["highly_reliable_active_count"], 0)
 
+    def test_list_preferences_payload_counts_low_reliability_active_preferences(self) -> None:
+        service = _PreferenceService(
+            [
+                {
+                    "preference_id": "pref-active-low",
+                    "delta_fingerprint": "fingerprint-active-low",
+                    "description": "active low reliability preference",
+                    "status": "active",
+                    "avg_similarity_score": 0.15,
+                },
+                {
+                    "preference_id": "pref-active-reliable",
+                    "delta_fingerprint": "fingerprint-active-reliable",
+                    "description": "active reliable preference",
+                    "status": "active",
+                    "avg_similarity_score": 0.15,
+                },
+                {
+                    "preference_id": "pref-active-measuring",
+                    "delta_fingerprint": "fingerprint-active-measuring",
+                    "description": "active measuring preference",
+                    "status": "active",
+                    "avg_similarity_score": 0.15,
+                },
+                {
+                    "preference_id": "pref-candidate-low",
+                    "delta_fingerprint": "fingerprint-candidate-low",
+                    "description": "candidate low reliability preference",
+                    "status": "candidate",
+                    "avg_similarity_score": 0.15,
+                },
+            ],
+            audit_summary={
+                "per_preference_stats": {
+                    "fingerprint-active-low": {"applied_count": 5, "corrected_count": 2},
+                    "fingerprint-active-reliable": {"applied_count": 5, "corrected_count": 0},
+                    "fingerprint-active-measuring": {"applied_count": 2, "corrected_count": 1},
+                    "fingerprint-candidate-low": {"applied_count": 5, "corrected_count": 2},
+                },
+            },
+        )
+
+        payload = service.list_preferences_payload()
+
+        self.assertEqual(payload["low_reliability_active_count"], 1)
+
+    def test_list_preferences_payload_zero_low_reliability_when_all_reliable(self) -> None:
+        service = _PreferenceService(
+            [
+                {
+                    "preference_id": "pref-reliable-a",
+                    "delta_fingerprint": "fingerprint-reliable-a",
+                    "description": "first active reliable preference",
+                    "status": "active",
+                    "avg_similarity_score": 0.15,
+                },
+                {
+                    "preference_id": "pref-reliable-b",
+                    "delta_fingerprint": "fingerprint-reliable-b",
+                    "description": "second active reliable preference",
+                    "status": "active",
+                    "avg_similarity_score": 0.15,
+                },
+            ],
+            audit_summary={
+                "per_preference_stats": {
+                    "fingerprint-reliable-a": {"applied_count": 3, "corrected_count": 0},
+                    "fingerprint-reliable-b": {"applied_count": 8, "corrected_count": 1},
+                },
+            },
+        )
+
+        payload = service.list_preferences_payload()
+
+        self.assertEqual(payload["low_reliability_active_count"], 0)
+
     def test_list_preferences_payload_no_conflict_for_dissimilar_descriptions(self) -> None:
         service = _PreferenceService([
             {

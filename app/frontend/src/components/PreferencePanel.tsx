@@ -49,6 +49,17 @@ function isActiveHighlyReliablePreference(pref: PreferenceRecord) {
   return pref.status === "active" && pref.is_highly_reliable === true;
 }
 
+function isActiveLowReliabilityPreference(pref: PreferenceRecord) {
+  const appliedCount = pref.reliability_stats?.applied_count;
+  return (
+    pref.status === "active" &&
+    typeof appliedCount === "number" &&
+    Number.isFinite(appliedCount) &&
+    appliedCount >= 3 &&
+    pref.is_highly_reliable !== true
+  );
+}
+
 export default function PreferencePanel({ lastAppliedFingerprints = [] }: PanelProps) {
   const [preferences, setPreferences] = useState<PreferenceRecord[]>([]);
   const [audit, setAudit] = useState<PreferenceAudit | null>(null);
@@ -67,6 +78,7 @@ export default function PreferencePanel({ lastAppliedFingerprints = [] }: PanelP
   const [highQualityActiveCount, setHighQualityActiveCount] = useState(0);
   const [highlyReliableActiveCount, setHighlyReliableActiveCount] = useState(0);
   const [highSeverityConflictCount, setHighSeverityConflictCount] = useState(0);
+  const [lowReliabilityActiveCount, setLowReliabilityActiveCount] = useState(0);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -101,6 +113,11 @@ export default function PreferencePanel({ lastAppliedFingerprints = [] }: PanelP
         typeof data.highly_reliable_active_count === "number" && Number.isFinite(data.highly_reliable_active_count)
           ? data.highly_reliable_active_count
           : visible.filter(isActiveHighlyReliablePreference).length,
+      );
+      setLowReliabilityActiveCount(
+        typeof data.low_reliability_active_count === "number" && Number.isFinite(data.low_reliability_active_count)
+          ? data.low_reliability_active_count
+          : visible.filter(isActiveLowReliabilityPreference).length,
       );
       const dataWithConflict = data as typeof data & { high_severity_conflict_count?: number | null };
       setHighSeverityConflictCount(
@@ -256,6 +273,15 @@ export default function PreferencePanel({ lastAppliedFingerprints = [] }: PanelP
                 {highSeverityConflictCount > 0 && (
                   <span data-testid="high-severity-conflict-count">
                     {` · 충돌 위험 ${highSeverityConflictCount}건`}
+                  </span>
+                )}
+                {lowReliabilityActiveCount > 0 && (
+                  <span
+                    data-testid="low-reliability-count"
+                    className="text-[10px] font-semibold text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full"
+                    title="교정 비율이 높아 현재 응답에 주입되지 않는 활성 선호가 있습니다"
+                  >
+                    {`신뢰도 저하 ${lowReliabilityActiveCount}건`}
                   </span>
                 )}
               </span>

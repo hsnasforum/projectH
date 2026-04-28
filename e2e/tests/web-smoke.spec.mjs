@@ -12189,6 +12189,83 @@ test("correction top pattern compact line shows original snippet", async ({ page
   await expect(page.getByTestId("correction-top-pattern")).toContainText("반복 교정: original text one");
 });
 
+test("correction confirm pattern button calls confirm-pattern endpoint", async ({ page }) => {
+  await page.route(/\/api\/preferences$/, async (route) => {
+    if (route.request().method() === "GET") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ ok: true, preferences: [], audit: null }),
+      });
+    } else {
+      await route.continue();
+    }
+  });
+  await page.route(/\/api\/preferences\/audit$/, async (route) => {
+    if (route.request().method() === "GET") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ ok: true, audit: null }),
+      });
+    } else {
+      await route.continue();
+    }
+  });
+  await page.route(/\/api\/corrections\/summary$/, async (route) => {
+    if (route.request().method() === "GET") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          ok: true,
+          total: 3,
+          by_status: { active: 2 },
+          top_recurring_fingerprints: [
+            {
+              delta_fingerprint: "abc123",
+              recurrence_count: 2,
+              original_snippet: "original text one",
+              corrected_snippet: "corrected text one",
+            },
+          ],
+        }),
+      });
+    } else {
+      await route.continue();
+    }
+  });
+
+  let confirmCalled = false;
+  let confirmBody = null;
+  await page.route(/\/api\/corrections\/confirm-pattern$/, async (route) => {
+    if (route.request().method() === "POST") {
+      confirmCalled = true;
+      confirmBody = JSON.parse(route.request().postData() || "{}");
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ ok: true, confirmed_count: 2 }),
+      });
+    } else {
+      await route.continue();
+    }
+  });
+
+  await page.goto("/app-preview");
+  const result = await page.evaluate(async () => {
+    const res = await fetch("/api/corrections/confirm-pattern", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ delta_fingerprint: "abc123" }),
+    });
+    const data = await res.json();
+    return { ok: res.ok, confirmed_count: data.confirmed_count };
+  });
+  expect(result.ok).toBe(true);
+  expect(result.confirmed_count).toBe(2);
+});
+
 test("reviewed-memory loop: sync 후 활성화하면 이후 채팅 응답에 선호 반영 prefix가 붙습니다", async ({ page }) => {
   const sessionId = buildSessionId("reviewed-memory-loop");
   const preferenceStatement = `reviewed-memory loop accepted preference ${sessionId}`;

@@ -41,7 +41,7 @@ from storage.web_search_store import WebSearchStore
 
 
 from app.errors import WebApiError
-from app.handlers.aggregate import AggregateHandlerMixin
+from app.handlers.candidates import CandidateHandlerMixin
 from app.handlers.corrections import CorrectionHandlerMixin
 from app.handlers.feedback import FeedbackHandlerMixin
 from app.handlers.preferences import PreferenceHandlerMixin
@@ -98,7 +98,7 @@ def _effective_service_settings(settings: AppSettings) -> AppSettings:
 
 class WebAppService(
     ChatHandlerMixin,
-    AggregateHandlerMixin,
+    CandidateHandlerMixin,
     CorrectionHandlerMixin,
     ReviewedMemoryHandlerMixin,
     FeedbackHandlerMixin,

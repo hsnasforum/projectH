@@ -291,15 +291,26 @@ export default function PreferencePanel({ lastAppliedFingerprints = [] }: PanelP
               </span>
             )}
             {correctionSummary && correctionSummary.total > 0 && (
-              <p
-                data-testid="correction-summary-compact"
-                className="text-[10px] text-sidebar-muted/60 px-2"
-              >
-                교정 전체 {correctionSummary.total}개
-                {typeof correctionSummary.by_status["active"] === "number"
-                  ? ` · 활성 ${correctionSummary.by_status["active"]}개`
-                  : ""}
-              </p>
+              <>
+                <p
+                  data-testid="correction-summary-compact"
+                  className="text-[10px] text-sidebar-muted/60 px-2"
+                >
+                  교정 전체 {correctionSummary.total}개
+                  {typeof correctionSummary.by_status["active"] === "number"
+                    ? ` · 활성 ${correctionSummary.by_status["active"]}개`
+                    : ""}
+                </p>
+                {correctionSummary.top_recurring_fingerprints[0]?.original_snippet && (
+                  <p
+                    data-testid="correction-top-pattern"
+                    className="text-[10px] text-sidebar-muted/50 px-2 truncate"
+                    title={correctionSummary.top_recurring_fingerprints[0].original_snippet}
+                  >
+                    반복 교정: {correctionSummary.top_recurring_fingerprints[0].original_snippet.slice(0, 40)}
+                  </p>
+                )}
+              </>
             )}
           </span>
         </span>

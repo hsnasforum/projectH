@@ -1224,6 +1224,13 @@ dist 재빌드·E2E는 Axis 2 대상.
 
 Axis 2 (CONTROL_SEQ 1215): dist 재빌드 + data-testid + E2E 격리 — ACTIVE
 
+## M63 Correction Pattern Visibility
+
+Axis 1 (CONTROL_SEQ 1217): backend snippet 추가 + frontend top pattern 표시 — ACTIVE
+`get_correction_summary()` `original_snippet`/`corrected_snippet` 필드;
+`PreferencePanel.tsx` 반복 교정 패턴 compact 라인.
+dist 재빌드·E2E는 Axis 2 대상.
+
 ## Next 3 Implementation Priorities
 
 1. **M49–M59 shipped**: 선호도 주입·가시성·피드백·신뢰도 경고(M49-M52) + docs truth-sync(M53, M56, M59) + TypedDict 계약 시리즈(M54-M58: CorrectionRecord, PerPreferenceStats, PreferenceRecord, ArtifactRecord JSON+SQLite) 완료. PR #49 대기 중(feat/m50-axis1-axis2-pref-visibility).

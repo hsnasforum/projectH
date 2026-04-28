@@ -39,21 +39,32 @@ class AggregateHandlerMixin:
             by_status[status] = by_status.get(status, 0) + 1
 
         recurring = self.correction_store.find_recurring_patterns()
-        seen: dict[str, int] = {}
-        for rec in recurring:
+        top_raw = sorted(
+            recurring,
+            key=lambda x: int(x.get("recurrence_count") or 1),
+            reverse=True,
+        )[:5]
+        top_fps: list[dict[str, Any]] = []
+        for rec in top_raw:
             fp = str(rec.get("delta_fingerprint") or "")
-            if fp:
-                seen[fp] = max(seen.get(fp, 0), int(rec.get("recurrence_count") or 1))
-        top_patterns = sorted(seen.items(), key=lambda x: x[1], reverse=True)[:5]
+            if not fp:
+                continue
+            orig, corr = _first_correction_snippets(rec.get("corrections") or [])
+            entry: dict[str, Any] = {
+                "delta_fingerprint": fp,
+                "recurrence_count": int(rec.get("recurrence_count") or 1),
+            }
+            if orig:
+                entry["original_snippet"] = orig
+            if corr:
+                entry["corrected_snippet"] = corr
+            top_fps.append(entry)
 
         return {
             "ok": True,
             "total": total,
             "by_status": by_status,
-            "top_recurring_fingerprints": [
-                {"delta_fingerprint": fp, "recurrence_count": count}
-                for fp, count in top_patterns
-            ],
+            "top_recurring_fingerprints": top_fps,
         }
 
     def submit_candidate_confirmation(self, payload: dict[str, Any]) -> dict[str, Any]:

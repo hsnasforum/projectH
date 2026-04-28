@@ -313,7 +313,12 @@ export interface CorrectionSummary {
   ok: boolean;
   total: number;
   by_status: Record<string, number>;
-  top_recurring_fingerprints: { delta_fingerprint: string; recurrence_count: number }[];
+  top_recurring_fingerprints: {
+    delta_fingerprint: string;
+    recurrence_count: number;
+    original_snippet?: string;
+    corrected_snippet?: string;
+  }[];
 }
 
 export async function fetchPreferences(): Promise<PreferencesPayload> {

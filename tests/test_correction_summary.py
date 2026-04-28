@@ -54,13 +54,12 @@ class CorrectionSummaryTest(unittest.TestCase):
 
             self.assertEqual(payload["total"], 2)
             self.assertEqual(payload["by_status"], {"recorded": 2})
-            self.assertEqual(
-                payload["top_recurring_fingerprints"],
-                [{
-                    "delta_fingerprint": first["delta_fingerprint"],
-                    "recurrence_count": 2,
-                }],
-            )
+            fps = payload["top_recurring_fingerprints"]
+            self.assertEqual(len(fps), 1)
+            self.assertEqual(fps[0]["delta_fingerprint"], first["delta_fingerprint"])
+            self.assertEqual(fps[0]["recurrence_count"], 2)
+            self.assertEqual(fps[0].get("original_snippet"), "original text one")
+            self.assertEqual(fps[0].get("corrected_snippet"), "corrected text one")
 
 
 if __name__ == "__main__":

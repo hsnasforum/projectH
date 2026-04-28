@@ -66,6 +66,29 @@ class ArtifactStoreTest(unittest.TestCase):
             self.assertEqual(typed_record["saves"], [])
             self.assertIsInstance(typed_record, dict)
 
+    def test_sqlite_artifact_store_create_returns_typed_fields(self) -> None:
+        from storage.sqlite_store import SQLiteArtifactStore, SQLiteDatabase
+
+        with TemporaryDirectory() as tmp:
+            db = SQLiteDatabase(str(Path(tmp) / "projecth.db"))
+            try:
+                store = SQLiteArtifactStore(db)
+                record = store.create(
+                    artifact_id="art-sqlite-typed",
+                    artifact_kind="grounded_brief",
+                    session_id="sess-sqlite-typed",
+                    source_message_id="msg-sqlite-typed",
+                    draft_text="sqlite test draft",
+                )
+
+                typed_record: ArtifactRecord = record
+                self.assertEqual(typed_record["artifact_id"], "art-sqlite-typed")
+                self.assertEqual(typed_record["artifact_kind"], "grounded_brief")
+                self.assertEqual(typed_record["session_id"], "sess-sqlite-typed")
+                self.assertIsInstance(typed_record, dict)
+            finally:
+                db.close()
+
     def test_get_nonexistent_returns_none(self) -> None:
         with TemporaryDirectory() as tmp:
             store = self._make_store(tmp)

@@ -18,6 +18,7 @@ from typing import Any
 from uuid import uuid4
 
 from core.contracts import (
+    ArtifactRecord,
     CandidateFamily,
     CORRECTION_STATUS_TRANSITIONS,
     CorrectionRecord,
@@ -421,7 +422,7 @@ class SQLiteArtifactStore:
                source_message_id: str, draft_text: str, source_paths: list[str] | None = None,
                response_origin: dict[str, Any] | None = None,
                summary_chunks: list[dict[str, Any]] | None = None,
-               evidence: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+               evidence: list[dict[str, Any]] | None = None) -> ArtifactRecord:
         now = _now_iso()
         data = {
             "draft_text": draft_text,
@@ -440,7 +441,7 @@ class SQLiteArtifactStore:
         self._db.commit()
         return {"artifact_id": artifact_id, "artifact_kind": artifact_kind, "session_id": session_id, **data, "created_at": now}
 
-    def get(self, artifact_id: str) -> dict[str, Any] | None:
+    def get(self, artifact_id: str) -> ArtifactRecord | None:
         row = self._db.fetchone("SELECT * FROM artifacts WHERE artifact_id = ?", (artifact_id,))
         if not row:
             return None
@@ -448,11 +449,11 @@ class SQLiteArtifactStore:
         data.update({"artifact_id": row["artifact_id"], "artifact_kind": row["artifact_kind"], "session_id": row["session_id"], "created_at": row["created_at"], "updated_at": row["updated_at"]})
         return data
 
-    def list_by_session(self, session_id: str) -> list[dict[str, Any]]:
+    def list_by_session(self, session_id: str) -> list[ArtifactRecord]:
         rows = self._db.fetchall("SELECT * FROM artifacts WHERE session_id = ? ORDER BY created_at DESC", (session_id,))
         return [{"artifact_id": r["artifact_id"], **json.loads(r["data"]), "created_at": r["created_at"]} for r in rows]
 
-    def list_recent(self, limit: int = 20) -> list[dict[str, Any]]:
+    def list_recent(self, limit: int = 20) -> list[ArtifactRecord]:
         rows = self._db.fetchall("SELECT * FROM artifacts ORDER BY created_at DESC LIMIT ?", (limit,))
         return [{"artifact_id": r["artifact_id"], **json.loads(r["data"]), "created_at": r["created_at"]} for r in rows]
 

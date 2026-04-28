@@ -497,6 +497,13 @@ class ArtifactRecord(TypedDict, total=False):
     content_verdict: str | None
 
 
+class TaskLogEntry(TypedDict, total=False):
+    ts: str
+    session_id: str
+    action: str
+    detail: dict[str, Any]
+
+
 # ---------------------------------------------------------------------------
 # Preference lifecycle (cross-session)
 # ---------------------------------------------------------------------------

@@ -5,6 +5,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict
 
+from core.contracts import TaskLogEntry
+
 
 class TaskLogger:
     def __init__(self, path: str = "logs/task_log.jsonl") -> None:
@@ -21,11 +23,11 @@ class TaskLogger:
         with self.path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
 
-    def iter_session_records(self, session_id: str) -> list[Dict[str, Any]]:
+    def iter_session_records(self, session_id: str) -> list[TaskLogEntry]:
         normalized = (session_id or "").strip() or None
         if normalized is None or not self.path.exists():
             return []
-        records: list[Dict[str, Any]] = []
+        records: list[TaskLogEntry] = []
         with self.path.open("r", encoding="utf-8") as f:
             for raw_line in f:
                 line = raw_line.strip()

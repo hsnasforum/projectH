@@ -103,6 +103,17 @@ export default function App() {
     }
   }, [chat.sessionId, chat.loadSession, addToast]);
 
+  const lastAppliedFingerprints: string[] = (() => {
+    const msgs = chat.messages;
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      const appliedPreferences = msgs[i].applied_preferences;
+      if (msgs[i].role === "assistant" && appliedPreferences?.length) {
+        return appliedPreferences.map((pref) => pref.fingerprint);
+      }
+    }
+    return [];
+  })();
+
   return (
     <div className="flex h-screen overflow-hidden bg-warm-50">
       {/* Overlay for mobile */}
@@ -122,6 +133,7 @@ export default function App() {
         settings={settings}
         reviewQueueItems={chat.reviewQueueItems}
         reviewQueueCount={chat.reviewQueueCount}
+        lastAppliedFingerprints={lastAppliedFingerprints}
         onSelectSession={chat.switchSession}
         onNewSession={chat.newSession}
         onDeleteSession={chat.deleteSession}

@@ -28,6 +28,10 @@ type PreferenceReliabilityTotals = {
   corrected: number;
 };
 
+interface PanelProps {
+  lastAppliedFingerprints?: string[];
+}
+
 function preferenceReliabilityCounts(pref: PreferenceRecord) {
   const appliedCount = pref.reliability_stats?.applied_count;
   const correctedCount = pref.reliability_stats?.corrected_count;
@@ -45,7 +49,7 @@ function isActiveHighlyReliablePreference(pref: PreferenceRecord) {
   return pref.status === "active" && pref.is_highly_reliable === true;
 }
 
-export default function PreferencePanel() {
+export default function PreferencePanel({ lastAppliedFingerprints = [] }: PanelProps) {
   const [preferences, setPreferences] = useState<PreferenceRecord[]>([]);
   const [audit, setAudit] = useState<PreferenceAudit | null>(null);
   const [loading, setLoading] = useState(false);
@@ -204,6 +208,7 @@ export default function PreferencePanel() {
   const adoptedCorrectionsCount = audit?.adopted_corrections_count ?? 0;
   const availableToSyncCount = audit?.available_to_sync_count ?? 0;
   const canSyncAdoptedCorrections = availableToSyncCount > 0;
+  const appliedSet = new Set(lastAppliedFingerprints);
 
   if (loading && preferences.length === 0) {
     return (
@@ -343,7 +348,7 @@ export default function PreferencePanel() {
                 `}
               >
                 {/* Status + evidence */}
-                <div className="flex items-center gap-1.5 mb-1">
+                <div className="flex flex-wrap items-center gap-1.5 mb-1">
                   <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded-full ${STATUS_COLORS[pref.status] ?? "bg-stone-100 text-stone-500"}`}>
                     {STATUS_LABELS[pref.status] ?? pref.status}
                   </span>
@@ -358,6 +363,14 @@ export default function PreferencePanel() {
                   {isHighlyReliable && (
                     <span className="inline-flex items-center rounded-full bg-emerald-500/15 px-1 py-0.5 text-[9px] font-semibold text-emerald-300">
                       신뢰도 높음
+                    </span>
+                  )}
+                  {pref.status === "active" && appliedSet.has(pref.delta_fingerprint ?? "") && (
+                    <span
+                      data-testid="preference-last-applied-badge"
+                      className="text-[9px] font-medium text-violet-500 bg-violet-50 px-1.5 py-0.5 rounded-full"
+                    >
+                      이번 응답 반영
                     </span>
                   )}
                   {pref.conflict_info?.has_conflict && (

@@ -1101,6 +1101,13 @@ Axis 3 (CONTROL_SEQ 1159): summarization 주입 + 웹 조사 제외 — ACTIVE
 `_is_web=True`이면 context-answer 경로에 `active_preferences=None` 전달.
 단위 테스트 포함.
 
+## M50 Preference Injection Visibility
+
+Axis 1 (CONTROL_SEQ 1163): PreferencePanel 이번 응답 반영 표시 — ACTIVE
+마지막 assistant 응답의 applied_preferences fingerprint를 Sidebar → PreferencePanel로 전달;
+ACTIVE 선호도 카드에 "이번 응답 반영" 배지(data-testid="preference-last-applied-badge")를 표시.
+백엔드·approval·스토리지 변경 없음. dist 재빌드 포함 안 됨(다음 슬라이스 대상).
+
 ## Next 3 Implementation Priorities
 
 1. **E2E 환경 개선 완료**: `e2e/start-server.sh` healthcheck wrapper no-server / existing-server 두 경로가 정적 감사(09c806d)로 확인됨. operator가 검증 수준을 release gate로 인정(Q1 Option A, operator_request 263). B1 gate closed (2026-04-26).

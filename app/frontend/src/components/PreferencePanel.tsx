@@ -28,6 +28,10 @@ type PreferenceReliabilityTotals = {
   corrected: number;
 };
 
+interface PanelProps {
+  lastAppliedFingerprints?: string[];
+}
+
 function preferenceReliabilityCounts(pref: PreferenceRecord) {
   const appliedCount = pref.reliability_stats?.applied_count;
   const correctedCount = pref.reliability_stats?.corrected_count;
@@ -45,7 +49,18 @@ function isActiveHighlyReliablePreference(pref: PreferenceRecord) {
   return pref.status === "active" && pref.is_highly_reliable === true;
 }
 
-export default function PreferencePanel() {
+function isActiveLowReliabilityPreference(pref: PreferenceRecord) {
+  const appliedCount = pref.reliability_stats?.applied_count;
+  return (
+    pref.status === "active" &&
+    typeof appliedCount === "number" &&
+    Number.isFinite(appliedCount) &&
+    appliedCount >= 3 &&
+    pref.is_highly_reliable !== true
+  );
+}
+
+export default function PreferencePanel({ lastAppliedFingerprints = [] }: PanelProps) {
   const [preferences, setPreferences] = useState<PreferenceRecord[]>([]);
   const [audit, setAudit] = useState<PreferenceAudit | null>(null);
   const [loading, setLoading] = useState(false);
@@ -63,6 +78,7 @@ export default function PreferencePanel() {
   const [highQualityActiveCount, setHighQualityActiveCount] = useState(0);
   const [highlyReliableActiveCount, setHighlyReliableActiveCount] = useState(0);
   const [highSeverityConflictCount, setHighSeverityConflictCount] = useState(0);
+  const [lowReliabilityActiveCount, setLowReliabilityActiveCount] = useState(0);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -97,6 +113,11 @@ export default function PreferencePanel() {
         typeof data.highly_reliable_active_count === "number" && Number.isFinite(data.highly_reliable_active_count)
           ? data.highly_reliable_active_count
           : visible.filter(isActiveHighlyReliablePreference).length,
+      );
+      setLowReliabilityActiveCount(
+        typeof data.low_reliability_active_count === "number" && Number.isFinite(data.low_reliability_active_count)
+          ? data.low_reliability_active_count
+          : visible.filter(isActiveLowReliabilityPreference).length,
       );
       const dataWithConflict = data as typeof data & { high_severity_conflict_count?: number | null };
       setHighSeverityConflictCount(
@@ -204,6 +225,7 @@ export default function PreferencePanel() {
   const adoptedCorrectionsCount = audit?.adopted_corrections_count ?? 0;
   const availableToSyncCount = audit?.available_to_sync_count ?? 0;
   const canSyncAdoptedCorrections = availableToSyncCount > 0;
+  const appliedSet = new Set(lastAppliedFingerprints);
 
   if (loading && preferences.length === 0) {
     return (
@@ -251,6 +273,15 @@ export default function PreferencePanel() {
                 {highSeverityConflictCount > 0 && (
                   <span data-testid="high-severity-conflict-count">
                     {` · 충돌 위험 ${highSeverityConflictCount}건`}
+                  </span>
+                )}
+                {lowReliabilityActiveCount > 0 && (
+                  <span
+                    data-testid="low-reliability-count"
+                    className="text-[10px] font-semibold text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full"
+                    title="교정 비율이 높아 현재 응답에 주입되지 않는 활성 선호가 있습니다"
+                  >
+                    {`신뢰도 저하 ${lowReliabilityActiveCount}건`}
                   </span>
                 )}
               </span>
@@ -343,7 +374,7 @@ export default function PreferencePanel() {
                 `}
               >
                 {/* Status + evidence */}
-                <div className="flex items-center gap-1.5 mb-1">
+                <div className="flex flex-wrap items-center gap-1.5 mb-1">
                   <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded-full ${STATUS_COLORS[pref.status] ?? "bg-stone-100 text-stone-500"}`}>
                     {STATUS_LABELS[pref.status] ?? pref.status}
                   </span>
@@ -358,6 +389,22 @@ export default function PreferencePanel() {
                   {isHighlyReliable && (
                     <span className="inline-flex items-center rounded-full bg-emerald-500/15 px-1 py-0.5 text-[9px] font-semibold text-emerald-300">
                       신뢰도 높음
+                    </span>
+                  )}
+                  {pref.status === "active" && !isHighlyReliable && reliability.applied >= 3 && (
+                    <span
+                      data-testid="preference-low-reliability-badge"
+                      className="inline-flex items-center rounded-full bg-amber-500/15 px-1 py-0.5 text-[9px] font-semibold text-amber-400"
+                    >
+                      신뢰도 저하
+                    </span>
+                  )}
+                  {pref.status === "active" && appliedSet.has(pref.delta_fingerprint ?? "") && (
+                    <span
+                      data-testid="preference-last-applied-badge"
+                      className="text-[9px] font-medium text-violet-500 bg-violet-50 px-1.5 py-0.5 rounded-full"
+                    >
+                      이번 응답 반영
                     </span>
                   )}
                   {pref.conflict_info?.has_conflict && (

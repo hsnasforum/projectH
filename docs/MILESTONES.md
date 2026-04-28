@@ -1101,10 +1101,105 @@ Axis 3 (CONTROL_SEQ 1159): summarization 주입 + 웹 조사 제외 — ACTIVE
 `_is_web=True`이면 context-answer 경로에 `active_preferences=None` 전달.
 단위 테스트 포함.
 
+## M50 Preference Injection Visibility
+
+Axis 1 (CONTROL_SEQ 1163): PreferencePanel 이번 응답 반영 표시 — ACTIVE
+마지막 assistant 응답의 applied_preferences fingerprint를 Sidebar → PreferencePanel로 전달;
+ACTIVE 선호도 카드에 "이번 응답 반영" 배지(data-testid="preference-last-applied-badge")를 표시.
+백엔드·approval·스토리지 변경 없음. dist 재빌드 포함 안 됨(다음 슬라이스 대상).
+
+Axis 2 (CONTROL_SEQ 1167): corrected_count 집계 범위 확장 — ACTIVE
+session_store 크로스-세션 집계에서 artifact_kind 제한 제거;
+applied_preference_ids + corrected_text 조합이면 grounded_brief 외 chat 응답도 corrected_count 산입.
+단위 테스트 포함.
+
+Axis 3 (CONTROL_SEQ 1169): 명시적 선호도 교정 엔드포인트 (backend) — ACTIVE
+POST /api/preferences/record-correction → session message의 preference_correction_events에 기록;
+session_store scanner가 corrected_count에 산입. 프론트엔드 버튼은 다음 슬라이스(Axis 3b).
+
+## M51 Preference Reliability Warning
+
+Axis 1 (CONTROL_SEQ 1172): 신뢰도 저하 활성 선호 경고 — ACTIVE
+applied_count >= 3이고 is_highly_reliable=False인 ACTIVE 선호를 low_reliability_active_count로
+집계; PreferencePanel에 "신뢰도 저하 N건" 배지(data-testid="low-reliability-count") 표시.
+단위 테스트 20개 OK.
+
+Axis 2 (CONTROL_SEQ 1173): dist 재빌드 + E2E 격리 시나리오 — ACTIVE
+vite 재빌드(313.44 kB); Playwright isolated 1 passed (8.3s).
+
+## M52 Preference Card Visibility
+
+Axis 1 (CONTROL_SEQ 1174): 개별 선호 카드 신뢰도 저하 배지 — ACTIVE
+PreferencePanel 개별 카드에 data-testid="preference-low-reliability-badge" 추가;
+status=active + is_highly_reliable=false + applied_count>=3 조건.
+dist 재빌드·E2E는 Axis 2 대상.
+
+## M54 Structured Correction Memory
+
+Axis 1 (CONTROL_SEQ 1180): CorrectionRecord TypedDict — ACTIVE
+`core/contracts.py`에 `CorrectionRecord(TypedDict, total=False)` 22개 필드 추가;
+`correction_store.py` 반환 타입 annotation 업데이트. 단위 테스트 포함.
+
+Axis 2 (CONTROL_SEQ 1181): SQLiteCorrectionStore 반환 타입 통일 — ACTIVE
+`storage/sqlite_store.py` `SQLiteCorrectionStore`의 7개 메서드 반환 타입을
+`CorrectionRecord | None` 또는 `list[CorrectionRecord]`로 업데이트. 단위 테스트 포함.
+
+## M55 Preference Stats Schema
+
+Axis 1 (CONTROL_SEQ 1183): PerPreferenceStats TypedDict — ACTIVE
+`core/contracts.py`에 `PerPreferenceStats(TypedDict, total=False)` 추가 (applied_count, corrected_count);
+`preference_utils.py` `enrich_preference_reliability()` 파라미터 타입 힌트 강화.
+session_store.py setdefault dict 리터럴 타입 수정은 Axis 2 대상.
+
+Axis 2 (CONTROL_SEQ 1184): session_store.py setdefault annotation — ACTIVE
+`per_preference_stats.setdefault()` 반환값 `pstats`/`event_stats` 로컬 변수에
+`PerPreferenceStats` annotation 추가. 타입 생성→소비 체인 완성.
+
+## M56 TASK_BACKLOG Truth Sync
+
+Axis 1 (CONTROL_SEQ 1185/1186): TASK_BACKLOG 현행화 — ACTIVE
+line 9 "next phase target" Remaining 갱신 (M54-M55 TypedDict 완료 반영);
+"Not Implemented" item 3 "structured correction-memory schema" → "correction-memory schema — partial" 수정.
+verify/triage 라운드에서 직접 실행 (implementation scope conflict 해소).
+
+Axis 2 (CONTROL_SEQ 1186): CorrectionStore list 반환 annotation — ACTIVE
+`storage/correction_store.py`의 list/query 반환 annotation을
+`list[CorrectionRecord]`로 통일. 저장 로직 변경 없음.
+
+## M57 Preference Type Schema
+
+Axis 1 (CONTROL_SEQ 1187): PreferenceRecord TypedDict — ACTIVE
+`core/contracts.py`에 `PreferenceRecord(TypedDict, total=False)` 추가;
+`preference_store.py` 반환 타입 통일.
+
+Axis 2 (CONTROL_SEQ 1188): SQLitePreferenceStore 반환 타입 통일 — ACTIVE
+`storage/sqlite_store.py` `SQLitePreferenceStore`의 8개 메서드 반환 타입을
+`PreferenceRecord | None` 또는 `list[PreferenceRecord]`로 업데이트.
+
+## M58 Artifact Type Schema
+
+Axis 1 (CONTROL_SEQ 1191): ArtifactRecord TypedDict — ACTIVE
+`core/contracts.py`에 `ArtifactRecord(TypedDict, total=False)` 15개 필드 추가;
+`artifact_store.py` 7개 메서드 반환 타입 annotation 업데이트.
+SQLiteArtifactStore는 Axis 2 대상.
+
+Axis 2 (CONTROL_SEQ 1192): SQLiteArtifactStore 반환 타입 통일 — ACTIVE
+`storage/sqlite_store.py` `SQLiteArtifactStore`의 4개 메서드 반환 타입을
+`ArtifactRecord` 또는 `list[ArtifactRecord]`로 업데이트.
+
+## M59 TASK_BACKLOG Truth Sync
+
+Axis 1 (CONTROL_SEQ 1193): TASK_BACKLOG M56-M58 반영 — ACTIVE
+TASK_BACKLOG line 9 Remaining: M57 PreferenceRecord + M58 ArtifactRecord 추가;
+Not Implemented item 3: M57-M58 TypedDict 계약 반영.
+
+Axis 2 (CONTROL_SEQ 1195): MILESTONES M59 항목 + Next Priorities 갱신 — ACTIVE
+TypedDict 시리즈(M54-M58) 완료 후 MILESTONES 정리 및 자연 종착점 기록.
+
 ## Next 3 Implementation Priorities
 
-1. **E2E 환경 개선 완료**: `e2e/start-server.sh` healthcheck wrapper no-server / existing-server 두 경로가 정적 감사(09c806d)로 확인됨. operator가 검증 수준을 release gate로 인정(Q1 Option A, operator_request 263). B1 gate closed (2026-04-26).
-2. **M48 Axis 1+2 shipped**: Preference conflict payload now includes `conflict_severity` (`"high"` / `"normal"` / `"none"`) from per-preference `is_highly_reliable`; `/api/preferences` also includes active-only `high_severity_conflict_count`; `PreferencePanel` elevates only high-severity conflict badges and shows `충돌 위험 N건` with `data-testid="high-severity-conflict-count"` when the aggregate is greater than zero, while preserving existing `has_conflict` / `conflicting_preference_ids`, approval, and storage boundaries.
+1. **M49–M59 shipped**: 선호도 주입·가시성·피드백·신뢰도 경고(M49-M52) + docs truth-sync(M53, M56, M59) + TypedDict 계약 시리즈(M54-M58: CorrectionRecord, PerPreferenceStats, PreferenceRecord, ArtifactRecord JSON+SQLite) 완료. PR #49 대기 중(feat/m50-axis1-axis2-pref-visibility).
+2. **PR 머지 백로그**: operator_request CONTROL_SEQ 1190 — #47 (M47/M48) → #48 (M49 Axis 3) → #49 (M50–M59) 순서 대기 중. 머지 후 main 기준 새 브랜치에서 M60+ 시작.
 
 ## Do Not Pull Forward
 

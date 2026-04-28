@@ -12108,6 +12108,287 @@ test("reviewed-memory loop: sync 후 활성화하면 이후 채팅 응답에 선
   await expect(page.getByTestId("applied-preferences-badge").first()).toBeVisible();
 });
 
+test("reviewed-memory loop: 활성화된 선호가 PreferencePanel 이번 응답 반영 배지에 표시됩니다", async ({ page }) => {
+  const preferenceId = "pref-last-applied-panel";
+  const preferenceFingerprint = "sha256:last-applied-panel";
+  const preferenceDescription = "PreferencePanel 이번 응답 반영 배지 테스트 선호";
+  let preferenceStatus = "candidate";
+  let syncRequests = 0;
+
+  const preferencePayload = () => ({
+    preference_id: preferenceId,
+    delta_fingerprint: preferenceFingerprint,
+    description: preferenceDescription,
+    status: preferenceStatus,
+    evidence_count: 3,
+    cross_session_count: 1,
+    reliability_stats: { applied_count: 3, corrected_count: 0 },
+    quality_info: { avg_similarity_score: 0.94, is_high_quality: true },
+    is_highly_reliable: preferenceStatus === "active",
+    conflict_info: null,
+    activated_at: preferenceStatus === "active" ? "2026-04-28T00:00:00Z" : null,
+    created_at: "2026-04-28T00:00:00Z",
+    updated_at: "2026-04-28T00:00:00Z",
+  });
+
+  await page.route(/\/api\/preferences$/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: true,
+        preferences: [preferencePayload()],
+        active_count: preferenceStatus === "active" ? 1 : 0,
+        candidate_count: preferenceStatus === "candidate" ? 1 : 0,
+        paused_count: 0,
+        total_applied: preferenceStatus === "active" ? 3 : 0,
+        total_corrected: 0,
+        high_quality_active_count: preferenceStatus === "active" ? 1 : 0,
+        highly_reliable_active_count: preferenceStatus === "active" ? 1 : 0,
+        high_severity_conflict_count: 0,
+      }),
+    });
+  });
+  await page.route(/\/api\/preferences\/audit$/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: true,
+        audit: {
+          total: 1,
+          by_status: {
+            active: preferenceStatus === "active" ? 1 : 0,
+            candidate: preferenceStatus === "candidate" ? 1 : 0,
+          },
+          conflict_pair_count: 0,
+          adopted_corrections_count: 1,
+          available_to_sync_count: syncRequests === 0 ? 1 : 0,
+        },
+      }),
+    });
+  });
+  await page.route(/\/api\/corrections\/sync-adopted-to-candidates$/, async (route) => {
+    syncRequests += 1;
+    expect(route.request().method()).toBe("POST");
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ ok: true, synced_count: 1, skipped_count: 0 }),
+    });
+  });
+  await page.route(/\/api\/preferences\/activate$/, async (route) => {
+    preferenceStatus = "active";
+    expect(route.request().method()).toBe("POST");
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ ok: true, preference: preferencePayload() }),
+    });
+  });
+  await page.route(/\/api\/chat\/stream$/, async (route) => {
+    const responseText = "[모의 응답, 선호 1건 반영] 활성화된 선호가 반영된 응답입니다.";
+    const messageId = `msg-last-applied-${Date.now().toString(36)}`;
+    await route.fulfill({
+      status: 200,
+      contentType: "application/x-ndjson",
+      body: [
+        JSON.stringify({
+          event: "text_delta",
+          text: responseText,
+        }),
+        JSON.stringify({
+          event: "final",
+          data: {
+            ok: true,
+            response: {
+              message_id: messageId,
+              status: "answer",
+              text: responseText,
+              response_origin: {
+                provider: "mock",
+                badge: "MOCK",
+                label: "모의 데모 응답",
+                kind: "chat",
+              },
+              applied_preferences: [
+                {
+                  description: preferenceDescription,
+                  fingerprint: preferenceFingerprint,
+                },
+              ],
+            },
+          },
+        }),
+        "",
+      ].join("\n"),
+    });
+  });
+
+  await page.goto("/app-preview");
+  await expect(page.getByText("선호 기억")).toBeVisible({ timeout: 10_000 });
+
+  const syncButton = page.getByTestId("sync-adopted-btn");
+  await expect(syncButton).toBeVisible({ timeout: 10_000 });
+  await syncButton.click();
+  await expect(page.getByTestId("sync-adopted-status")).toHaveText("1개 동기화됨");
+  await expect(syncButton).toBeHidden();
+  expect(syncRequests).toBe(1);
+
+  page.once("dialog", async (dialog) => {
+    await dialog.accept("");
+  });
+  await page.getByRole("button", { name: "활성화" }).click();
+  await expect(page.getByText("신뢰도 높음").first()).toBeVisible({ timeout: 10_000 });
+
+  await page.getByRole("button", { name: /설정/ }).click();
+  await page.getByLabel("프로바이더").selectOption("mock");
+
+  await page.getByPlaceholder(/메시지를 입력하세요/).fill("PreferencePanel 배지 표시를 확인해 주세요.");
+  await page.getByTitle("전송").click();
+
+  await expect(page.getByTestId("applied-preferences-badge").first()).toBeVisible({
+    timeout: 10_000,
+  });
+  await expect(page.getByTestId("preference-last-applied-badge").first()).toBeVisible({
+    timeout: 5_000,
+  });
+});
+
+test("reviewed-memory loop: preference-not-applied-btn 클릭 시 record-correction이 호출됩니다", async ({ page }) => {
+  const preferenceId = "pref-record-correction";
+  const preferenceFingerprint = "sha256:record-correction";
+  const preferenceDescription = "record-correction 버튼 테스트 선호";
+  const responseMessageId = `msg-record-correction-${Date.now().toString(36)}`;
+  const recordCorrectionRequests = [];
+
+  const preferencePayload = () => ({
+    preference_id: preferenceId,
+    delta_fingerprint: preferenceFingerprint,
+    description: preferenceDescription,
+    status: "active",
+    evidence_count: 3,
+    cross_session_count: 1,
+    reliability_stats: { applied_count: 3, corrected_count: 0 },
+    quality_info: { avg_similarity_score: 0.94, is_high_quality: true },
+    is_highly_reliable: true,
+    conflict_info: null,
+    activated_at: "2026-04-28T00:00:00Z",
+    created_at: "2026-04-28T00:00:00Z",
+    updated_at: "2026-04-28T00:00:00Z",
+  });
+
+  await page.route(/\/api\/preferences$/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: true,
+        preferences: [preferencePayload()],
+        active_count: 1,
+        candidate_count: 0,
+        paused_count: 0,
+        total_applied: 3,
+        total_corrected: 0,
+        high_quality_active_count: 1,
+        highly_reliable_active_count: 1,
+        high_severity_conflict_count: 0,
+      }),
+    });
+  });
+  await page.route(/\/api\/preferences\/audit$/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: true,
+        audit: {
+          total: 1,
+          by_status: { active: 1, candidate: 0 },
+          conflict_pair_count: 0,
+          adopted_corrections_count: 0,
+          available_to_sync_count: 0,
+        },
+      }),
+    });
+  });
+  await page.route(/\/api\/preferences\/activate$/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ ok: true, preference: preferencePayload() }),
+    });
+  });
+  await page.route(/\/api\/preferences\/record-correction$/, async (route) => {
+    expect(route.request().method()).toBe("POST");
+    recordCorrectionRequests.push(route.request().postDataJSON());
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ ok: true }),
+    });
+  });
+  await page.route(/\/api\/chat\/stream$/, async (route) => {
+    const responseText = "[모의 응답, 선호 1건 반영] 선호 교정 버튼 테스트 응답입니다.";
+    await route.fulfill({
+      status: 200,
+      contentType: "application/x-ndjson",
+      body: [
+        JSON.stringify({
+          event: "text_delta",
+          text: responseText,
+        }),
+        JSON.stringify({
+          event: "final",
+          data: {
+            ok: true,
+            response: {
+              message_id: responseMessageId,
+              status: "answer",
+              text: responseText,
+              response_origin: {
+                provider: "mock",
+                badge: "MOCK",
+                label: "모의 데모 응답",
+                kind: "chat",
+              },
+              applied_preferences: [
+                {
+                  description: preferenceDescription,
+                  fingerprint: preferenceFingerprint,
+                },
+              ],
+            },
+          },
+        }),
+        "",
+      ].join("\n"),
+    });
+  });
+
+  await page.goto("/app-preview");
+  await page.getByRole("button", { name: /설정/ }).click();
+  await page.getByLabel("프로바이더").selectOption("mock");
+
+  await page.getByPlaceholder(/메시지를 입력하세요/).fill("선호 교정 버튼 호출을 확인해 주세요.");
+  await page.getByTitle("전송").click();
+
+  const badge = page.getByTestId("applied-preferences-badge").first();
+  await expect(badge).toBeVisible({ timeout: 10_000 });
+  await badge.click();
+
+  const notAppliedButton = page.getByTestId("preference-not-applied-btn").first();
+  await expect(notAppliedButton).toBeVisible({ timeout: 5_000 });
+  await notAppliedButton.click();
+
+  await expect.poll(() => recordCorrectionRequests.length).toBe(1);
+  expect(recordCorrectionRequests[0]).toMatchObject({
+    session_id: "demo-session",
+    message_id: responseMessageId,
+    fingerprint: preferenceFingerprint,
+  });
+});
+
 test("reviewed-memory loop: badge 클릭 시 popover가 열리고 선호를 일시중지할 수 있습니다", async ({ page }) => {
   const sessionId = buildSessionId("reviewed-memory-badge-pause");
   const preferenceStatement = `reviewed-memory badge pause accepted preference ${sessionId}`;
@@ -12517,6 +12798,141 @@ test("PreferencePanel 헤더에 충돌 위험 N건이 표시됩니다 (M48 A2 hi
   const conflictCountSpan = page.getByTestId("high-severity-conflict-count");
   await expect(conflictCountSpan).toBeVisible({ timeout: 10_000 });
   await expect(conflictCountSpan).toContainText("충돌 위험 1건");
+});
+
+test("reviewed-memory loop: low-reliability-count 배지가 신뢰도 저하 활성 선호 존재 시 표시됩니다", async ({ page }) => {
+  await page.route(/\/api\/preferences$/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: true,
+        preferences: [
+          {
+            preference_id: "pref-low-reliability-header-test",
+            delta_fingerprint: "sha256:low-reliability-header-test",
+            description: "신뢰도 저하 헤더 테스트 선호",
+            status: "active",
+            evidence_count: 3,
+            cross_session_count: 1,
+            reliability_stats: { applied_count: 5, corrected_count: 2 },
+            quality_info: { avg_similarity_score: 0.9, is_high_quality: true },
+            is_highly_reliable: false,
+            conflict_info: null,
+            activated_at: "2026-04-28T00:00:00Z",
+            created_at: "2026-04-28T00:00:00Z",
+            updated_at: "2026-04-28T00:00:00Z",
+          },
+        ],
+        active_count: 1,
+        candidate_count: 0,
+        paused_count: 0,
+        total_applied: 5,
+        total_corrected: 2,
+        high_quality_active_count: 1,
+        highly_reliable_active_count: 0,
+        high_severity_conflict_count: 0,
+        low_reliability_active_count: 1,
+      }),
+    });
+  });
+  await page.route(/\/api\/preferences\/audit$/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: true,
+        audit: {
+          total: 1,
+          by_status: { active: 1, candidate: 0 },
+          conflict_pair_count: 0,
+          adopted_corrections_count: 0,
+          available_to_sync_count: 0,
+        },
+      }),
+    });
+  });
+
+  await page.goto("/app-preview");
+  await expect(page.getByText("선호 기억")).toBeVisible({ timeout: 5_000 });
+  const lowReliabilityCount = page.getByTestId("low-reliability-count");
+  await expect(lowReliabilityCount).toBeVisible({ timeout: 5_000 });
+  await expect(lowReliabilityCount).toHaveText(/신뢰도 저하 \d+건/);
+});
+
+test("reviewed-memory loop: preference-low-reliability-badge가 신뢰도 저하 활성 선호 카드에 표시됩니다", async ({ page }) => {
+  await page.route(/\/api\/preferences$/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: true,
+        preferences: [
+          {
+            preference_id: "pref-low-reliability-card-test",
+            delta_fingerprint: "sha256:low-reliability-card-test",
+            description: "신뢰도 저하 카드 테스트 선호",
+            status: "active",
+            evidence_count: 3,
+            cross_session_count: 1,
+            reliability_stats: { applied_count: 5, corrected_count: 2 },
+            quality_info: { avg_similarity_score: 0.9, is_high_quality: true },
+            is_highly_reliable: false,
+            conflict_info: null,
+            activated_at: "2026-04-28T00:00:00Z",
+            created_at: "2026-04-28T00:00:00Z",
+            updated_at: "2026-04-28T00:00:00Z",
+          },
+          {
+            preference_id: "pref-low-reliability-measuring-test",
+            delta_fingerprint: "sha256:low-reliability-measuring-test",
+            description: "신뢰도 측정 중 카드 테스트 선호",
+            status: "active",
+            evidence_count: 2,
+            cross_session_count: 1,
+            reliability_stats: { applied_count: 2, corrected_count: 1 },
+            quality_info: { avg_similarity_score: 0.9, is_high_quality: true },
+            is_highly_reliable: false,
+            conflict_info: null,
+            activated_at: "2026-04-28T00:00:00Z",
+            created_at: "2026-04-28T00:00:00Z",
+            updated_at: "2026-04-28T00:00:00Z",
+          },
+        ],
+        active_count: 2,
+        candidate_count: 0,
+        paused_count: 0,
+        total_applied: 7,
+        total_corrected: 3,
+        high_quality_active_count: 2,
+        highly_reliable_active_count: 0,
+        high_severity_conflict_count: 0,
+        low_reliability_active_count: 1,
+      }),
+    });
+  });
+  await page.route(/\/api\/preferences\/audit$/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: true,
+        audit: {
+          total: 2,
+          by_status: { active: 2, candidate: 0 },
+          conflict_pair_count: 0,
+          adopted_corrections_count: 0,
+          available_to_sync_count: 0,
+        },
+      }),
+    });
+  });
+
+  await page.goto("/app-preview");
+  await expect(page.getByText("선호 기억")).toBeVisible({ timeout: 5_000 });
+  const lowReliabilityBadge = page.getByTestId("preference-low-reliability-badge");
+  await expect(lowReliabilityBadge).toHaveCount(1, { timeout: 5_000 });
+  await expect(lowReliabilityBadge).toContainText("신뢰도 저하");
 });
 
 test("PreferencePanel 헤더에 신뢰도 높음 N개가 표시됩니다 (M47 highly_reliable_active_count)", async ({ page }) => {

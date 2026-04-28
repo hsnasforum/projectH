@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from core.delta_analysis import is_high_quality
+from core.contracts import PerPreferenceStats
 
 
 def preference_fingerprint(preference: Mapping[str, Any]) -> str:
@@ -55,7 +56,7 @@ def _quality_info_from_score(avg_score: Any) -> dict[str, float | bool | None]:
 
 def enrich_preference_reliability(
     preference: Mapping[str, Any],
-    per_preference_stats: Mapping[str, Any] | None = None,
+    per_preference_stats: Mapping[str, PerPreferenceStats] | None = None,
 ) -> dict[str, Any]:
     pref_copy = dict(preference)
     fingerprint = preference_fingerprint(pref_copy)

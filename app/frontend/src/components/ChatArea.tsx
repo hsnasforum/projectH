@@ -30,6 +30,7 @@ interface Props {
   onContentReasonNote?: (messageId: string, note: string) => void;
   onContentReasonLabel?: (messageId: string, label: string) => void;
   onCorrectedSave?: (messageId: string) => void;
+  onPrefCorrection?: (fingerprint: string, messageId: string) => void;
   onToggleSidebar: () => void;
   sessionTitle: string;
   reviewQueueCount?: number;
@@ -54,6 +55,7 @@ export default function ChatArea({
   onContentReasonNote,
   onContentReasonLabel,
   onCorrectedSave,
+  onPrefCorrection,
   onToggleSidebar,
   sessionTitle,
   reviewQueueCount = 0,
@@ -143,6 +145,7 @@ export default function ChatArea({
                 onContentReasonNote={onContentReasonNote}
                 onContentReasonLabel={onContentReasonLabel}
                 onCorrectedSave={onCorrectedSave}
+                onPrefCorrection={onPrefCorrection}
               />
             ))}
 

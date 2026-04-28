@@ -309,9 +309,22 @@ export interface PreferencesPayload {
   low_reliability_active_count?: number | null;
 }
 
+export interface CorrectionSummary {
+  ok: boolean;
+  total: number;
+  by_status: Record<string, number>;
+  top_recurring_fingerprints: { delta_fingerprint: string; recurrence_count: number }[];
+}
+
 export async function fetchPreferences(): Promise<PreferencesPayload> {
   const res = await fetch(`${BASE}/api/preferences`);
   return res.json();
+}
+
+export async function fetchCorrectionSummary(): Promise<CorrectionSummary> {
+  const res = await fetch(`${BASE}/api/corrections/summary`);
+  if (!res.ok) throw new Error("correction summary fetch failed");
+  return res.json() as Promise<CorrectionSummary>;
 }
 
 export interface PreferenceAudit {

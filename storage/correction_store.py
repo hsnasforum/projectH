@@ -212,6 +212,27 @@ class CorrectionStore:
             all_records.sort(key=lambda d: d.get("updated_at", ""), reverse=True)
             return all_records[:limit]
 
+    def list_filtered(
+        self,
+        *,
+        query: str | None = None,
+        status: str | None = None,
+        limit: int = 20,
+    ) -> list[CorrectionRecord]:
+        with self._lock:
+            records = self._scan_all()
+            if query:
+                q = query.lower()
+                records = [
+                    r for r in records
+                    if q in (r.get("original_text") or "").lower()
+                    or q in (r.get("corrected_text") or "").lower()
+                ]
+            if status:
+                records = [r for r in records if r.get("status") == status]
+            records.sort(key=lambda d: d.get("updated_at", ""), reverse=True)
+            return records[:limit]
+
     def list_incomplete_corrections(self) -> list[CorrectionRecord]:
         _INCOMPLETE = {
             CorrectionStatus.RECORDED,

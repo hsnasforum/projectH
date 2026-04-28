@@ -682,6 +682,76 @@ class TestSQLiteCorrectionStore(unittest.TestCase):
         statuses = {r["status"] for r in result}
         self.assertEqual(statuses, {"recorded"})
 
+    def test_list_filtered_by_query_matches_original_or_corrected_text(self) -> None:
+        original_match = self._record(
+            artifact_id="artifact-query-original",
+            source_message_id="message-query-original",
+            original_text="needle original text",
+            corrected_text="plain corrected text",
+        )
+        corrected_match = self._record(
+            artifact_id="artifact-query-corrected",
+            source_message_id="message-query-corrected",
+            original_text="plain original text",
+            corrected_text="needle corrected text",
+        )
+        self._record(
+            artifact_id="artifact-query-miss",
+            source_message_id="message-query-miss",
+            original_text="other original text",
+            corrected_text="other corrected text",
+        )
+
+        results = self.store.list_filtered(query="needle")
+
+        self.assertEqual(
+            {record["correction_id"] for record in results},
+            {original_match["correction_id"], corrected_match["correction_id"]},
+        )
+
+    def test_list_filtered_by_status(self) -> None:
+        recorded = self._record(
+            artifact_id="artifact-recorded-filter",
+            source_message_id="message-recorded-filter",
+        )
+        confirmed = self._record(
+            artifact_id="artifact-confirmed-filter",
+            source_message_id="message-confirmed-filter",
+        )
+        self.assertIsNotNone(self.store.confirm_correction(confirmed["correction_id"]))
+
+        results = self.store.list_filtered(status=CorrectionStatus.CONFIRMED)
+
+        self.assertEqual([record["correction_id"] for record in results], [confirmed["correction_id"]])
+        self.assertNotIn(recorded["correction_id"], {record["correction_id"] for record in results})
+
+    def test_list_filtered_applies_query_and_status(self) -> None:
+        recorded_match = self._record(
+            artifact_id="artifact-recorded-query-filter",
+            source_message_id="message-recorded-query-filter",
+            original_text="needle recorded original",
+            corrected_text="needle recorded corrected",
+        )
+        confirmed_match = self._record(
+            artifact_id="artifact-confirmed-query-filter",
+            source_message_id="message-confirmed-query-filter",
+            original_text="needle confirmed original",
+            corrected_text="needle confirmed corrected",
+        )
+        self.assertIsNotNone(self.store.confirm_correction(confirmed_match["correction_id"]))
+
+        results = self.store.list_filtered(query="needle", status=CorrectionStatus.CONFIRMED)
+
+        self.assertEqual([record["correction_id"] for record in results], [confirmed_match["correction_id"]])
+        self.assertNotIn(recorded_match["correction_id"], {record["correction_id"] for record in results})
+
+    def test_list_filtered_empty_result(self) -> None:
+        self._record()
+
+        results = self.store.list_filtered(query="missing needle")
+
+        self.assertEqual(results, [])
+
     def test_confirm_by_fingerprint_batch(self) -> None:
         first = self._record(artifact_id="art1", session_id="s1", source_message_id="msg1")
         second = self._record(artifact_id="art2", session_id="s2", source_message_id="msg2")

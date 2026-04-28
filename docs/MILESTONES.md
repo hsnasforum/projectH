@@ -1269,6 +1269,15 @@ dist 재빌드·E2E는 Axis 2 대상.
 
 Axis 2 (CONTROL_SEQ 1232): dist 재빌드 + E2E 격리 — ACTIVE
 
+## M68 Correction Pattern Promotion
+
+Axis 1 (CONTROL_SEQ 1237): CONFIRMED 교정 패턴 → PreferenceRecord 승격 — ACTIVE
+`promote_by_fingerprint()` JSON + SQLite parity;
+`POST /api/corrections/promote-pattern` endpoint;
+`PreferencePanel.tsx` 승격 버튼.
+
+Axis 2 (CONTROL_SEQ 1238): dist 재빌드 + E2E 격리 — ACTIVE
+
 ## Next 3 Implementation Priorities
 
 1. **M49–M59 shipped**: 선호도 주입·가시성·피드백·신뢰도 경고(M49-M52) + docs truth-sync(M53, M56, M59) + TypedDict 계약 시리즈(M54-M58: CorrectionRecord, PerPreferenceStats, PreferenceRecord, ArtifactRecord JSON+SQLite) 완료. PR #49 대기 중(feat/m50-axis1-axis2-pref-visibility).

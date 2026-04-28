@@ -12006,6 +12006,37 @@ test("활성 교정이 있으면 동기화 버튼이 보이고 클릭 시 후보
   await expect.poll(() => auditRequests).toBeGreaterThanOrEqual(2);
 });
 
+test("corrections: GET /api/corrections/summary 응답이 ok, total, by_status, top_recurring_fingerprints를 포함합니다", async ({ page }) => {
+  await page.route(/\/api\/corrections\/summary$/, async (route) => {
+    expect(route.request().method()).toBe("GET");
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: true,
+        total: 3,
+        by_status: { recorded: 2, active: 1 },
+        top_recurring_fingerprints: [],
+      }),
+    });
+  });
+
+  await page.goto("/app-preview");
+  const result = await page.evaluate(async () => {
+    const response = await fetch("/api/corrections/summary");
+    return {
+      ok: response.ok,
+      data: await response.json(),
+    };
+  });
+
+  expect(result.ok).toBeTruthy();
+  expect(result.data).toHaveProperty("ok", true);
+  expect(result.data).toHaveProperty("total");
+  expect(result.data).toHaveProperty("by_status");
+  expect(result.data).toHaveProperty("top_recurring_fingerprints");
+});
+
 test("reviewed-memory loop: sync 후 활성화하면 이후 채팅 응답에 선호 반영 prefix가 붙습니다", async ({ page }) => {
   const sessionId = buildSessionId("reviewed-memory-loop");
   const preferenceStatement = `reviewed-memory loop accepted preference ${sessionId}`;

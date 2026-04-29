@@ -51,14 +51,49 @@ class SQLitePreferenceStore:
             if _is_valid_preference_record(record)
         ]
 
+    def _record_from_row(self, row: dict[str, Any]) -> PreferenceRecord | None:
+        data = json.loads(row["data"])
+        data.update({
+            "preference_id": row["preference_id"],
+            "description": row["description"],
+            "status": row["status"],
+            "delta_fingerprint": row["delta_fingerprint"],
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+            "activated_at": row["activated_at"],
+        })
+        return data if _is_valid_preference_record(data) else None
+
+    def get_candidates(self, limit: int = 50) -> list[PreferenceRecord]:
+        """Return candidate preferences, most recently updated first."""
+        rows = self._db.fetchall(
+            "SELECT * FROM preferences WHERE status = 'candidate' ORDER BY updated_at DESC LIMIT ?",
+            (limit,),
+        )
+        results = []
+        for row in rows:
+            record = self._record_from_row(row)
+            if record is not None:
+                results.append(record)
+        return results
+
+    def find_by_fingerprint(self, delta_fingerprint: str) -> PreferenceRecord | None:
+        """Return the preference matching delta_fingerprint, or None."""
+        row = self._db.fetchone(
+            "SELECT * FROM preferences WHERE delta_fingerprint = ?",
+            (delta_fingerprint,),
+        )
+        if row is None:
+            return None
+        return self._record_from_row(row)
+
     def list_all(self, limit: int = 50) -> list[PreferenceRecord]:
         rows = self._db.fetchall("SELECT * FROM preferences ORDER BY updated_at DESC LIMIT ?", (limit,))
         results = []
         for r in rows:
-            data = json.loads(r["data"])
-            data.update({"preference_id": r["preference_id"], "description": r["description"], "status": r["status"], "delta_fingerprint": r["delta_fingerprint"], "created_at": r["created_at"], "updated_at": r["updated_at"], "activated_at": r["activated_at"]})
-            if _is_valid_preference_record(data):
-                results.append(data)
+            record = self._record_from_row(r)
+            if record is not None:
+                results.append(record)
         return results
 
     def activate_preference(self, preference_id: str) -> PreferenceRecord | None:

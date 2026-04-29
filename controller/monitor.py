@@ -24,6 +24,8 @@ MAX_INITIAL_TAIL_BYTES = 64 * 1024
 MAX_INCREMENTAL_READ_BYTES = 128 * 1024
 MAX_COMMUNICATION_EVENTS = 80
 TEAM_COLORS = ("#6aa7c9", "#5c9a4a", "#e0a93b", "#a88cc5", "#c98a6a")
+APPROVAL_WAIT_CLEAR_STATES = {"working", "ready", "idle", "off", "dead", "broken"}
+APPROVAL_WAIT_CLEAR_EVENTS = {"handoff", "resume", "approval_granted", "lane_ready", "lane_working"}
 
 
 @dataclass(slots=True)
@@ -559,7 +561,7 @@ class RuntimeMonitorStateManager:
             self._record_communication(event)
         if event.approval_wait:
             state.approval_wait = True
-        elif event.state in {"working", "off", "dead", "broken"} or event.event_type in {"handoff", "resume", "approval_granted"}:
+        elif event.state in APPROVAL_WAIT_CLEAR_STATES or event.event_type in APPROVAL_WAIT_CLEAR_EVENTS:
             state.approval_wait = False
         state.last_source_path = event.source_path
         state.updated_at_ms = now_epoch_ms()

@@ -349,6 +349,44 @@ class TestSQLitePreferenceStoreAutoActivation(unittest.TestCase):
         self.assertIn(valid["preference_id"], preference_ids)
         self.assertNotIn("pref-invalid-active", preference_ids)
 
+    def test_sqlite_get_candidates_returns_only_candidate_status(self) -> None:
+        candidate = self._record(
+            delta_fingerprint="fingerprint-candidate-status",
+            candidate_id="candidate-status-candidate",
+        )
+        active = self._record(
+            delta_fingerprint="fingerprint-active-status",
+            candidate_id="candidate-status-active",
+        )
+        paused = self._record(
+            delta_fingerprint="fingerprint-paused-status",
+            candidate_id="candidate-status-paused",
+        )
+        self.assertIsNotNone(self.store.activate_preference(active["preference_id"]))
+        self.assertIsNotNone(self.store.pause_preference(paused["preference_id"]))
+
+        candidates = self.store.get_candidates()
+
+        self.assertEqual(
+            {record["preference_id"] for record in candidates},
+            {candidate["preference_id"]},
+        )
+        self.assertEqual(candidates[0]["status"], PreferenceStatus.CANDIDATE)
+
+    def test_sqlite_find_by_fingerprint_returns_record_and_none(self) -> None:
+        record = self._record(
+            delta_fingerprint="fingerprint-find-by-fingerprint",
+            candidate_id="candidate-find-by-fingerprint",
+        )
+
+        found = self.store.find_by_fingerprint("fingerprint-find-by-fingerprint")
+        missing = self.store.find_by_fingerprint("fingerprint-missing")
+
+        self.assertIsNotNone(found)
+        self.assertEqual(found["preference_id"], record["preference_id"])
+        self.assertEqual(found["delta_fingerprint"], "fingerprint-find-by-fingerprint")
+        self.assertIsNone(missing)
+
 
 class TestSQLiteCorrectionStore(unittest.TestCase):
     def setUp(self) -> None:

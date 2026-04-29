@@ -114,6 +114,34 @@ class SQLitePreferenceStore:
         self._db.commit()
         return record
 
+    def update(self, preference_id: str, updates: dict[str, Any]) -> PreferenceRecord | None:
+        row = self._db.fetchone("SELECT * FROM preferences WHERE preference_id = ?", (preference_id,))
+        if row is None:
+            return None
+        now = _now_iso()
+        data = json.loads(row["data"])
+        data.update(updates)
+        data["preference_id"] = preference_id
+        data.setdefault("delta_fingerprint", row["delta_fingerprint"])
+        data.setdefault("created_at", row["created_at"])
+        data.setdefault("activated_at", row["activated_at"])
+        data["description"] = str(data.get("description", row["description"]) or "")
+        data["status"] = str(data.get("status", row["status"]) or row["status"])
+        data["updated_at"] = now
+        self._db.execute(
+            "UPDATE preferences SET description = ?, status = ?, activated_at = ?, data = ?, updated_at = ? WHERE preference_id = ?",
+            (
+                data["description"],
+                data["status"],
+                data.get("activated_at"),
+                json.dumps(data, ensure_ascii=False, default=str),
+                now,
+                preference_id,
+            ),
+        )
+        self._db.commit()
+        return self.get(preference_id)
+
     def update_description(self, preference_id: str, description: str) -> PreferenceRecord | None:
         """Update the description of an existing preference. Returns None if not found."""
         now = _now_iso()

@@ -399,6 +399,44 @@ class PreferenceHandlerMixin:
             "stop_applied": was_active,
         }
 
+    def toggle_preference_reliability(self, preference_id: str) -> dict[str, Any]:
+        preference_id = self._normalize_optional_text(preference_id)
+        if not preference_id:
+            raise WebApiError(400, "신뢰도를 전환할 선호 ID가 필요합니다.")
+
+        existing = self.preference_store.get(preference_id)
+        if existing is None:
+            raise WebApiError(404, "해당 선호를 찾을 수 없습니다.")
+
+        get_summary = getattr(self.session_store, "get_global_audit_summary", None)
+        summary = get_summary() if callable(get_summary) else {}
+        per_pref_stats = summary.get("per_preference_stats", {}) if isinstance(summary, dict) else {}
+        if not isinstance(per_pref_stats, dict):
+            per_pref_stats = {}
+
+        current = enrich_preference_reliability(existing, per_pref_stats)
+        previous_reliability = current.get("is_highly_reliable") is True
+        next_reliability = not previous_reliability
+
+        update_preference = getattr(self.preference_store, "update", None)
+        if not callable(update_preference):
+            raise WebApiError(500, "선호 저장소가 신뢰도 갱신을 지원하지 않습니다.")
+        updated = update_preference(preference_id, {"is_highly_reliable": next_reliability})
+        if updated is None:
+            raise WebApiError(404, "해당 선호를 찾을 수 없습니다.")
+
+        enriched = enrich_preference_reliability(updated, per_pref_stats)
+        self.task_logger.log(
+            session_id="system",
+            action="preference_reliability_toggled",
+            detail={
+                "preference_id": preference_id,
+                "previous_is_highly_reliable": previous_reliability,
+                "is_highly_reliable": next_reliability,
+            },
+        )
+        return {"ok": True, "preference": enriched}
+
     def update_preference_description(self, payload: dict[str, Any]) -> dict[str, Any]:
         preference_id = self._normalize_optional_text(payload.get("preference_id"))
         description = self._normalize_optional_text(payload.get("description"))

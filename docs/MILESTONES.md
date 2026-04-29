@@ -1553,11 +1553,26 @@ Axis 2: dist rebuild — DONE
 `e2e/tests/web-smoke.spec.mjs`에 `preference delete removes preference from list` 시나리오 추가.
 Playwright webServer는 현재 sandbox socket 제한으로 미실행; CI 위임.
 
+## M103 preference reliability toggle
+
+Axis 1: reliability toggle — DONE
+`toggle_preference_reliability()` handler + `POST /api/preferences/<id>/toggle-reliability` route.
+JSON/SQLite preference store에 최소 `update()` 추가.
+`storage/preference_utils.py`에서 저장된 `is_highly_reliable` 값을 projection에서 우선 존중.
+`app/frontend/src/api/client.ts`에 `togglePreferenceReliability()` 추가.
+`PreferencePanel.tsx`에 `data-testid="toggle-reliability-btn"` 토글 버튼 추가.
+신규 unittest 2개 (flip flag, 404).
+
+Axis 2: dist rebuild — DONE
+`npx vite build`로 dist 갱신; `toggle-reliability-btn` testid가 dist JS에 1건 포함됨.
+`e2e/tests/web-smoke.spec.mjs`에 `preference reliability toggle updates badge` 시나리오 추가.
+Playwright webServer는 sandbox socket 제한으로 미실행; CI 위임.
+
 ## Next 3 Implementation Priorities
 
-1. **PR 머지 백로그**: PR #91 (M98) + PR #92 (M99) + PR #93 (M100-M101) — 모두 draft,
-   `pr_merge_gate` operator 승인 대기. M102 PR은 이번 commit/push/PR 이후 추가.
-2. **M102 완료**: Axis 1+2+doc-sync 완료 — commit/push/PR 대기.
+1. **PR 머지 백로그**: PR #91 (M98) + PR #92 (M99) + PR #93 (M100-M101) + PR #94 (M102) — 모두 draft,
+   `pr_merge_gate` operator 승인 대기. M103 PR은 이번 commit/push/PR 이후 추가.
+2. **M103 완료**: Axis 1+2+doc-sync 완료 — commit/push/PR 대기.
 3. **장기**: cross-session memory 강화, north star 방향 유지.
 
 ## Do Not Pull Forward

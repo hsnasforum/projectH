@@ -75,6 +75,7 @@ export default function PreferencePanel({ lastAppliedFingerprints = [] }: PanelP
   const [expanded, setExpanded] = useState(true);
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
   const [editDescriptions, setEditDescriptions] = useState<Record<string, string | null>>({});
+  const [candidatePreferences, setCandidatePreferences] = useState<PreferenceRecord[] | null>(null);
   const [fadingOut, setFadingOut] = useState<Set<string>>(new Set());
   const [syncingAdopted, setSyncingAdopted] = useState(false);
   const [syncStatus, setSyncStatus] = useState<string | null>(null);
@@ -107,6 +108,7 @@ export default function PreferencePanel({ lastAppliedFingerprints = [] }: PanelP
       // Filter out rejected items entirely
       const visible = (data.preferences ?? []).filter((p) => p.status !== "rejected");
       setPreferences(visible);
+      setCandidatePreferences(data.candidate_preferences ?? null);
       setReliabilityTotals({
         applied: typeof data.total_applied === "number" && Number.isFinite(data.total_applied)
           ? data.total_applied
@@ -230,7 +232,9 @@ export default function PreferencePanel({ lastAppliedFingerprints = [] }: PanelP
 
   // Visible count for header
   const activeCount = preferences.filter((p) => p.status === "active").length;
-  const candidateCount = preferences.filter((p) => p.status === "candidate").length;
+  const candidateCount = candidatePreferences != null
+    ? candidatePreferences.length
+    : preferences.filter((p) => p.status === "candidate").length;
   const pausedCount = preferences.filter((p) => p.status === "paused").length;
   const filteredPreferences = statusFilter === "all"
     ? preferences

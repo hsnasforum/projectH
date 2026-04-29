@@ -1390,10 +1390,21 @@ Axis 1: SQLite 후보 조회 parity — DONE
 추가. `_record_from_row()` private helper로 row→PreferenceRecord 변환 통일.
 JSON `PreferenceStore` 공개 조회 API와 대칭 완성. 45 unit tests OK.
 
+## M87 SQLiteSessionStore Global Audit Summary Parity
+
+Axis 1: get_global_audit_summary() parity — DONE
+`storage/sqlite/session.py` `SQLiteSessionStore`에 `get_global_audit_summary()`
+추가. 전체 세션 JSON blob을 스캔해 per-preference `applied_count`/`corrected_count`,
+feedback like/dislike, correction pair count, operator action count를 집계.
+`app/handlers/preferences.py` fallback(`getattr` → `{}`)이 SQLite 기본 백엔드에서
+항상 비어 있던 `per_preference_stats` 갭 해소.
+`enrich_preference_reliability()`가 SQLite 백엔드에서도 live correction outcome
+반영 가능. adoption list + 2건 신규 테스트; 47 unit tests OK.
+
 ## Next 3 Implementation Priorities
 
-1. **PR 머지 백로그**: operator 승인 대기 — PR #71-#75 스택 (M84-M86 포함).
-2. **M87 방향**: SQLite parity 완성 후 다음 기능 축 — advisory에서 결정.
+1. **PR 머지 백로그**: operator 승인 대기 — PR #71-#76 스택.
+2. **M87 방향**: Axis 1 완료; 추가 Axis 없음 (backend-only 변경). M88 방향 advisory 결정 예정.
 3. **장기**: cross-session memory 강화, north star 방향 유지.
 
 ## Do Not Pull Forward

@@ -90,6 +90,7 @@ export default function PreferencePanel({ lastAppliedFingerprints = [] }: PanelP
   const [lastPromoteResult, setLastPromoteResult] = useState<{
     promoted: number;
     activated: number;
+    isHighlyReliable?: boolean;
   } | null>(null);
 
   const load = useCallback(async () => {
@@ -356,6 +357,7 @@ export default function PreferencePanel({ lastAppliedFingerprints = [] }: PanelP
                           setLastPromoteResult({
                             promoted: result.promoted_count,
                             activated: result.activated_count ?? 0,
+                            isHighlyReliable: result.is_highly_reliable ?? false,
                           });
                         }
                         load();
@@ -370,7 +372,12 @@ export default function PreferencePanel({ lastAppliedFingerprints = [] }: PanelP
                       >
                         {lastPromoteResult.promoted > 0
                           ? `✓ ${lastPromoteResult.activated}개 활성화`
-                          : "패턴 없음"}
+                          : "승격 완료 (활성화 없음)"}
+                        {lastPromoteResult.isHighlyReliable && (
+                          <span className="ml-1 text-[9px] font-semibold text-emerald-400">
+                            · 신뢰도 높음
+                          </span>
+                        )}
                       </span>
                     )}
                   </div>

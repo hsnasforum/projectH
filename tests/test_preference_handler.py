@@ -63,6 +63,20 @@ class _PreferenceStore:
         return record
 
 
+class _PreferenceStoreWithCandidates(_PreferenceStore):
+    def __init__(self, preferences: list[dict[str, Any]]) -> None:
+        super().__init__(preferences)
+        self.get_candidates_calls = 0
+
+    def get_candidates(self) -> list[dict[str, Any]]:
+        self.get_candidates_calls += 1
+        return [
+            preference
+            for preference in self._preferences
+            if preference.get("status") == "candidate"
+        ]
+
+
 class _SessionStore:
     def __init__(self, summary: dict[str, Any] | None = None) -> None:
         self._summary = summary or {"per_preference_stats": {}}
@@ -133,6 +147,76 @@ class PreferenceHandlerTest(unittest.TestCase):
 
         self.assertIsNone(pref["quality_info"]["avg_similarity_score"])
         self.assertIsNone(pref["quality_info"]["is_high_quality"])
+
+    def test_list_preferences_payload_includes_candidate_preferences_with_fallback(self) -> None:
+        service = _PreferenceService([
+            {
+                "preference_id": "pref-active",
+                "delta_fingerprint": "fingerprint-active",
+                "description": "active preference",
+                "status": "active",
+            },
+            {
+                "preference_id": "pref-candidate-a",
+                "delta_fingerprint": "fingerprint-candidate-a",
+                "description": "candidate preference a",
+                "status": "candidate",
+                "avg_similarity_score": 0.15,
+            },
+            {
+                "preference_id": "pref-candidate-b",
+                "delta_fingerprint": "fingerprint-candidate-b",
+                "description": "candidate preference b",
+                "status": "candidate",
+            },
+        ])
+
+        payload = service.list_preferences_payload()
+
+        self.assertIn("candidate_preferences", payload)
+        self.assertEqual(
+            {pref["preference_id"] for pref in payload["candidate_preferences"]},
+            {"pref-candidate-a", "pref-candidate-b"},
+        )
+        self.assertTrue(
+            all(pref.get("status") == "candidate" for pref in payload["candidate_preferences"])
+        )
+
+    def test_list_preferences_payload_uses_get_candidates_when_available(self) -> None:
+        preferences = [
+            {
+                "preference_id": "pref-active",
+                "delta_fingerprint": "fingerprint-active",
+                "description": "active preference",
+                "status": "active",
+            },
+            {
+                "preference_id": "pref-candidate",
+                "delta_fingerprint": "fingerprint-candidate",
+                "description": "candidate preference",
+                "status": "candidate",
+                "avg_similarity_score": 0.15,
+            },
+        ]
+        service = _PreferenceService(
+            preferences,
+            audit_summary={
+                "per_preference_stats": {
+                    "fingerprint-candidate": {"applied_count": 3, "corrected_count": 0},
+                },
+            },
+        )
+        candidate_store = _PreferenceStoreWithCandidates(preferences)
+        service.preference_store = candidate_store
+
+        payload = service.list_preferences_payload()
+
+        self.assertEqual(candidate_store.get_candidates_calls, 1)
+        self.assertEqual(len(payload["candidate_preferences"]), 1)
+        candidate = payload["candidate_preferences"][0]
+        self.assertEqual(candidate["preference_id"], "pref-candidate")
+        self.assertEqual(candidate["status"], "candidate")
+        self.assertIs(candidate["is_highly_reliable"], True)
 
     def test_list_preferences_payload_counts_high_quality_active_preferences(self) -> None:
         mixed_service = _PreferenceService([

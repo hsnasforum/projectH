@@ -1401,10 +1401,104 @@ feedback like/dislike, correction pair count, operator action count를 집계.
 `enrich_preference_reliability()`가 SQLite 백엔드에서도 live correction outcome
 반영 가능. adoption list + 2건 신규 테스트; 47 unit tests OK.
 
+## M88 Candidate Preferences Payload Wiring
+
+Axis 1: get_candidates() wiring into list_preferences_payload() — DONE
+`app/handlers/preferences.py` `list_preferences_payload()`에 `candidate_preferences`
+키 추가. `getattr` feature-detect으로 `get_candidates()`가 있는 store에서는 M86 Axis 1의
+효율적 쿼리를 사용하고, 없는 store에서는 `list_all()` 필터 fallback 유지.
+M86 Axis 1에서 추가된 SQLite/JSON `get_candidates()` 메서드를 app 경로에 연결.
+신규 테스트 2건 (`get_candidates()` 호출 경로 + fallback 경로); 22 tests OK.
+Axis 2 없음 (backend-only 변경, dist·E2E 불필요).
+
+## M89 PreferencesPayload TypeScript Type Sync
+
+Axis 1: candidate_preferences TypeScript type sync — DONE
+`app/frontend/src/api/client.ts` `PreferencesPayload` 인터페이스에
+`candidate_preferences?: PreferenceRecord[] | null` 추가.
+M88 Axis 1 backend 키와 TypeScript 계약 동기화. `tsc --noEmit` PASS.
+dist·E2E 불필요 (타입 선언만). Axis 2 없음.
+
+## M90 PreferencePanel candidate_preferences 연결
+
+Axis 1: candidatePreferences state in PreferencePanel — DONE
+`app/frontend/src/components/PreferencePanel.tsx`에 `candidatePreferences` 상태 추가.
+`fetchPreferences()` 응답의 `candidate_preferences` 값을 state에 저장.
+`candidateCount`가 서버 pre-filtered 후보 목록 우선, `preferences.filter` fallback 유지.
+tsc PASS.
+
+Axis 2: dist rebuild + E2E stabilization — DONE
+`npx vite build`로 dist 재빌드 (313K). `candidate_preferences` wiring 1건 확인.
+`preference-not-applied-btn` E2E DOM detach 수정; 격리 1 passed (10.1s).
+
+## M91 PreferencePanel 후보 탭 candidatePreferences 렌더링 연결
+
+Axis 1: filteredPreferences 후보 탭 분기 — DONE
+`PreferencePanel.tsx` `filteredPreferences` 계산에 `statusFilter === "candidate"`
+분기 추가. `candidatePreferences` 존재 시 서버 pre-filtered 후보 목록 우선 사용;
+fallback: `preferences.filter(status)`. `list_all(limit=50)` 범위 초과 후보 누락 gap 해소.
+
+Axis 2: dist rebuild + E2E — DONE
+`npx vite build` dist 재빌드 (313K). preference 격리 E2E 5 passed (29.4s).
+
+## M92 PreferencesPayload TypeScript 타입 완결
+
+Axis 1: high_severity_conflict_count 타입 동기화 + 캐스트 제거 — DONE
+`app/frontend/src/api/client.ts` `PreferencesPayload`에
+`high_severity_conflict_count?: number | null` 추가.
+`PreferencePanel.tsx`의 `dataWithConflict as typeof data & {...}` 타입 캐스트 우회 제거.
+`data.high_severity_conflict_count` 직접 접근. tsc PASS.
+`PreferencesPayload` 인터페이스가 backend `list_preferences_payload()` 모든 필드 완전 커버.
+dist·E2E 불필요 (TypeScript 캐스트 = 동일 JS 출력). Axis 2 없음.
+
+## M93 PreferencePanel conflict_info 타입 캐스트 제거
+
+Axis 1: conflict_info 불필요 캐스트 제거 — DONE
+`PreferencePanel.tsx:148` `pref.conflict_info as { conflict_severity?: string }`
+우회 캐스트 제거. `pref.conflict_info?.conflict_severity === "high"` 직접 접근.
+`PreferenceRecord.conflict_info`가 이미 올바르게 타입됨.
+M85-M93 arc에서 모든 TypeScript 타입 우회 캐스트 완전 제거. Axis 2 없음.
+
+## M94 Applied Preferences 신뢰도 배지 (preference impact visibility)
+
+Axis 1: applied preferences 팝오버 is_highly_reliable 배지 — DONE
+`MessageBubble.tsx` applied preferences 팝오버에 `isHighlyReliable` 계산 추가.
+`fullPref?.is_highly_reliable === true`일 때 `신뢰도 높음` 배지 표시.
+Gemini advisory CONTROL_SEQ 1376 Option B (preference impact visibility) 구현.
+tsc PASS.
+
+Axis 2: dist rebuild + E2E fixture 안정화 — DONE
+dist 재빌드 (313K, Apr 29 17:12). `신뢰도 높음` / `isHighlyReliable` 3건 dist 반영.
+preference E2E 5 passed. popover badge E2E deterministic route 추가.
+
+## M95 Applied Preferences 팝오버 선호 카드 이동 링크
+
+Axis 1: 팝오버에서 선호 카드로 이동 링크 — DONE
+`PreferencePanel.tsx` 카드 루트에 `id="pref-card-{preference_id}"` 추가.
+`MessageBubble.tsx` applied preferences 팝오버에 `선호에서 보기` anchor 링크 추가
+(`href="#pref-card-{preference_id}"`, 클릭 시 팝오버 닫힘).
+`fullPref?.preference_id` 없을 때 미표시. tsc PASS.
+Gemini advisory CONTROL_SEQ 1382 Option B3 (Navigation link from popover to preference details) 구현.
+
+Axis 2: dist rebuild + E2E — DONE
+dist 재빌드 (314K, Apr 29 17:38). `pref-card-` / `선호에서 보기` 2건 dist 반영.
+preference E2E 5 passed. e2e 파일 변경 없음.
+
+## M96 Applied Preferences 팝오버 data-testid 패턴 완결
+
+Axis 1: pref-navigate-to-card data-testid 추가 — DONE
+`MessageBubble.tsx` applied preferences 팝오버의 `선호에서 보기` anchor에
+`data-testid="pref-navigate-to-card"` 추가. applied preferences 팝오버 내
+모든 인터랙티브 요소가 `data-testid` 패턴을 가지게 됨. tsc PASS.
+
+Axis 2: dist rebuild + E2E — DONE
+dist 재빌드 (314K, Apr 29 17:51). `pref-navigate-to-card` 1건 dist 반영.
+preference E2E 5 passed.
+
 ## Next 3 Implementation Priorities
 
-1. **PR 머지 백로그**: operator 승인 대기 — PR #71-#76 스택.
-2. **M87 방향**: Axis 1 완료; 추가 Axis 없음 (backend-only 변경). M88 방향 advisory 결정 예정.
+1. **PR 머지 백로그**: operator 승인 대기 — PR #71-#86 스택.
+2. **M97 방향**: M96 완료; 다음 기능 축은 main 머지 후 fresh advisory 결정.
 3. **장기**: cross-session memory 강화, north star 방향 유지.
 
 ## Do Not Pull Forward

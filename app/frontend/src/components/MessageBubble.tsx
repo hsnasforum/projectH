@@ -478,6 +478,7 @@ export default function MessageBubble({
                       const displayDescription = fullPref?.description ?? pref.description;
                       const hasPreferenceConflict = fullPref?.conflict_info?.has_conflict === true;
                       const isHighQualityPreference = fullPref?.quality_info?.is_high_quality === true;
+                      const isHighlyReliable = fullPref?.is_highly_reliable === true;
                       const appliedCount = fullPref?.reliability_stats?.applied_count;
                       const correctedCount = fullPref?.reliability_stats?.corrected_count;
                       const shouldShowReliabilityStats =
@@ -582,6 +583,11 @@ export default function MessageBubble({
                               고품질
                             </span>
                           )}
+                          {isHighlyReliable && (
+                            <span className="w-fit rounded bg-violet-50 px-1 py-0.5 text-[9px] font-medium text-violet-600">
+                              신뢰도 높음
+                            </span>
+                          )}
                           {hasPreferenceConflict && (
                             <span
                               className={`w-fit rounded border px-1 py-0.5 text-[9px] font-medium ${
@@ -608,6 +614,16 @@ export default function MessageBubble({
                             <p className="mt-0.5 text-[9px] text-stone-400">
                               적용 {appliedCount}회 · 교정 {visibleCorrectedCount}회
                             </p>
+                          )}
+                          {fullPref?.preference_id && (
+                            <a
+                              href={`#pref-card-${fullPref.preference_id}`}
+                              data-testid="pref-navigate-to-card"
+                              className="w-fit text-[10px] text-violet-400 underline hover:text-violet-600"
+                              onClick={() => setPrefPopoverOpen(false)}
+                            >
+                              선호에서 보기
+                            </a>
                           )}
                           {fullPref?.original_snippet && (
                             <div className="pl-1 text-[10px] text-stone-400" data-testid="pref-original-snippet">

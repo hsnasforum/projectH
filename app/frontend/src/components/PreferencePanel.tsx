@@ -75,6 +75,7 @@ export default function PreferencePanel({ lastAppliedFingerprints = [] }: PanelP
   const [expanded, setExpanded] = useState(true);
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
   const [editDescriptions, setEditDescriptions] = useState<Record<string, string | null>>({});
+  const [candidatePreferences, setCandidatePreferences] = useState<PreferenceRecord[] | null>(null);
   const [fadingOut, setFadingOut] = useState<Set<string>>(new Set());
   const [syncingAdopted, setSyncingAdopted] = useState(false);
   const [syncStatus, setSyncStatus] = useState<string | null>(null);
@@ -107,6 +108,7 @@ export default function PreferencePanel({ lastAppliedFingerprints = [] }: PanelP
       // Filter out rejected items entirely
       const visible = (data.preferences ?? []).filter((p) => p.status !== "rejected");
       setPreferences(visible);
+      setCandidatePreferences(data.candidate_preferences ?? null);
       setReliabilityTotals({
         applied: typeof data.total_applied === "number" && Number.isFinite(data.total_applied)
           ? data.total_applied
@@ -136,15 +138,14 @@ export default function PreferencePanel({ lastAppliedFingerprints = [] }: PanelP
           ? data.low_reliability_active_count
           : visible.filter(isActiveLowReliabilityPreference).length,
       );
-      const dataWithConflict = data as typeof data & { high_severity_conflict_count?: number | null };
       setHighSeverityConflictCount(
-        typeof dataWithConflict.high_severity_conflict_count === "number" &&
-          Number.isFinite(dataWithConflict.high_severity_conflict_count)
-          ? dataWithConflict.high_severity_conflict_count
+        typeof data.high_severity_conflict_count === "number" &&
+          Number.isFinite(data.high_severity_conflict_count)
+          ? data.high_severity_conflict_count
           : visible.filter(
               (pref) =>
                 pref.status === "active" &&
-                (pref.conflict_info as { conflict_severity?: string } | undefined)?.conflict_severity === "high",
+                pref.conflict_info?.conflict_severity === "high",
             ).length,
       );
       setAudit(auditData);
@@ -230,10 +231,14 @@ export default function PreferencePanel({ lastAppliedFingerprints = [] }: PanelP
 
   // Visible count for header
   const activeCount = preferences.filter((p) => p.status === "active").length;
-  const candidateCount = preferences.filter((p) => p.status === "candidate").length;
+  const candidateCount = candidatePreferences != null
+    ? candidatePreferences.length
+    : preferences.filter((p) => p.status === "candidate").length;
   const pausedCount = preferences.filter((p) => p.status === "paused").length;
   const filteredPreferences = statusFilter === "all"
     ? preferences
+    : statusFilter === "candidate" && candidatePreferences != null
+    ? candidatePreferences
     : preferences.filter((p) => p.status === statusFilter);
   const statusTabs: Array<{ key: PreferenceStatusFilter; label: string; count: number }> = [
     { key: "all", label: "전체", count: preferences.length },
@@ -498,6 +503,7 @@ export default function PreferencePanel({ lastAppliedFingerprints = [] }: PanelP
             return (
               <div
                 key={pref.preference_id}
+                id={`pref-card-${pref.preference_id}`}
                 className={`
                   rounded-lg bg-sidebar-hover/50 px-2.5 py-2 transition-all duration-500
                   ${fadingOut.has(pref.preference_id) ? "opacity-0 scale-95" : "opacity-100"}

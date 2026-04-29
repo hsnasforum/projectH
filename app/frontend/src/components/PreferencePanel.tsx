@@ -1,9 +1,10 @@
 import { useState, useEffect, useCallback } from "react";
-import type { CorrectionListResponse, CorrectionSummary, PreferenceAudit, PreferenceRecord } from "../api/client";
+import type { CorrectionDetailRecord, CorrectionListResponse, CorrectionSummary, PreferenceAudit, PreferenceRecord } from "../api/client";
 import {
   confirmCorrectionPattern,
   dismissCorrectionPattern,
   promoteCorrectionPattern,
+  fetchCorrectionDetail,
   fetchCorrectionList,
   fetchCorrectionSummary,
   fetchPreferenceAudit,
@@ -69,6 +70,21 @@ function isActiveLowReliabilityPreference(pref: PreferenceRecord) {
   );
 }
 
+function formatCorrectionReason(correction: CorrectionDetailRecord) {
+  const summary = correction.delta_summary;
+  if (!summary) return "교정 이유 정보가 없습니다.";
+  if (summary.replacements?.length) {
+    return `교체: ${summary.replacements.map((item) => `${item.from} -> ${item.to}`).join(", ")}`;
+  }
+  if (summary.additions?.length) {
+    return `추가: ${summary.additions.join(", ")}`;
+  }
+  if (summary.removals?.length) {
+    return `제거: ${summary.removals.join(", ")}`;
+  }
+  return "교정 이유 정보가 없습니다.";
+}
+
 export default function PreferencePanel({
   lastAppliedFingerprints = [],
   autoActivatedPreferenceNotice = null,
@@ -100,6 +116,9 @@ export default function PreferencePanel({
     activated: number;
     isHighlyReliable?: boolean;
   } | null>(null);
+  const [selectedCorrectionId, setSelectedCorrectionId] = useState<string | null>(null);
+  const [selectedCorrectionDetail, setSelectedCorrectionDetail] = useState<CorrectionDetailRecord | null>(null);
+  const [correctionDetailMessage, setCorrectionDetailMessage] = useState<string | null>(null);
   const [visibleAutoActivatedNotice, setVisibleAutoActivatedNotice] = useState<{
     id: string;
     preferenceId: string;
@@ -253,6 +272,25 @@ export default function PreferencePanel({
       setSyncingAdopted(false);
     }
   }, [load]);
+
+  const handleCorrectionDetail = useCallback(async (correctionId: string) => {
+    const cleanId = correctionId.trim();
+    if (!cleanId) return;
+    setSelectedCorrectionId(cleanId);
+    setSelectedCorrectionDetail(null);
+    setCorrectionDetailMessage("교정 상세를 불러오는 중...");
+    try {
+      const detail = await fetchCorrectionDetail(cleanId);
+      if (detail.ok && detail.correction) {
+        setSelectedCorrectionDetail(detail.correction);
+        setCorrectionDetailMessage(null);
+        return;
+      }
+      setCorrectionDetailMessage(detail.error?.message ?? "교정 상세를 불러오지 못했습니다.");
+    } catch {
+      setCorrectionDetailMessage("교정 상세를 불러오지 못했습니다.");
+    }
+  }, []);
 
   // Visible count for header
   const activeCount = preferences.filter((p) => p.status === "active").length;
@@ -449,8 +487,25 @@ export default function PreferencePanel({
                       <div
                         key={c.correction_id}
                         data-testid="correction-list-item"
-                        className="text-[10px] text-sidebar-muted/50 truncate"
+                        role="button"
+                        tabIndex={0}
+                        aria-pressed={selectedCorrectionId === c.correction_id}
+                        className={`cursor-pointer rounded px-1 py-0.5 text-[10px] truncate transition-colors ${
+                          selectedCorrectionId === c.correction_id
+                            ? "bg-sky-500/15 text-sky-200"
+                            : "text-sidebar-muted/50 hover:bg-white/5 hover:text-sidebar-text"
+                        }`}
                         title={c.original_text}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          handleCorrectionDetail(c.correction_id);
+                        }}
+                        onKeyDown={(event) => {
+                          if (event.key !== "Enter" && event.key !== " ") return;
+                          event.preventDefault();
+                          event.stopPropagation();
+                          handleCorrectionDetail(c.correction_id);
+                        }}
                       >
                         {c.has_active_preference && (
                           <span
@@ -463,6 +518,46 @@ export default function PreferencePanel({
                         [{c.status}] {(c.original_text ?? "").slice(0, 35)}
                       </div>
                     ))}
+                    {(selectedCorrectionId || correctionDetailMessage || selectedCorrectionDetail) && (
+                      <div
+                        data-testid="correction-detail-panel"
+                        className="mt-1 space-y-1 rounded border border-sidebar-muted/20 bg-sidebar-hover/60 p-2 text-[10px] leading-snug text-sidebar-muted/70"
+                        onClick={(event) => event.stopPropagation()}
+                      >
+                        {correctionDetailMessage ? (
+                          <p>{correctionDetailMessage}</p>
+                        ) : selectedCorrectionDetail ? (
+                          <>
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="min-w-0 truncate font-medium text-sidebar-text">
+                                교정 상세
+                              </span>
+                              <span className="shrink-0 text-[9px] text-sidebar-muted/60">
+                                {selectedCorrectionDetail.status}
+                              </span>
+                            </div>
+                            <div>
+                              <p className="mb-0.5 font-medium text-sidebar-muted">원문</p>
+                              <p className="whitespace-pre-wrap break-words rounded bg-red-500/10 p-1.5 text-red-200">
+                                {selectedCorrectionDetail.original_text || "(내용 없음)"}
+                              </p>
+                            </div>
+                            <div>
+                              <p className="mb-0.5 font-medium text-sidebar-muted">교정 결과</p>
+                              <p className="whitespace-pre-wrap break-words rounded bg-emerald-500/10 p-1.5 text-emerald-200">
+                                {selectedCorrectionDetail.corrected_text || "(내용 없음)"}
+                              </p>
+                            </div>
+                            <div>
+                              <p className="mb-0.5 font-medium text-sidebar-muted">교정 이유</p>
+                              <p className="whitespace-pre-wrap break-words rounded bg-white/5 p-1.5 text-sidebar-muted">
+                                {formatCorrectionReason(selectedCorrectionDetail)}
+                              </p>
+                            </div>
+                          </>
+                        ) : null}
+                      </div>
+                    )}
                   </div>
                 )}
               </>

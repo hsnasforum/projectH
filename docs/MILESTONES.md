@@ -1506,10 +1506,29 @@ Axis 1: correction-submit auto activation notice — DONE
 `e2e/tests/web-smoke.spec.mjs`에 preference auto activation notice 시나리오 추가.
 py_compile / tsc / diff-check PASS. Playwright webServer는 현재 sandbox socket 제한으로 미실행.
 
+## M98 교정 이력 상세 조회
+
+Axis 1: correction history detail — DONE
+`app/handlers/corrections.py`에 `get_correction_detail(correction_id)` 추가.
+`app/web.py`는 `/api/corrections/summary`, `/api/corrections/list` 뒤에
+`GET /api/corrections/<correction_id>` 라우팅을 등록한다.
+`app/frontend/src/api/client.ts`는 `CorrectionDetailRecord` /
+`CorrectionDetailResponse` / `fetchCorrectionDetail()`을 제공한다.
+`PreferencePanel.tsx`의 최근 교정 항목 클릭/Enter/Space가 상세 조회를 호출하고,
+`data-testid="correction-detail-panel"` 패널에 원문, 교정 결과, delta summary 기반
+교정 이유를 표시한다. `e2e/tests/web-smoke.spec.mjs`에
+`correction list item click shows correction detail panel` 시나리오 추가.
+py_compile / tsc / correction_summary unittest / diff-check PASS. Playwright webServer는
+현재 sandbox socket 제한으로 미실행.
+
+Axis 2: dist rebuild — DONE
+`npx vite build`로 `app/static/dist/assets/index.js`와 관련 `index.css` 갱신.
+`correction-detail-panel` testid가 dist JS에 1건 포함됨을 확인.
+
 ## Next 3 Implementation Priorities
 
 1. **PR 머지 백로그**: operator 승인 대기 — PR #71-#86 스택.
-2. **M97 후속**: auto activation notice source 변경은 완료; dist rebuild 또는 추가 browser verification은 별도 검증 환경에서 수행.
+2. **M98 후속**: 교정 이력 상세 조회 source + dist 반영은 완료; Playwright browser verification은 CI에서 수행.
 3. **장기**: cross-session memory 강화, north star 방향 유지.
 
 ## Do Not Pull Forward

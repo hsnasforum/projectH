@@ -64,6 +64,7 @@ repo 안의 internal/operator tooling은 릴리즈 게이트 밖이지만 계속
 - response origin badge with separate answer-mode badge for web investigation (`설명 카드` / `최신 확인`), source-role trust labels, and verification strength tags in origin detail
 - applied-preferences badge (`선호 N건 반영`) on assistant messages when `applied_preferences` is non-empty, with tooltip showing preference descriptions
 - PreferencePanel shows a short inline `선호도로 자동 저장됨` notice with a `선호에서 보기` link when a correction response reports an auto-activated preference
+- PreferencePanel recent correction rows can open a correction detail panel (`data-testid="correction-detail-panel"`) backed by `GET /api/corrections/<correction_id>`, showing the original text, corrected text, and delta-summary reason
 - copy-to-clipboard buttons: `본문 복사`, `저장 경로 복사`, `승인 경로 복사`, `검색 기록 경로 복사`, `경로 복사` (selected source paths panel); all share one helper that shows clipboard-specific failure notice on both success-path rejection and fallback failure
 - streaming progress + cancel
 - response feedback capture

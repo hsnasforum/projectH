@@ -357,9 +357,41 @@ export interface CorrectionListItem {
   has_active_preference?: boolean;
 }
 
+export interface CorrectionDeltaSummary {
+  additions?: string[];
+  removals?: string[];
+  replacements?: Array<{ from: string; to: string }>;
+}
+
+export interface CorrectionDetailRecord extends CorrectionListItem {
+  artifact_id?: string;
+  session_id?: string;
+  source_message_id?: string;
+  delta_summary?: CorrectionDeltaSummary | null;
+  similarity_score?: number | null;
+  rewrite_dimensions?: string[] | null;
+  pattern_family?: string;
+  recurrence_count?: number;
+  first_seen_at?: string;
+  last_seen_at?: string;
+  confirmed_at?: string | null;
+  promoted_at?: string | null;
+  activated_at?: string | null;
+  stopped_at?: string | null;
+  updated_at?: string;
+}
+
 export interface CorrectionListResponse {
   ok: boolean;
   corrections: CorrectionListItem[];
+}
+
+export interface CorrectionDetailResponse {
+  ok: boolean;
+  correction?: CorrectionDetailRecord;
+  error?: {
+    message?: string;
+  };
 }
 
 export async function fetchCorrectionList(params?: {
@@ -372,6 +404,14 @@ export async function fetchCorrectionList(params?: {
   const res = await fetch(url.toString());
   if (!res.ok) throw new Error("correction list fetch failed");
   return res.json() as Promise<CorrectionListResponse>;
+}
+
+export async function fetchCorrectionDetail(
+  correctionId: string,
+): Promise<CorrectionDetailResponse> {
+  const res = await fetch(`${BASE}/api/corrections/${encodeURIComponent(correctionId)}`);
+  if (!res.ok) throw new Error("correction detail fetch failed");
+  return res.json() as Promise<CorrectionDetailResponse>;
 }
 
 export async function confirmCorrectionPattern(

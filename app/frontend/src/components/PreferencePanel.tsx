@@ -35,6 +35,10 @@ type PreferenceReliabilityTotals = {
 
 interface PanelProps {
   lastAppliedFingerprints?: string[];
+  autoActivatedPreferenceNotice?: {
+    id: string;
+    preferenceId: string;
+  } | null;
 }
 
 function preferenceReliabilityCounts(pref: PreferenceRecord) {
@@ -65,7 +69,10 @@ function isActiveLowReliabilityPreference(pref: PreferenceRecord) {
   );
 }
 
-export default function PreferencePanel({ lastAppliedFingerprints = [] }: PanelProps) {
+export default function PreferencePanel({
+  lastAppliedFingerprints = [],
+  autoActivatedPreferenceNotice = null,
+}: PanelProps) {
   const [preferences, setPreferences] = useState<PreferenceRecord[]>([]);
   const [audit, setAudit] = useState<PreferenceAudit | null>(null);
   const [correctionSummary, setCorrectionSummary] = useState<CorrectionSummary | null>(null);
@@ -92,6 +99,10 @@ export default function PreferencePanel({ lastAppliedFingerprints = [] }: PanelP
     promoted: number;
     activated: number;
     isHighlyReliable?: boolean;
+  } | null>(null);
+  const [visibleAutoActivatedNotice, setVisibleAutoActivatedNotice] = useState<{
+    id: string;
+    preferenceId: string;
   } | null>(null);
 
   const load = useCallback(async () => {
@@ -159,6 +170,20 @@ export default function PreferencePanel({ lastAppliedFingerprints = [] }: PanelP
   }, [correctionQuery]);
 
   useEffect(() => { load(); }, []);
+
+  useEffect(() => {
+    if (!autoActivatedPreferenceNotice) return;
+    setVisibleAutoActivatedNotice(autoActivatedPreferenceNotice);
+    setExpanded(true);
+    setStatusFilter("active");
+    load();
+    const timer = window.setTimeout(() => {
+      setVisibleAutoActivatedNotice((current) =>
+        current?.id === autoActivatedPreferenceNotice.id ? null : current,
+      );
+    }, 6000);
+    return () => window.clearTimeout(timer);
+  }, [autoActivatedPreferenceNotice, load]);
 
   const handleAction = useCallback(async (
     pref: PreferenceRecord,
@@ -259,7 +284,7 @@ export default function PreferencePanel({ lastAppliedFingerprints = [] }: PanelP
     );
   }
 
-  if (preferences.length === 0 && !canSyncAdoptedCorrections) {
+  if (preferences.length === 0 && !canSyncAdoptedCorrections && !visibleAutoActivatedNotice) {
     return (
       <div className="text-[11px] text-sidebar-muted/60 px-2 py-2 text-center">
         아직 학습된 선호가 없습니다
@@ -269,6 +294,27 @@ export default function PreferencePanel({ lastAppliedFingerprints = [] }: PanelP
 
   return (
     <div>
+      {visibleAutoActivatedNotice && (
+        <div
+          data-testid="preference-auto-activated-notice"
+          className="mx-1 mb-1 rounded-md border border-emerald-400/20 bg-emerald-500/10 px-2 py-1.5 text-[10px] leading-snug text-emerald-100"
+        >
+          <div className="flex items-center justify-between gap-2">
+            <span className="font-medium">선호도로 자동 저장됨</span>
+            <a
+              data-testid="preference-auto-activated-link"
+              href={`#pref-card-${visibleAutoActivatedNotice.preferenceId}`}
+              className="shrink-0 font-medium text-emerald-200 hover:text-white hover:underline"
+              onClick={() => {
+                setExpanded(true);
+                setStatusFilter("active");
+              }}
+            >
+              선호에서 보기
+            </a>
+          </div>
+        </div>
+      )}
       {/* Header with toggle + counts */}
       <button
         onClick={() => setExpanded(!expanded)}

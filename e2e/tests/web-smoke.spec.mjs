@@ -12698,6 +12698,168 @@ test("promote correction pattern with high recurrence shows highly reliable feed
   await expect(result).toContainText("신뢰도 높음");
 });
 
+test("preference auto activation notice appears in PreferencePanel after correction", async ({ page }) => {
+  const sessionId = "demo-session";
+  const messageId = "msg-auto-activate-notice";
+  const preferenceId = "pref-auto-activate-notice";
+  let correctionRequests = 0;
+  let correctedText = null;
+
+  const sessionPayload = () => ({
+    session_id: sessionId,
+    title: "자동 활성화 알림 테스트",
+    messages: [
+      {
+        message_id: "msg-user-auto-activate",
+        role: "user",
+        text: "응답을 만들어 주세요.",
+        timestamp: "2026-04-29T00:00:00Z",
+      },
+      {
+        message_id: messageId,
+        role: "assistant",
+        text: "원본 응답입니다.",
+        corrected_text: correctedText,
+        timestamp: "2026-04-29T00:00:01Z",
+      },
+    ],
+    pending_approvals: [],
+    permissions: { web_search: "disabled" },
+    review_queue_items: [],
+  });
+
+  const preferencePayload = () => ({
+    preference_id: preferenceId,
+    delta_fingerprint: "sha256:auto-activate-notice",
+    description: "자동 활성화 알림 테스트 선호",
+    status: "active",
+    evidence_count: 3,
+    cross_session_count: 3,
+    reliability_stats: { applied_count: 3, corrected_count: 0 },
+    quality_info: { avg_similarity_score: 0.91, is_high_quality: true },
+    is_highly_reliable: true,
+    conflict_info: null,
+    activated_at: "2026-04-29T00:00:02Z",
+    created_at: "2026-04-29T00:00:00Z",
+    updated_at: "2026-04-29T00:00:02Z",
+  });
+
+  await page.route(/\/api\/sessions$/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        sessions: [
+          {
+            session_id: sessionId,
+            title: "자동 활성화 알림 테스트",
+            created_at: "2026-04-29T00:00:00Z",
+            updated_at: "2026-04-29T00:00:02Z",
+            message_count: 2,
+            pending_approval_count: 0,
+            last_message_preview: "원본 응답입니다.",
+          },
+        ],
+      }),
+    });
+  });
+  await page.route(/\/api\/session\?session_id=demo-session/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ session: sessionPayload() }),
+    });
+  });
+  await page.route(/\/api\/preferences$/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: true,
+        preferences: [preferencePayload()],
+        active_count: 1,
+        candidate_count: 0,
+        paused_count: 0,
+        total_applied: 3,
+        total_corrected: 0,
+        high_quality_active_count: 1,
+        highly_reliable_active_count: 1,
+        high_severity_conflict_count: 0,
+        low_reliability_active_count: 0,
+      }),
+    });
+  });
+  await page.route(/\/api\/preferences\/audit$/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: true,
+        audit: {
+          total: 1,
+          by_status: { active: 1, candidate: 0, paused: 0 },
+          conflict_pair_count: 0,
+          adopted_corrections_count: 0,
+          available_to_sync_count: 0,
+        },
+      }),
+    });
+  });
+  await page.route(/\/api\/corrections\/summary$/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ ok: true, total: 0, by_status: {}, top_recurring_fingerprints: [] }),
+    });
+  });
+  await page.route(/\/api\/corrections\/list(\?.*)?$/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ ok: true, corrections: [] }),
+    });
+  });
+  await page.route(/\/api\/correction$/, async (route) => {
+    correctionRequests += 1;
+    const payload = route.request().postDataJSON();
+    expect(payload.session_id).toBe(sessionId);
+    expect(payload.message_id).toBe(messageId);
+    correctedText = payload.corrected_text;
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: true,
+        message_id: messageId,
+        artifact_id: "artifact-auto-activate-notice",
+        corrected_text: correctedText,
+        corrected_outcome: null,
+        auto_activated: true,
+        preference_id: preferenceId,
+        session: sessionPayload(),
+      }),
+    });
+  });
+
+  await page.goto("/app-preview");
+  const assistantMessage = page.locator("main").getByText("원본 응답입니다.");
+  await expect(assistantMessage).toBeVisible({ timeout: 10_000 });
+
+  await assistantMessage.hover();
+  await page.getByTitle("수정").click();
+  await page.getByDisplayValue("원본 응답입니다.").fill("수정된 응답입니다.");
+  await page.getByRole("button", { name: /교정 제출/ }).click();
+
+  const notice = page.getByTestId("preference-auto-activated-notice");
+  await expect(notice).toContainText("선호도로 자동 저장됨", { timeout: 10_000 });
+  await expect(page.getByTestId("preference-auto-activated-link")).toHaveAttribute(
+    "href",
+    `#pref-card-${preferenceId}`,
+  );
+  await expect(page.locator(`#pref-card-${preferenceId}`)).toBeVisible();
+  expect(correctionRequests).toBe(1);
+});
+
 test("reviewed-memory loop: sync 후 활성화하면 이후 채팅 응답에 선호 반영 prefix가 붙습니다", async ({ page }) => {
   const sessionId = buildSessionId("reviewed-memory-loop");
   const preferenceStatement = `reviewed-memory loop accepted preference ${sessionId}`;

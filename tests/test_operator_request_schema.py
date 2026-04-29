@@ -693,6 +693,53 @@ class OperatorRequestHeaderSchemaTests(unittest.TestCase):
         self.assertEqual(decision["decision_class"], "release_gate")
         self.assertFalse(decision["operator_eligible"])
 
+    def test_milestone_publish_bundle_authorization_routes_to_internal_followup(self) -> None:
+        self.assertEqual(
+            normalize_reason_code("m84_publish_bundle_authorization"),
+            COMMIT_PUSH_BUNDLE_AUTHORIZATION_REASON,
+        )
+        self.assertEqual(normalize_decision_class("publish_authorization"), "release_gate")
+
+        decision = classify_operator_candidate(
+            "STATUS: needs_operator\n"
+            "CONTROL_SEQ: 1305\n"
+            "REASON_CODE: m84_publish_bundle_authorization\n"
+            "OPERATOR_POLICY: internal_only\n"
+            "DECISION_CLASS: publish_authorization\n"
+            "DECISION_REQUIRED: uncommitted M84 doc-sync + stale cancel guard branch commit push PR approval\n",
+            control_meta={
+                "status": "needs_operator",
+                "control_seq": 1305,
+                "reason_code": "m84_publish_bundle_authorization",
+                "operator_policy": "internal_only",
+                "decision_class": "publish_authorization",
+                "decision_required": (
+                    "uncommitted M84 doc-sync + stale cancel guard branch commit push PR approval"
+                ),
+            },
+            idle_stable=True,
+            now_ts=1_000.0,
+        )
+
+        marker = operator_gate_marker_from_decision(
+            decision,
+            control_file="operator_request.md",
+            control_seq=1305,
+        )
+
+        self.assertEqual(decision["mode"], "triage")
+        self.assertEqual(decision["suppressed_mode"], "triage")
+        self.assertEqual(decision["routed_to"], "verify_followup")
+        self.assertEqual(decision["reason_code"], COMMIT_PUSH_BUNDLE_AUTHORIZATION_REASON)
+        self.assertEqual(decision["operator_policy"], "internal_only")
+        self.assertEqual(decision["decision_class"], "release_gate")
+        self.assertEqual(decision["classification_source"], "operator_policy")
+        self.assertFalse(decision["operator_eligible"])
+        self.assertIsNotNone(marker)
+        assert marker is not None
+        self.assertEqual(marker["reason"], COMMIT_PUSH_BUNDLE_AUTHORIZATION_REASON)
+        self.assertEqual(marker["routed_to"], "verify_followup")
+
     def test_legacy_milestone_commit_push_doc_sync_routes_to_internal_followup(self) -> None:
         self.assertEqual(
             normalize_reason_code("m37_commit_push_milestones_doc_sync"),

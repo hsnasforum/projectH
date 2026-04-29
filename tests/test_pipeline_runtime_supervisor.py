@@ -2383,6 +2383,48 @@ class RuntimeSupervisorTest(unittest.TestCase):
             self.assertEqual(autonomy["operator_policy"], "internal_only")
             self.assertEqual(autonomy["decision_class"], "release_gate")
 
+    def test_milestone_publish_bundle_authorization_surfaces_as_triage(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            pipeline_dir = root / ".pipeline"
+            operator_path = pipeline_dir / "operator_request.md"
+            operator_path.write_text(
+                "STATUS: needs_operator\n"
+                "CONTROL_SEQ: 1305\n"
+                "REASON_CODE: m84_publish_bundle_authorization\n"
+                "OPERATOR_POLICY: internal_only\n"
+                "DECISION_CLASS: publish_authorization\n"
+                "DECISION_REQUIRED: uncommitted M84 doc-sync + stale cancel guard branch commit push PR approval\n",
+                encoding="utf-8",
+            )
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+
+            marker, autonomy = supervisor._operator_gate_marker(
+                {
+                    "active_control_file": ".pipeline/operator_request.md",
+                    "active_control_status": "needs_operator",
+                    "active_control_seq": 1305,
+                    "mtime": operator_path.stat().st_mtime,
+                },
+                turn_state={"state": "IDLE", "reason": "operator_request_updated"},
+                active_round={"state": "CLOSED"},
+                wrapper_models={},
+            )
+
+            self.assertIsNotNone(marker)
+            assert marker is not None
+            self.assertEqual(marker["reason"], COMMIT_PUSH_BUNDLE_AUTHORIZATION_REASON)
+            self.assertEqual(marker["operator_policy"], "internal_only")
+            self.assertEqual(marker["decision_class"], "release_gate")
+            self.assertEqual(marker["classification_source"], "operator_policy")
+            self.assertEqual(marker["mode"], "triage")
+            self.assertEqual(marker["routed_to"], "verify_followup")
+            self.assertEqual(autonomy["mode"], "triage")
+            self.assertEqual(autonomy["reason_code"], COMMIT_PUSH_BUNDLE_AUTHORIZATION_REASON)
+            self.assertEqual(autonomy["operator_policy"], "internal_only")
+            self.assertEqual(autonomy["decision_class"], "release_gate")
+
     def test_b1_dirty_tree_release_gate_operator_request_surfaces_as_triage(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -4226,6 +4268,63 @@ class RuntimeSupervisorTest(unittest.TestCase):
                 "OPERATOR_POLICY: internal_only\n"
                 "DECISION_CLASS: release_gate\n"
                 "DECISION_REQUIRED: push branch and handle draft PR follow-up\n",
+                encoding="utf-8",
+            )
+
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+            supervisor._runtime_started = True
+
+            with (
+                mock.patch.object(supervisor, "_watcher_status", return_value={"alive": True, "pid": 4242}),
+                mock.patch.object(supervisor.adapter, "session_exists", return_value=True),
+                mock.patch.object(
+                    supervisor,
+                    "_build_lane_statuses",
+                    return_value=(
+                        [
+                            {"name": "Claude", "state": "READY", "attachable": True, "pid": 11, "note": ""},
+                            {"name": "Codex", "state": "READY", "attachable": True, "pid": 12, "note": ""},
+                            {"name": "Gemini", "state": "READY", "attachable": True, "pid": 13, "note": ""},
+                        ],
+                        {"Claude": {}, "Codex": {}, "Gemini": {}},
+                    ),
+                ),
+                mock.patch("pipeline_runtime.supervisor.build_lane_read_models", return_value={}),
+                mock.patch.object(supervisor, "_build_artifacts", return_value={"latest_work": {}, "latest_verify": {}}),
+            ):
+                status = supervisor._write_status()
+
+            self.assertEqual(status["control"]["active_control_status"], "none")
+            self.assertEqual(status["compat"]["control_slots"]["active"]["file"], "operator_request.md")
+            self.assertEqual(status["compat"]["control_slots"]["active"]["status"], "needs_operator")
+            self.assertEqual(status["autonomy"]["mode"], "triage")
+            self.assertEqual(
+                status["autonomy"]["reason_code"],
+                COMMIT_PUSH_BUNDLE_AUTHORIZATION_REASON,
+            )
+            self.assertEqual(status["autonomy"]["operator_policy"], "internal_only")
+            self.assertEqual(status["autonomy"]["decision_class"], "release_gate")
+            self.assertEqual(status["automation_health"], "attention")
+            self.assertEqual(
+                status["automation_reason_code"],
+                COMMIT_PUSH_BUNDLE_AUTHORIZATION_REASON,
+            )
+            self.assertEqual(status["automation_next_action"], "verify_followup")
+
+    def test_write_status_normalizes_milestone_publish_bundle_authorization_to_verify_followup(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            pipeline_dir = root / ".pipeline"
+            state_dir = pipeline_dir / "state"
+            state_dir.mkdir(parents=True, exist_ok=True)
+            (pipeline_dir / "operator_request.md").write_text(
+                "STATUS: needs_operator\n"
+                "CONTROL_SEQ: 1305\n"
+                "REASON_CODE: m84_publish_bundle_authorization\n"
+                "OPERATOR_POLICY: internal_only\n"
+                "DECISION_CLASS: publish_authorization\n"
+                "DECISION_REQUIRED: uncommitted M84 doc-sync + stale cancel guard branch commit push PR approval\n",
                 encoding="utf-8",
             )
 

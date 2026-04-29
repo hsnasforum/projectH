@@ -51,6 +51,18 @@ from app.handlers.chat import ChatHandlerMixin
 DEFAULT_SESSION_ID = "demo-session"
 
 
+def _parse_positive_int(value: str | None, *, default: int, maximum: int = 100) -> int:
+    if value is None:
+        return default
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    if parsed <= 0:
+        return default
+    return min(parsed, maximum)
+
+
 def _has_manual_file_store_override(settings: AppSettings) -> bool:
     return (
         settings.sessions_dir != DEFAULT_SESSIONS_DIR
@@ -368,7 +380,8 @@ class LocalAssistantHandler(BaseHTTPRequestHandler):
             qs = parse_qs(parsed.query)
             query = (qs.get("query") or [None])[0]
             status = (qs.get("status") or [None])[0]
-            response = self.server.service.get_correction_list(query=query, status=status)
+            limit = _parse_positive_int((qs.get("limit") or [None])[0], default=20)
+            response = self.server.service.get_correction_list(query=query, status=status, limit=limit)
             self._send_json(HTTPStatus.OK, response)
             return
         correction_detail_prefix = "/api/corrections/"

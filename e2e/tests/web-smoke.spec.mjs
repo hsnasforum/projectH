@@ -12925,6 +12925,125 @@ test("correction list search endpoint filters by query parameter", async ({ page
   expect(withQuery.matches).toBe(true);
 });
 
+test("correction history search filters by query", async ({ page }) => {
+  await page.route(/\/api\/preferences$/, async (route) => {
+    if (route.request().method() === "GET") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          ok: true,
+          preferences: [
+            {
+              preference_id: "pref-correction-search-anchor",
+              delta_fingerprint: "sha256:correction-search-anchor",
+              description: "교정 검색 UI 표시용 활성 선호",
+              status: "active",
+              evidence_count: 1,
+              cross_session_count: 1,
+              reliability_stats: { applied_count: 1, corrected_count: 0 },
+              quality_info: { avg_similarity_score: null, is_high_quality: null },
+              is_highly_reliable: null,
+              activated_at: "2026-04-30T00:00:00Z",
+              created_at: "2026-04-30T00:00:00Z",
+              updated_at: "2026-04-30T00:00:00Z",
+            },
+          ],
+          active_count: 1,
+          candidate_count: 0,
+          paused_count: 0,
+          total_applied: 1,
+          total_corrected: 0,
+        }),
+      });
+    } else {
+      await route.continue();
+    }
+  });
+  await page.route(/\/api\/preferences\/audit$/, async (route) => {
+    if (route.request().method() === "GET") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ ok: true, audit: null }),
+      });
+    } else {
+      await route.continue();
+    }
+  });
+  await page.route(/\/api\/corrections\/summary$/, async (route) => {
+    if (route.request().method() === "GET") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ ok: true, total: 2, by_status: { recorded: 2 }, top_recurring_fingerprints: [] }),
+      });
+    } else {
+      await route.continue();
+    }
+  });
+
+  let queryRequests = 0;
+  await page.route(/\/api\/corrections\/list(\?.*)?$/, async (route) => {
+    if (route.request().method() !== "GET") {
+      await route.continue();
+      return;
+    }
+    const url = new URL(route.request().url());
+    const query = url.searchParams.get("query") || "";
+    if (query === "needle") queryRequests += 1;
+    const corrections = query === "needle"
+      ? [
+          {
+            correction_id: "correction-search-ui-needle",
+            status: "recorded",
+            original_text: "needle match correction",
+            corrected_text: "needle match corrected",
+            delta_fingerprint: "fp-search-ui-needle",
+            created_at: "2026-04-30T10:00:00Z",
+          },
+        ]
+      : [
+          {
+            correction_id: "correction-search-ui-needle",
+            status: "recorded",
+            original_text: "needle match correction",
+            corrected_text: "needle match corrected",
+            delta_fingerprint: "fp-search-ui-needle",
+            created_at: "2026-04-30T10:00:00Z",
+          },
+          {
+            correction_id: "correction-search-ui-other",
+            status: "recorded",
+            original_text: "other correction source",
+            corrected_text: "other correction result",
+            delta_fingerprint: "fp-search-ui-other",
+            created_at: "2026-04-30T09:00:00Z",
+          },
+        ];
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ ok: true, corrections }),
+    });
+  });
+
+  await page.goto("/app-preview");
+  await expect(page.getByTestId("correction-list-item")).toHaveCount(2, { timeout: 10_000 });
+
+  const queryRequest = page.waitForRequest((request) => {
+    if (!request.url().includes("/api/corrections/list")) return false;
+    return new URL(request.url()).searchParams.get("query") === "needle";
+  });
+  await page.getByTestId("correction-search-input").fill("needle");
+  await queryRequest;
+
+  await expect(page.getByTestId("correction-list-item")).toHaveCount(1, { timeout: 10_000 });
+  await expect(page.getByTestId("correction-list-item")).toContainText("needle match correction");
+  await expect(page.getByTestId("correction-list-item")).not.toContainText("other correction source");
+  expect(queryRequests).toBe(1);
+});
+
 test("correction history status filter narrows list", async ({ page }) => {
   await page.route(/\/api\/preferences$/, async (route) => {
     if (route.request().method() === "GET") {

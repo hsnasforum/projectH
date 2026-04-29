@@ -618,6 +618,7 @@ export default function MessageBubble({
                           {fullPref?.preference_id && (
                             <a
                               href={`#pref-card-${fullPref.preference_id}`}
+                              data-testid="pref-navigate-to-card"
                               className="w-fit text-[10px] text-violet-400 underline hover:text-violet-600"
                               onClick={() => setPrefPopoverOpen(false)}
                             >

@@ -299,6 +299,7 @@ export interface ReviewQueueItem {
 export interface PreferencesPayload {
   ok: boolean;
   preferences: PreferenceRecord[];
+  candidate_preferences?: PreferenceRecord[] | null;
   active_count: number;
   candidate_count: number;
   paused_count: number;

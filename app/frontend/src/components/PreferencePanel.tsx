@@ -145,7 +145,7 @@ export default function PreferencePanel({ lastAppliedFingerprints = [] }: PanelP
           : visible.filter(
               (pref) =>
                 pref.status === "active" &&
-                (pref.conflict_info as { conflict_severity?: string } | undefined)?.conflict_severity === "high",
+                pref.conflict_info?.conflict_severity === "high",
             ).length,
       );
       setAudit(auditData);

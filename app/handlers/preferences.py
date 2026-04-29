@@ -193,6 +193,17 @@ class PreferenceHandlerMixin:
             if preference_id and str(preference_id) in latest_reason:
                 pref_copy["last_transition_reason"] = latest_reason[str(preference_id)]
 
+        get_candidates_fn = getattr(self.preference_store, "get_candidates", None)
+        if callable(get_candidates_fn):
+            raw_candidates = get_candidates_fn()
+        else:
+            raw_candidates = [p for p in all_prefs if p.get("status") == "candidate"]
+        candidate_preferences = [
+            enrich_preference_reliability(candidate, per_pref_stats)
+            for candidate in raw_candidates
+            if isinstance(candidate, dict)
+        ]
+
         total_applied = 0
         total_corrected = 0
         high_quality_active_count = 0
@@ -230,6 +241,7 @@ class PreferenceHandlerMixin:
         return {
             "ok": True,
             "preferences": enriched,
+            "candidate_preferences": candidate_preferences,
             "active_count": sum(1 for p in enriched if p.get("status") == "active"),
             "candidate_count": sum(1 for p in enriched if p.get("status") == "candidate"),
             "paused_count": sum(1 for p in enriched if p.get("status") == "paused"),

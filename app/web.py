@@ -45,6 +45,7 @@ from app.handlers.aggregate import AggregateHandlerMixin
 from app.handlers.corrections import CorrectionHandlerMixin
 from app.handlers.feedback import FeedbackHandlerMixin
 from app.handlers.preferences import PreferenceHandlerMixin
+from app.handlers.reviewed_memory import ReviewedMemoryHandlerMixin
 from app.handlers.chat import ChatHandlerMixin
 
 DEFAULT_SESSION_ID = "demo-session"
@@ -99,6 +100,7 @@ class WebAppService(
     ChatHandlerMixin,
     AggregateHandlerMixin,
     CorrectionHandlerMixin,
+    ReviewedMemoryHandlerMixin,
     FeedbackHandlerMixin,
     PreferenceHandlerMixin,
     SerializerMixin,

@@ -12572,6 +12572,132 @@ test("correction promote pattern returns activated_count in response", async ({ 
   expect(result.activated_count).toBe(1);
 });
 
+test("promote correction pattern with high recurrence shows highly reliable feedback", async ({ page }) => {
+  await page.route(/\/api\/preferences$/, async (route) => {
+    if (route.request().method() === "GET") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          ok: true,
+          preferences: [
+            {
+              preference_id: "pref-promote-reliable-anchor",
+              delta_fingerprint: "sha256:promote-reliable-anchor",
+              description: "교정 승격 UI 노출용 기준 선호",
+              status: "candidate",
+              evidence_count: 1,
+              cross_session_count: 1,
+              reliability_stats: { applied_count: 0, corrected_count: 0 },
+              quality_info: { avg_similarity_score: 0.9, is_high_quality: true },
+              is_highly_reliable: false,
+              conflict_info: null,
+              activated_at: null,
+              created_at: "2026-04-29T00:00:00Z",
+              updated_at: "2026-04-29T00:00:00Z",
+            },
+          ],
+          active_count: 0,
+          candidate_count: 1,
+          paused_count: 0,
+          total_applied: 0,
+          total_corrected: 0,
+          high_quality_active_count: 0,
+          highly_reliable_active_count: 0,
+          high_severity_conflict_count: 0,
+          low_reliability_active_count: 0,
+        }),
+      });
+    } else {
+      await route.continue();
+    }
+  });
+  await page.route(/\/api\/preferences\/audit$/, async (route) => {
+    if (route.request().method() === "GET") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          ok: true,
+          audit: {
+            total: 1,
+            by_status: { active: 0, candidate: 1 },
+            conflict_pair_count: 0,
+            adopted_corrections_count: 0,
+            available_to_sync_count: 0,
+          },
+        }),
+      });
+    } else {
+      await route.continue();
+    }
+  });
+  await page.route(/\/api\/corrections\/summary$/, async (route) => {
+    if (route.request().method() === "GET") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          ok: true,
+          total: 5,
+          by_status: { confirmed: 3, active: 2 },
+          top_recurring_fingerprints: [
+            {
+              delta_fingerprint: "fp-promote-reliable-001",
+              recurrence_count: 5,
+              original_snippet: "high recurrence original text",
+              corrected_snippet: "high recurrence corrected text",
+            },
+          ],
+        }),
+      });
+    } else {
+      await route.continue();
+    }
+  });
+  await page.route(/\/api\/corrections\/list$/, async (route) => {
+    if (route.request().method() === "GET") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ ok: true, corrections: [] }),
+      });
+    } else {
+      await route.continue();
+    }
+  });
+  await page.route(/\/api\/corrections\/promote-pattern$/, async (route) => {
+    if (route.request().method() === "POST") {
+      const payload = route.request().postDataJSON();
+      expect(payload.delta_fingerprint).toBe("fp-promote-reliable-001");
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          ok: true,
+          promoted_count: 1,
+          activated_count: 1,
+          is_highly_reliable: true,
+        }),
+      });
+    } else {
+      await route.continue();
+    }
+  });
+
+  await page.goto("/app-preview");
+
+  await expect(page.getByTestId("correction-top-pattern")).toContainText(
+    "high recurrence original text",
+    { timeout: 10_000 },
+  );
+  await page.getByTestId("correction-promote-pattern").click();
+
+  const result = page.getByTestId("correction-promote-result");
+  await expect(result).toContainText("1개 활성화", { timeout: 10_000 });
+  await expect(result).toContainText("신뢰도 높음");
+});
+
 test("reviewed-memory loop: sync 후 활성화하면 이후 채팅 응답에 선호 반영 prefix가 붙습니다", async ({ page }) => {
   const sessionId = buildSessionId("reviewed-memory-loop");
   const preferenceStatement = `reviewed-memory loop accepted preference ${sessionId}`;

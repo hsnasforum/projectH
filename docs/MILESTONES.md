@@ -1323,11 +1323,49 @@ Axis 1 (CONTROL_SEQ 1268): sqlite_store.py 분리 — DONE
 `storage/sqlite/{database,session,task_log,artifact,preference,correction,migrate}.py`
 신규 생성. 기존 import 사이트 수정 없이 129 tests PASS.
 
+## M77 Reviewed Memory Handler Decomposition
+
+Axis 1 (CONTROL_SEQ 1275): ReviewedMemoryHandlerMixin 분리 — DONE
+6개 aggregate lifecycle 메서드(emit/apply/confirm/stop_apply/reverse/conflict_visibility)를
+`app/handlers/reviewed_memory.py`로 이동. `aggregate.py` 822→352줄.
+Pure structural refactoring — 150 smoke tests PASS.
+
+## M78 Candidate Handler Decomposition — aggregate.py 완전 해소
+
+Axis 1 (CONTROL_SEQ 1278): CandidateHandlerMixin 분리 + aggregate.py 삭제 — DONE
+`submit_candidate_confirmation`/`submit_candidate_review`를
+`app/handlers/candidates.py`로 이동. `aggregate.py` 352→0 (삭제).
+M70→M77→M78 handler 분리 3부작 완결: aggregate.py 937→0줄.
+
+## M81 Auto-Activate on Promote
+
+Axis 1 (CONTROL_SEQ 1291): promote_correction_pattern 자동 활성화 — DONE
+`app/handlers/corrections.py`의 `promote_correction_pattern`에서
+promoted correction마다 `record_reviewed_candidate_preference` 후
+`activate_preference`를 호출해 CANDIDATE→ACTIVE 자동 전환.
+Axis 2 없음 (backend 단일 파일 변경, dist/E2E 불필요).
+
+## M82 activated_count in Promote Response
+
+Axis 1 (CONTROL_SEQ 1295): activated_count API 응답 필드 + 클라이언트 타입 — DONE
+`promote_correction_pattern` 반환값에 `activated_count` 추가.
+`app/frontend/src/api/client.ts` promoteCorrectionPattern 반환 타입에
+`activated_count?: number` 추가.
+Axis 2 없음 (응답 필드 확장 + 타입 선언만, dist 재빌드 불필요).
+
+## M83 Promote Result Feedback UI
+
+Axis 1 (CONTROL_SEQ 1298): 승격 결과 피드백 UI — DONE
+`PreferencePanel.tsx`에 `lastPromoteResult` 상태와
+`correction-promote-result` 인라인 표시를 추가. dist 재빌드·E2E는 Axis 2 대상.
+
+Axis 2 (CONTROL_SEQ 1299): dist 재빌드 + E2E 격리 — DONE
+
 ## Next 3 Implementation Priorities
 
-1. **v1.5 structural hardening 완료 (M70–M75)**: CorrectionHandlerMixin 분리 + docs sync + 4개 store physical validation (M72–M74) + SQLite store 구조 분리 (M75). PR #54–#61 머지 대기 중.
-2. **PR 머지 백로그**: operator 승인 대기 — PR #54→…→#61 순서 머지 후 main 기준 M76+ 시작.
-3. **M76 방향**: 새 기능 축(Axis 3: Reliability 등) 또는 추가 structural 개선 중 advisory에서 결정.
+1. **PR 머지 백로그**: operator 승인 대기 — PR #62→#63→…→#69 (8단 스택, M76–M83). 머지 후 main 기준 M84+ 시작.
+2. **M84 방향**: correction→preference→active 관측 루프 완결 후 다음 기능 축 또는 structural 개선 — advisory에서 결정.
+3. **장기**: cross-session memory 강화, 승격 결과 persistence 등 north star 방향.
 
 ## Do Not Pull Forward
 

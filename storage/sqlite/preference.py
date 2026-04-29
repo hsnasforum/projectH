@@ -97,6 +97,7 @@ class SQLitePreferenceStore:
         original_snippet: str | None = None,
         corrected_snippet: str | None = None,
         status: str | None = None,
+        initial_reliability_stats: dict[str, Any] | None = None,
     ) -> PreferenceRecord:
         """Persist one local preference candidate from an accepted reviewed candidate."""
         row = self._db.fetchone(
@@ -164,6 +165,11 @@ class SQLitePreferenceStore:
             "evidence_count": 1,
             "cross_session_count": 0,
             "avg_similarity_score": avg_similarity_score,
+            "reliability_stats": (
+                dict(initial_reliability_stats)
+                if initial_reliability_stats
+                else {"applied_count": 0, "corrected_count": 0}
+            ),
             "original_snippet": original_snippet,
             "corrected_snippet": corrected_snippet,
             "delta_summary": {},
@@ -222,4 +228,3 @@ class SQLitePreferenceStore:
         if cursor.rowcount == 0:
             return None
         return self.get(preference_id)
-

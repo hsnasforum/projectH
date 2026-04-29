@@ -12540,6 +12540,38 @@ test("correction list search endpoint filters by query parameter", async ({ page
   expect(withQuery.matches).toBe(true);
 });
 
+test("correction promote pattern returns activated_count in response", async ({ page }) => {
+  await page.route(/\/api\/corrections\/promote-pattern$/, async (route) => {
+    if (route.request().method() === "POST") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ ok: true, promoted_count: 1, activated_count: 1 }),
+      });
+    } else {
+      await route.continue();
+    }
+  });
+
+  await page.goto("/app-preview");
+  const result = await page.evaluate(async () => {
+    const res = await fetch("/api/corrections/promote-pattern", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ delta_fingerprint: "fp-test-001" }),
+    });
+    const data = await res.json();
+    return {
+      ok: res.ok,
+      promoted_count: data.promoted_count,
+      activated_count: data.activated_count,
+    };
+  });
+  expect(result.ok).toBe(true);
+  expect(result.promoted_count).toBe(1);
+  expect(result.activated_count).toBe(1);
+});
+
 test("reviewed-memory loop: sync 후 활성화하면 이후 채팅 응답에 선호 반영 prefix가 붙습니다", async ({ page }) => {
   const sessionId = buildSessionId("reviewed-memory-loop");
   const preferenceStatement = `reviewed-memory loop accepted preference ${sessionId}`;

@@ -4,7 +4,8 @@ from __future__ import annotations
 from typing import Any
 
 from app.errors import WebApiError
-from core.contracts import CandidateFamily
+from core.contracts import CandidateFamily, PreferenceStatus
+from storage.preference_utils import seed_reliability_from_recurrence
 
 
 def _first_correction_snippets(
@@ -106,9 +107,10 @@ class CorrectionHandlerMixin:
         if not delta_fingerprint:
             raise WebApiError(400, "delta_fingerprint 값이 필요합니다.")
         promoted = self.correction_store.promote_by_fingerprint(delta_fingerprint)
+        activated_count = 0
         for correction in promoted:
             first_original, first_corrected = _first_correction_snippets([correction])
-            self.preference_store.record_reviewed_candidate_preference(
+            pref = self.preference_store.record_reviewed_candidate_preference(
                 delta_fingerprint=delta_fingerprint,
                 candidate_family=str(
                     correction.get("pattern_family") or CandidateFamily.CORRECTION_REWRITE
@@ -125,5 +127,16 @@ class CorrectionHandlerMixin:
                 },
                 original_snippet=first_original,
                 corrected_snippet=first_corrected,
+                initial_reliability_stats=seed_reliability_from_recurrence(
+                    int(correction.get("recurrence_count") or 1)
+                ),
             )
-        return {"ok": True, "promoted_count": len(promoted)}
+            if pref and pref.get("status") == PreferenceStatus.CANDIDATE:
+                result = self.preference_store.activate_preference(pref["preference_id"])
+                if result is not None:
+                    activated_count += 1
+        return {
+            "ok": True,
+            "promoted_count": len(promoted),
+            "activated_count": activated_count,
+        }

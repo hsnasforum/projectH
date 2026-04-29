@@ -87,6 +87,10 @@ export default function PreferencePanel({ lastAppliedFingerprints = [] }: PanelP
   const [highlyReliableActiveCount, setHighlyReliableActiveCount] = useState(0);
   const [highSeverityConflictCount, setHighSeverityConflictCount] = useState(0);
   const [lowReliabilityActiveCount, setLowReliabilityActiveCount] = useState(0);
+  const [lastPromoteResult, setLastPromoteResult] = useState<{
+    promoted: number;
+    activated: number;
+  } | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -347,12 +351,28 @@ export default function PreferencePanel({ lastAppliedFingerprints = [] }: PanelP
                       className="text-[10px] text-sidebar-muted/70 hover:text-sidebar-foreground shrink-0"
                       onClick={async () => {
                         const fp = correctionSummary.top_recurring_fingerprints[0].delta_fingerprint;
-                        await promoteCorrectionPattern(fp).catch(() => null);
+                        const result = await promoteCorrectionPattern(fp).catch(() => null);
+                        if (result) {
+                          setLastPromoteResult({
+                            promoted: result.promoted_count,
+                            activated: result.activated_count ?? 0,
+                          });
+                        }
                         load();
                       }}
                     >
                       승격
                     </button>
+                    {lastPromoteResult !== null && (
+                      <span
+                        data-testid="correction-promote-result"
+                        className="text-[9px] text-sidebar-muted/50 ml-1"
+                      >
+                        {lastPromoteResult.promoted > 0
+                          ? `✓ ${lastPromoteResult.activated}개 활성화`
+                          : "패턴 없음"}
+                      </span>
+                    )}
                   </div>
                 )}
                 {correctionList && (

@@ -514,6 +514,37 @@ class PreferenceStoreTest(unittest.TestCase):
             self.assertEqual(stored["original_snippet"], "hello")
             self.assertEqual(stored["corrected_snippet"], "world")
 
+    def test_record_reviewed_candidate_preserves_existing_reliability_stats(self) -> None:
+        with TemporaryDirectory() as tmp:
+            pref, _ = self._make_stores(tmp)
+            fp = "sha256:test_reliability_seed_preserve"
+            created = pref.record_reviewed_candidate_preference(
+                delta_fingerprint=fp,
+                candidate_family="correction_rewrite",
+                description="검토 수락된 교정 패턴",
+                source_refs={"candidate_id": "cand-seed-a"},
+                initial_reliability_stats={"applied_count": 5, "corrected_count": 0},
+            )
+
+            updated = pref.record_reviewed_candidate_preference(
+                delta_fingerprint=fp,
+                candidate_family="correction_rewrite",
+                description="검토 수락된 교정 패턴",
+                source_refs={"candidate_id": "cand-seed-b"},
+                initial_reliability_stats={"applied_count": 9, "corrected_count": 2},
+            )
+
+            self.assertEqual(updated["preference_id"], created["preference_id"])
+            self.assertEqual(
+                updated["reliability_stats"],
+                {"applied_count": 5, "corrected_count": 0},
+            )
+            stored = pref.get(created["preference_id"])
+            self.assertEqual(
+                stored["reliability_stats"],
+                {"applied_count": 5, "corrected_count": 0},
+            )
+
     def test_record_reviewed_candidate_update_preserves_score_when_none_passed(self) -> None:
         with TemporaryDirectory() as tmp:
             pref, _ = self._make_stores(tmp)

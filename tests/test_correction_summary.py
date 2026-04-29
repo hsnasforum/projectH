@@ -26,6 +26,28 @@ class CorrectionSummaryTest(unittest.TestCase):
     def _make_store(self, base_dir: str) -> CorrectionStore:
         return CorrectionStore(base_dir=str(Path(base_dir) / "corrections"))
 
+    def _record_confirmed_pattern(
+        self,
+        store: CorrectionStore,
+        *,
+        count: int,
+    ) -> str:
+        records = []
+        for index in range(count):
+            record = store.record_correction(
+                artifact_id=f"art-recur-{count}-{index}",
+                session_id=f"s{index}",
+                source_message_id=f"msg-recur-{count}-{index}",
+                original_text="Make the answer short.",
+                corrected_text="Make the answer concise.",
+            )
+            self.assertIsNotNone(record)
+            records.append(record)
+        delta_fingerprint = records[0]["delta_fingerprint"]
+        confirmed = store.confirm_by_fingerprint(delta_fingerprint)
+        self.assertEqual(len(confirmed), count)
+        return delta_fingerprint
+
     def test_empty_store_returns_zero_total(self) -> None:
         with TemporaryDirectory() as d:
             service = _CorrectionSummaryService(self._make_store(d))
@@ -99,20 +121,7 @@ class CorrectionSummaryTest(unittest.TestCase):
         with TemporaryDirectory() as d:
             correction_store = self._make_store(d)
             preference_store = PreferenceStore(base_dir=str(Path(d) / "preferences"))
-            records = []
-            for index, session_id in enumerate(["s1", "s2", "s3"]):
-                record = correction_store.record_correction(
-                    artifact_id=f"art-recur-{index}",
-                    session_id=session_id,
-                    source_message_id=f"msg-recur-{index}",
-                    original_text="Make the answer short.",
-                    corrected_text="Make the answer concise.",
-                )
-                self.assertIsNotNone(record)
-                records.append(record)
-            delta_fingerprint = records[0]["delta_fingerprint"]
-            confirmed = correction_store.confirm_by_fingerprint(delta_fingerprint)
-            self.assertEqual(len(confirmed), 3)
+            delta_fingerprint = self._record_confirmed_pattern(correction_store, count=3)
 
             payload = _CorrectionSummaryService(
                 correction_store,
@@ -128,6 +137,34 @@ class CorrectionSummaryTest(unittest.TestCase):
                 preference["reliability_stats"],
                 {"applied_count": 3, "corrected_count": 0},
             )
+
+    def test_promote_pattern_reports_highly_reliable_true_from_seeded_recurrence(self) -> None:
+        with TemporaryDirectory() as d:
+            correction_store = self._make_store(d)
+            preference_store = PreferenceStore(base_dir=str(Path(d) / "preferences"))
+            delta_fingerprint = self._record_confirmed_pattern(correction_store, count=3)
+
+            payload = _CorrectionSummaryService(
+                correction_store,
+                preference_store,
+            ).promote_correction_pattern({"delta_fingerprint": delta_fingerprint})
+
+            self.assertIn("is_highly_reliable", payload)
+            self.assertIs(payload["is_highly_reliable"], True)
+
+    def test_promote_pattern_reports_highly_reliable_false_below_threshold(self) -> None:
+        with TemporaryDirectory() as d:
+            correction_store = self._make_store(d)
+            preference_store = PreferenceStore(base_dir=str(Path(d) / "preferences"))
+            delta_fingerprint = self._record_confirmed_pattern(correction_store, count=2)
+
+            payload = _CorrectionSummaryService(
+                correction_store,
+                preference_store,
+            ).promote_correction_pattern({"delta_fingerprint": delta_fingerprint})
+
+            self.assertIn("is_highly_reliable", payload)
+            self.assertIs(payload["is_highly_reliable"], False)
 
 
 if __name__ == "__main__":

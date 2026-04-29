@@ -1295,11 +1295,39 @@ Axis 1 (CONTROL_SEQ 1248): CorrectionHandlerMixin 분리 — DONE
 `_first_correction_snippets`를 `AggregateHandlerMixin`에서 분리.
 `aggregate.py` 937→822줄. Pure structural refactoring.
 
+## M72 Correction Store Physical Validation
+
+Axis 1 (CONTROL_SEQ 1256): correction store read-path physical validation — DONE
+`_is_valid_correction_record()` + `_scan_all()` filter in `CorrectionStore`.
+`SQLiteCorrectionStore.list_recent()`/`list_filtered()` post-filter. Silent
+exclusion of malformed records.
+
+## M73 Preference Store Physical Validation
+
+Axis 1 (CONTROL_SEQ 1260): preference store read-path physical validation — DONE
+`_is_valid_preference_record()` replacing minimal `isinstance` check in
+`PreferenceStore._scan_all()`. `SQLitePreferenceStore.get_active_preferences()`/
+`list_all()` post-filter.
+
+## M74 Artifact & TaskLog Physical Validation
+
+Axis 1 (CONTROL_SEQ 1264): artifact store + task log read-path validation — DONE
+`_is_valid_artifact_record()` in `ArtifactStore.list_by_session()`/`list_recent()`.
+`SQLiteArtifactStore` equivalents. `TaskLogger.iter_session_records()` ts/action
+mandatory-field checks. New `tests/test_task_log.py`.
+
+## M75 SQLite Store Structural Decomposition
+
+Axis 1 (CONTROL_SEQ 1268): sqlite_store.py 분리 — DONE
+`storage/sqlite_store.py` 1125→23줄 thin re-export wrapper. 8개 모듈
+`storage/sqlite/{database,session,task_log,artifact,preference,correction,migrate}.py`
+신규 생성. 기존 import 사이트 수정 없이 129 tests PASS.
+
 ## Next 3 Implementation Priorities
 
-1. **M61–M70 shipped**: Correction Lifecycle axis 완성 (summary/analytics/confirm/dismiss/list/promote/search+conflict) + handler 구조 분리. PR #54 (M68) / #55 (M69) / #56 (M70) 머지 대기 중.
-2. **PR 머지 백로그**: operator 승인 대기 — PR #54 → PR #55 retarget → PR #55 → PR #56 retarget → PR #56 순서. 머지 후 main 기준 M71+ 시작.
-3. **M71 방향**: physical validation, 추가 structural 개선, 또는 새 기능 방향 중 advisory에서 결정.
+1. **v1.5 structural hardening 완료 (M70–M75)**: CorrectionHandlerMixin 분리 + docs sync + 4개 store physical validation (M72–M74) + SQLite store 구조 분리 (M75). PR #54–#61 머지 대기 중.
+2. **PR 머지 백로그**: operator 승인 대기 — PR #54→…→#61 순서 머지 후 main 기준 M76+ 시작.
+3. **M76 방향**: 새 기능 축(Axis 3: Reliability 등) 또는 추가 structural 개선 중 advisory에서 결정.
 
 ## Do Not Pull Forward
 

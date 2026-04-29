@@ -1471,10 +1471,23 @@ Axis 2: dist rebuild + E2E fixture 안정화 — DONE
 dist 재빌드 (313K, Apr 29 17:12). `신뢰도 높음` / `isHighlyReliable` 3건 dist 반영.
 preference E2E 5 passed. popover badge E2E deterministic route 추가.
 
+## M95 Applied Preferences 팝오버 선호 카드 이동 링크
+
+Axis 1: 팝오버에서 선호 카드로 이동 링크 — DONE
+`PreferencePanel.tsx` 카드 루트에 `id="pref-card-{preference_id}"` 추가.
+`MessageBubble.tsx` applied preferences 팝오버에 `선호에서 보기` anchor 링크 추가
+(`href="#pref-card-{preference_id}"`, 클릭 시 팝오버 닫힘).
+`fullPref?.preference_id` 없을 때 미표시. tsc PASS.
+Gemini advisory CONTROL_SEQ 1382 Option B3 (Navigation link from popover to preference details) 구현.
+
+Axis 2: dist rebuild + E2E — DONE
+dist 재빌드 (314K, Apr 29 17:38). `pref-card-` / `선호에서 보기` 2건 dist 반영.
+preference E2E 5 passed. e2e 파일 변경 없음.
+
 ## Next 3 Implementation Priorities
 
-1. **PR 머지 백로그**: operator 승인 대기 — PR #71-#84 스택.
-2. **M95 방향**: M94 완료; 다음 기능 축은 main 머지 후 fresh advisory 결정.
+1. **PR 머지 백로그**: operator 승인 대기 — PR #71-#85 스택.
+2. **M96 방향**: M95 완료; 다음 기능 축은 main 머지 후 fresh advisory 결정.
 3. **장기**: cross-session memory 강화, north star 방향 유지.
 
 ## Do Not Pull Forward

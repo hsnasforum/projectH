@@ -503,6 +503,7 @@ export default function PreferencePanel({ lastAppliedFingerprints = [] }: PanelP
             return (
               <div
                 key={pref.preference_id}
+                id={`pref-card-${pref.preference_id}`}
                 className={`
                   rounded-lg bg-sidebar-hover/50 px-2.5 py-2 transition-all duration-500
                   ${fadingOut.has(pref.preference_id) ? "opacity-0 scale-95" : "opacity-100"}

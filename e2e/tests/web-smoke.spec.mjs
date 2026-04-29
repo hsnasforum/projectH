@@ -13058,18 +13058,29 @@ test("reviewed-memory loop: preference-not-applied-btn 클릭 시 record-correct
     });
   });
 
+  const initialSessionLoad = page.waitForResponse(
+    (response) => response.url().includes("/api/session?session_id=demo-session") && response.status() === 200,
+  );
   await page.goto("/app-preview");
+  await initialSessionLoad;
   await page.getByRole("button", { name: /설정/ }).click();
   await page.getByLabel("프로바이더").selectOption("mock");
 
   await page.getByPlaceholder(/메시지를 입력하세요/).fill("선호 교정 버튼 호출을 확인해 주세요.");
+  const streamResponse = page.waitForResponse(
+    (response) => response.url().includes("/api/chat/stream") && response.status() === 200,
+  );
   await page.getByTitle("전송").click();
+  await streamResponse;
+  await expect(page.getByTitle("중지")).toBeHidden({ timeout: 10_000 });
 
-  const badge = page.getByTestId("applied-preferences-badge").first();
+  const badge = page.locator("main").getByTestId("applied-preferences-badge").last();
   await expect(badge).toBeVisible({ timeout: 10_000 });
   await badge.click();
 
-  const notAppliedButton = page.getByTestId("preference-not-applied-btn").first();
+  const popover = page.locator("main").getByTestId("applied-preferences-popover").last();
+  await expect(popover).toBeVisible({ timeout: 5_000 });
+  const notAppliedButton = popover.getByTestId("preference-not-applied-btn").first();
   await expect(notAppliedButton).toBeVisible({ timeout: 5_000 });
   await notAppliedButton.click();
 

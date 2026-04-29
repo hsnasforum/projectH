@@ -1459,10 +1459,22 @@ Axis 1: conflict_info 불필요 캐스트 제거 — DONE
 `PreferenceRecord.conflict_info`가 이미 올바르게 타입됨.
 M85-M93 arc에서 모든 TypeScript 타입 우회 캐스트 완전 제거. Axis 2 없음.
 
+## M94 Applied Preferences 신뢰도 배지 (preference impact visibility)
+
+Axis 1: applied preferences 팝오버 is_highly_reliable 배지 — DONE
+`MessageBubble.tsx` applied preferences 팝오버에 `isHighlyReliable` 계산 추가.
+`fullPref?.is_highly_reliable === true`일 때 `신뢰도 높음` 배지 표시.
+Gemini advisory CONTROL_SEQ 1376 Option B (preference impact visibility) 구현.
+tsc PASS.
+
+Axis 2: dist rebuild + E2E fixture 안정화 — DONE
+dist 재빌드 (313K, Apr 29 17:12). `신뢰도 높음` / `isHighlyReliable` 3건 dist 반영.
+preference E2E 5 passed. popover badge E2E deterministic route 추가.
+
 ## Next 3 Implementation Priorities
 
-1. **PR 머지 백로그**: operator 승인 대기 — PR #71-#83 스택.
-2. **M94 방향**: M93 완료; 다음 기능 축은 main 머지 후 fresh advisory 결정.
+1. **PR 머지 백로그**: operator 승인 대기 — PR #71-#84 스택.
+2. **M95 방향**: M94 완료; 다음 기능 축은 main 머지 후 fresh advisory 결정.
 3. **장기**: cross-session memory 강화, north star 방향 유지.
 
 ## Do Not Pull Forward

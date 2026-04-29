@@ -6377,6 +6377,56 @@ class WebAppServiceTest(unittest.TestCase):
                 for record in rejected
             ))
 
+    def test_delete_preference_removes_from_store(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                preferences_dir=str(tmp_path / "preferences"),
+                model_provider="mock",
+            )
+            service = WebAppService(settings=settings)
+            preference = service.preference_store.record_reviewed_candidate_preference(
+                delta_fingerprint="pref-delete-active",
+                candidate_family="correction_rewrite",
+                description="삭제할 활성 선호",
+                source_refs={"session_id": "pref-delete", "candidate_id": "delete"},
+            )
+            service.preference_store.activate_preference(preference["preference_id"])
+
+            response = service.delete_preference(preference["preference_id"])
+
+            self.assertTrue(response["ok"])
+            self.assertEqual(response["deleted_preference_id"], preference["preference_id"])
+            self.assertEqual(response["previous_status"], "active")
+            self.assertTrue(response["stop_applied"])
+            self.assertIsNone(service.preference_store.get(preference["preference_id"]))
+            records = service.task_logger.iter_session_records("system")
+            deleted = [
+                record for record in records
+                if record.get("action") == "preference_deleted"
+                and record.get("detail", {}).get("preference_id") == preference["preference_id"]
+            ]
+            self.assertTrue(deleted)
+            self.assertTrue(deleted[-1].get("detail", {}).get("stop_applied"))
+
+    def test_delete_preference_returns_404_for_unknown_id(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                preferences_dir=str(tmp_path / "preferences"),
+                model_provider="mock",
+            )
+            service = WebAppService(settings=settings)
+
+            with self.assertRaises(WebApiError) as ctx:
+                service.delete_preference("missing-preference")
+
+            self.assertEqual(ctx.exception.status_code, 404)
+
     def test_list_preferences_payload_includes_last_transition_reason(self) -> None:
         with TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)

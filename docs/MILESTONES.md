@@ -1582,10 +1582,23 @@ Axis 2: dist rebuild — DONE
 `e2e/tests/web-smoke.spec.mjs`에 `preference text edit updates corrected text` 시나리오 추가.
 Playwright webServer는 sandbox socket 제한으로 미실행; CI 위임.
 
+## M105 correction history status filter
+
+Axis 1: status filter — DONE
+`PreferencePanel.tsx`에 `data-testid="correction-status-filter"` 드롭다운 추가.
+상태 변경 시 `fetchCorrectionList({ status })` 재호출; "전체" 선택 시 파라미터 생략.
+기존 backend `GET /api/corrections/list?status=` API 재사용 — 백엔드 수정 없음.
+신규 unittest 1개 (`test_correction_list_filters_by_status`).
+
+Axis 2: dist rebuild — DONE
+`npx vite build`로 dist 갱신; `correction-status-filter` testid 포함.
+`e2e/tests/web-smoke.spec.mjs`에 `correction history status filter narrows list` 시나리오 추가.
+Playwright webServer는 sandbox socket 제한으로 미실행; CI 위임.
+
 ## Next 3 Implementation Priorities
 
-1. **PR 머지 백로그**: PR #91–#95 + 이번 M104 PR — 모두 draft, `pr_merge_gate` operator 승인 대기.
-2. **M104 완료**: Axis 1+2+doc-sync 완료 — commit/push/PR 대기.
+1. **PR 머지 백로그**: PR #91–#96 + 이번 M105 PR — 모두 draft, `pr_merge_gate` operator 승인 대기.
+2. **M105 완료**: Axis 1+2+doc-sync 완료 — commit/push/PR 대기.
 3. **장기**: cross-session memory 강화, north star 방향 유지.
 
 ## Do Not Pull Forward

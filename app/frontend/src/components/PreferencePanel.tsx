@@ -32,10 +32,20 @@ const STATUS_COLORS: Record<string, string> = {
 };
 
 type PreferenceStatusFilter = "all" | "candidate" | "active" | "paused";
+type CorrectionStatusFilter = "all" | "recorded" | "confirmed" | "promoted" | "active" | "stopped";
 type PreferenceReliabilityTotals = {
   applied: number;
   corrected: number;
 };
+
+const CORRECTION_STATUS_OPTIONS: Array<{ value: CorrectionStatusFilter; label: string }> = [
+  { value: "all", label: "전체" },
+  { value: "recorded", label: "RECORDED" },
+  { value: "confirmed", label: "CONFIRMED" },
+  { value: "promoted", label: "PROMOTED" },
+  { value: "active", label: "ACTIVE" },
+  { value: "stopped", label: "STOPPED" },
+];
 
 interface PanelProps {
   lastAppliedFingerprints?: string[];
@@ -73,6 +83,14 @@ function isActiveLowReliabilityPreference(pref: PreferenceRecord) {
   );
 }
 
+function buildCorrectionListParams(query: string, status: CorrectionStatusFilter) {
+  const trimmedQuery = query.trim();
+  const params: { query?: string; status?: string } = {};
+  if (trimmedQuery) params.query = trimmedQuery;
+  if (status !== "all") params.status = status;
+  return Object.keys(params).length ? params : undefined;
+}
+
 function formatCorrectionReason(correction: CorrectionDetailRecord) {
   const summary = correction.delta_summary;
   if (!summary) return "교정 이유 정보가 없습니다.";
@@ -97,6 +115,7 @@ export default function PreferencePanel({
   const [correctionSummary, setCorrectionSummary] = useState<CorrectionSummary | null>(null);
   const [correctionList, setCorrectionList] = useState<CorrectionListResponse | null>(null);
   const [correctionQuery, setCorrectionQuery] = useState("");
+  const [correctionStatusFilter, setCorrectionStatusFilter] = useState<CorrectionStatusFilter>("all");
   const [loading, setLoading] = useState(false);
   const [expanded, setExpanded] = useState(true);
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
@@ -136,7 +155,7 @@ export default function PreferencePanel({
         fetchPreferenceAudit(),
         fetchCorrectionSummary().catch(() => null),
         fetchCorrectionList(
-          correctionQuery ? { query: correctionQuery } : undefined,
+          buildCorrectionListParams(correctionQuery, correctionStatusFilter),
         ).catch(() => null),
       ]);
       // Filter out rejected items entirely
@@ -190,7 +209,7 @@ export default function PreferencePanel({
     } finally {
       setLoading(false);
     }
-  }, [correctionQuery]);
+  }, [correctionQuery, correctionStatusFilter]);
 
   useEffect(() => { load(); }, []);
 
@@ -207,6 +226,16 @@ export default function PreferencePanel({
     }, 6000);
     return () => window.clearTimeout(timer);
   }, [autoActivatedPreferenceNotice, load]);
+
+  const handleCorrectionStatusFilterChange = useCallback((nextStatus: CorrectionStatusFilter) => {
+    setCorrectionStatusFilter(nextStatus);
+    setSelectedCorrectionId(null);
+    setSelectedCorrectionDetail(null);
+    setCorrectionDetailMessage(null);
+    fetchCorrectionList(buildCorrectionListParams(correctionQuery, nextStatus))
+      .then(setCorrectionList)
+      .catch(() => setCorrectionList(null));
+  }, [correctionQuery]);
 
   const handleAction = useCallback(async (
     pref: PreferenceRecord,
@@ -547,15 +576,31 @@ export default function PreferencePanel({
                 )}
                 {correctionList && (
                   <div className="px-2 mt-1">
-                    <input
-                      type="text"
-                      data-testid="correction-search-input"
-                      className="w-full text-[10px] bg-transparent border-b border-sidebar-muted/20 text-sidebar-foreground placeholder:text-sidebar-muted/40 px-2 py-0.5 mb-0.5 outline-none"
-                      placeholder="교정 검색..."
-                      value={correctionQuery}
-                      onChange={(e) => setCorrectionQuery(e.target.value)}
-                      onKeyDown={(e) => { if (e.key === "Enter") load(); }}
-                    />
+                    <div className="mb-1 flex items-center gap-1">
+                      <input
+                        type="text"
+                        data-testid="correction-search-input"
+                        className="min-w-0 flex-1 text-[10px] bg-transparent border-b border-sidebar-muted/20 text-sidebar-foreground placeholder:text-sidebar-muted/40 px-2 py-0.5 outline-none"
+                        placeholder="교정 검색..."
+                        value={correctionQuery}
+                        onChange={(e) => setCorrectionQuery(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === "Enter") load(); }}
+                      />
+                      <select
+                        data-testid="correction-status-filter"
+                        className="h-6 max-w-[90px] shrink-0 rounded border border-sidebar-muted/20 bg-sidebar px-1 text-[10px] text-sidebar-foreground outline-none"
+                        value={correctionStatusFilter}
+                        onChange={(event) =>
+                          handleCorrectionStatusFilterChange(event.target.value as CorrectionStatusFilter)
+                        }
+                      >
+                        {CORRECTION_STATUS_OPTIONS.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
                     <p className="text-[10px] text-sidebar-muted/60 mb-0.5">최근 교정</p>
                     {correctionList.corrections.slice(0, 3).map((c) => (
                       <div

@@ -117,6 +117,36 @@ class CorrectionSummaryTest(unittest.TestCase):
             self.assertEqual(len(payload["corrections"]), 1)
             self.assertEqual(payload["corrections"][0]["correction_id"], record["correction_id"])
 
+    def test_correction_list_filters_by_status(self) -> None:
+        with TemporaryDirectory() as d:
+            store = self._make_store(d)
+            recorded = store.record_correction(
+                artifact_id="art1",
+                session_id="s1",
+                source_message_id="msg1",
+                original_text="original recorded text",
+                corrected_text="corrected recorded text",
+            )
+            confirmed = store.record_correction(
+                artifact_id="art2",
+                session_id="s2",
+                source_message_id="msg2",
+                original_text="Please include every detail in the response.",
+                corrected_text="Please keep the response brief.",
+            )
+            self.assertIsNotNone(recorded)
+            self.assertIsNotNone(confirmed)
+            confirmed_records = store.confirm_by_fingerprint(confirmed["delta_fingerprint"])
+            self.assertEqual(len(confirmed_records), 1)
+
+            payload = _CorrectionSummaryService(store).get_correction_list(status="confirmed")
+
+            self.assertIs(payload["ok"], True)
+            self.assertEqual(len(payload["corrections"]), 1)
+            self.assertEqual(payload["corrections"][0]["correction_id"], confirmed["correction_id"])
+            self.assertEqual(payload["corrections"][0]["status"], "confirmed")
+            self.assertNotEqual(payload["corrections"][0]["correction_id"], recorded["correction_id"])
+
     def test_promote_pattern_seeds_reliability_from_recurrence(self) -> None:
         with TemporaryDirectory() as d:
             correction_store = self._make_store(d)

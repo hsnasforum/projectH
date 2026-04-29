@@ -1451,10 +1451,18 @@ Axis 1: high_severity_conflict_count 타입 동기화 + 캐스트 제거 — DON
 `PreferencesPayload` 인터페이스가 backend `list_preferences_payload()` 모든 필드 완전 커버.
 dist·E2E 불필요 (TypeScript 캐스트 = 동일 JS 출력). Axis 2 없음.
 
+## M93 PreferencePanel conflict_info 타입 캐스트 제거
+
+Axis 1: conflict_info 불필요 캐스트 제거 — DONE
+`PreferencePanel.tsx:148` `pref.conflict_info as { conflict_severity?: string }`
+우회 캐스트 제거. `pref.conflict_info?.conflict_severity === "high"` 직접 접근.
+`PreferenceRecord.conflict_info`가 이미 올바르게 타입됨.
+M85-M93 arc에서 모든 TypeScript 타입 우회 캐스트 완전 제거. Axis 2 없음.
+
 ## Next 3 Implementation Priorities
 
-1. **PR 머지 백로그**: operator 승인 대기 — PR #71-#82 스택.
-2. **M93 방향**: M92 완료; 다음 기능 축은 main 머지 후 fresh advisory 결정.
+1. **PR 머지 백로그**: operator 승인 대기 — PR #71-#83 스택.
+2. **M94 방향**: M93 완료; 다음 기능 축은 main 머지 후 fresh advisory 결정.
 3. **장기**: cross-session memory 강화, north star 방향 유지.
 
 ## Do Not Pull Forward

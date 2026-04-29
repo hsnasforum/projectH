@@ -37,6 +37,12 @@ type PreferenceReliabilityTotals = {
   applied: number;
   corrected: number;
 };
+type PreferenceStatusCounts = {
+  total: number;
+  active: number;
+  candidate: number;
+  paused: number;
+};
 
 const CORRECTION_STATUS_OPTIONS: Array<{ value: CorrectionStatusFilter; label: string }> = [
   { value: "all", label: "전체" },
@@ -48,6 +54,7 @@ const CORRECTION_STATUS_OPTIONS: Array<{ value: CorrectionStatusFilter; label: s
 ];
 
 const CORRECTION_LIST_PAGE_SIZE = 5;
+const PREFERENCE_LIST_PAGE_SIZE = 20;
 
 interface PanelProps {
   lastAppliedFingerprints?: string[];
@@ -149,6 +156,14 @@ export default function PreferencePanel({
   const [syncStatus, setSyncStatus] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<PreferenceStatusFilter>("all");
   const [preferenceSearchQuery, setPreferenceSearchQuery] = useState("");
+  const [preferenceListHasMore, setPreferenceListHasMore] = useState(false);
+  const [preferenceListLoadedCount, setPreferenceListLoadedCount] = useState(0);
+  const [preferenceStatusCounts, setPreferenceStatusCounts] = useState<PreferenceStatusCounts>({
+    total: 0,
+    active: 0,
+    candidate: 0,
+    paused: 0,
+  });
   const [reliabilityTotals, setReliabilityTotals] = useState<PreferenceReliabilityTotals>({
     applied: 0,
     corrected: 0,
@@ -175,7 +190,7 @@ export default function PreferencePanel({
     setLoading(true);
     try {
       const [data, auditData, summary, list] = await Promise.all([
-        fetchPreferences(),
+        fetchPreferences({ limit: PREFERENCE_LIST_PAGE_SIZE }),
         fetchPreferenceAudit(),
         fetchCorrectionSummary().catch(() => null),
         fetchCorrectionList(
@@ -183,9 +198,26 @@ export default function PreferencePanel({
         ).catch(() => null),
       ]);
       // Filter out rejected items entirely
-      const visible = (data.preferences ?? []).filter((p) => p.status !== "rejected");
+      const rawPreferences = data.preferences ?? [];
+      const visible = rawPreferences.filter((p) => p.status !== "rejected");
       setPreferences(visible);
+      setPreferenceListLoadedCount(rawPreferences.length);
+      setPreferenceListHasMore(rawPreferences.length >= PREFERENCE_LIST_PAGE_SIZE);
       setCandidatePreferences(data.candidate_preferences ?? null);
+      setPreferenceStatusCounts({
+        total: typeof data.total_count === "number" && Number.isFinite(data.total_count)
+          ? data.total_count
+          : visible.length,
+        active: typeof data.active_count === "number" && Number.isFinite(data.active_count)
+          ? data.active_count
+          : visible.filter((pref) => pref.status === "active").length,
+        candidate: typeof data.candidate_count === "number" && Number.isFinite(data.candidate_count)
+          ? data.candidate_count
+          : visible.filter((pref) => pref.status === "candidate").length,
+        paused: typeof data.paused_count === "number" && Number.isFinite(data.paused_count)
+          ? data.paused_count
+          : visible.filter((pref) => pref.status === "paused").length,
+      });
       setReliabilityTotals({
         applied: typeof data.total_applied === "number" && Number.isFinite(data.total_applied)
           ? data.total_applied
@@ -306,6 +338,44 @@ export default function PreferencePanel({
       setCorrectionListHasMore(false);
     }
   }, [correctionList?.corrections.length, correctionQuery, correctionStatusFilter]);
+
+  const handlePreferenceShowMore = useCallback(async () => {
+    const offset = preferenceListLoadedCount;
+    try {
+      const nextData = await fetchPreferences({
+        limit: PREFERENCE_LIST_PAGE_SIZE,
+        offset,
+      });
+      const rawPreferences = nextData.preferences ?? [];
+      const visible = rawPreferences.filter((pref) => pref.status !== "rejected");
+      setPreferences((current) => {
+        const seen = new Set(current.map((pref) => pref.preference_id));
+        return [
+          ...current,
+          ...visible.filter((pref) => !seen.has(pref.preference_id)),
+        ];
+      });
+      setPreferenceListLoadedCount(offset + rawPreferences.length);
+      setPreferenceListHasMore(rawPreferences.length >= PREFERENCE_LIST_PAGE_SIZE);
+      setCandidatePreferences(nextData.candidate_preferences ?? null);
+      setPreferenceStatusCounts((current) => ({
+        total: typeof nextData.total_count === "number" && Number.isFinite(nextData.total_count)
+          ? nextData.total_count
+          : current.total,
+        active: typeof nextData.active_count === "number" && Number.isFinite(nextData.active_count)
+          ? nextData.active_count
+          : current.active,
+        candidate: typeof nextData.candidate_count === "number" && Number.isFinite(nextData.candidate_count)
+          ? nextData.candidate_count
+          : current.candidate,
+        paused: typeof nextData.paused_count === "number" && Number.isFinite(nextData.paused_count)
+          ? nextData.paused_count
+          : current.paused,
+      }));
+    } catch {
+      setPreferenceListHasMore(false);
+    }
+  }, [preferenceListLoadedCount]);
 
   const handleAction = useCallback(async (
     pref: PreferenceRecord,
@@ -466,22 +536,23 @@ export default function PreferencePanel({
   }, []);
 
   // Visible count for header
-  const activeCount = preferences.filter((p) => p.status === "active").length;
-  const candidateCount = candidatePreferences != null
+  const activeCount = preferenceStatusCounts.active;
+  const loadedCandidateCount = candidatePreferences != null
     ? candidatePreferences.length
     : preferences.filter((p) => p.status === "candidate").length;
-  const pausedCount = preferences.filter((p) => p.status === "paused").length;
+  const candidateCount = preferenceStatusCounts.total > 0 || preferenceStatusCounts.candidate > 0
+    ? preferenceStatusCounts.candidate
+    : loadedCandidateCount;
+  const pausedCount = preferenceStatusCounts.paused;
   const statusFilteredPreferences = statusFilter === "all"
     ? preferences
-    : statusFilter === "candidate" && candidatePreferences != null
-    ? candidatePreferences
     : preferences.filter((p) => p.status === statusFilter);
   const filteredPreferences = statusFilteredPreferences.filter((pref) =>
     preferenceMatchesSearch(pref, preferenceSearchQuery),
   );
   const hasPreferenceSearch = Boolean(preferenceSearchQuery.trim());
   const statusTabs: Array<{ key: PreferenceStatusFilter; label: string; count: number }> = [
-    { key: "all", label: "전체", count: preferences.length },
+    { key: "all", label: "전체", count: preferenceStatusCounts.total },
     { key: "candidate", label: "후보", count: candidateCount },
     { key: "active", label: "활성", count: activeCount },
     { key: "paused", label: "일시중지", count: pausedCount },
@@ -1179,6 +1250,19 @@ export default function PreferencePanel({
               </div>
             );
           })}
+          {preferenceListHasMore && (
+            <button
+              type="button"
+              data-testid="preference-show-more-btn"
+              className="w-full rounded bg-white/5 px-2 py-1 text-[10px] text-sidebar-muted/70 hover:bg-white/10 hover:text-sidebar-text"
+              onClick={(event) => {
+                event.stopPropagation();
+                handlePreferenceShowMore();
+              }}
+            >
+              더 보기
+            </button>
+          )}
         </div>
       )}
     </div>

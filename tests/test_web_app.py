@@ -6274,6 +6274,40 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertEqual(payload["active_count"], 1)
             self.assertEqual(payload["paused_count"], 1)
 
+    def test_preference_list_respects_limit_and_offset(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                preferences_dir=str(tmp_path / "preferences"),
+                model_provider="mock",
+            )
+            service = WebAppService(settings=settings)
+            for index in range(4):
+                service.preference_store.record_reviewed_candidate_preference(
+                    delta_fingerprint=f"pref-pagination-{index}",
+                    candidate_family="correction_rewrite",
+                    description=f"pagination preference {index}",
+                    source_refs={
+                        "session_id": f"pref-pagination-session-{index}",
+                        "candidate_id": f"pref-pagination-candidate-{index}",
+                    },
+                )
+
+            full_payload = service.list_preferences_payload(limit=4)
+            offset_payload = service.list_preferences_payload(limit=1, offset=2)
+
+            self.assertIs(full_payload["ok"], True)
+            self.assertIs(offset_payload["ok"], True)
+            self.assertEqual(len(full_payload["preferences"]), 4)
+            self.assertEqual(len(offset_payload["preferences"]), 1)
+            self.assertEqual(
+                offset_payload["preferences"][0]["preference_id"],
+                full_payload["preferences"][2]["preference_id"],
+            )
+            self.assertEqual(offset_payload["total_count"], 4)
+
     def test_activate_preference_logs_transition_reason(self) -> None:
         with TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)

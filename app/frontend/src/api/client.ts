@@ -304,6 +304,7 @@ export interface PreferencesPayload {
   ok: boolean;
   preferences: PreferenceRecord[];
   candidate_preferences?: PreferenceRecord[] | null;
+  total_count?: number | null;
   active_count: number;
   candidate_count: number;
   paused_count: number;
@@ -337,8 +338,14 @@ export interface CorrectionResponse {
   preference_id?: string | null;
 }
 
-export async function fetchPreferences(): Promise<PreferencesPayload> {
-  const res = await fetch(`${BASE}/api/preferences`);
+export async function fetchPreferences(params?: {
+  limit?: number;
+  offset?: number;
+}): Promise<PreferencesPayload> {
+  const url = new URL(`${BASE}/api/preferences`, window.location.origin);
+  if (params?.limit) url.searchParams.set("limit", String(params.limit));
+  if (params?.offset) url.searchParams.set("offset", String(params.offset));
+  const res = await fetch(url.toString());
   return res.json();
 }
 

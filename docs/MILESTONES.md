@@ -1637,10 +1637,26 @@ Axis 2: dist rebuild — DONE
 시나리오는 API mock + DOM 필터 동작 확인 + API 재호출 없음 확인.
 Playwright webServer는 sandbox socket 제한으로 미실행; CI 위임.
 
+## M109 preference list pagination
+
+Axis 1: limit/offset pagination — DONE (M107 correction pagination과 대칭)
+`storage/preference_store.py` + `storage/sqlite/preference.py` `list_all()` limit/offset 파라미터.
+`list_preferences_payload(limit=20, offset=0)` page batch + 전체 집계 분리.
+`GET /api/preferences?limit=N&offset=N` 파라미터 파싱.
+`fetchPreferences({ limit, offset })` API 추가.
+`PreferencePanel` `preference-show-more-btn` + append + `preferenceListHasMore` 상태.
+M108 `preference-search-input` 필터 preserve.
+신규 unittest 1개 (offset 동작).
+
+Axis 2: dist rebuild — DONE
+`npx vite build`로 dist 갱신; preference-show-more-btn/preferenceListHasMore 코드 포함.
+`e2e/tests/web-smoke.spec.mjs`에 `preference show more appends next page` 시나리오 추가.
+Playwright webServer는 sandbox socket 제한으로 미실행; CI 위임.
+
 ## Next 3 Implementation Priorities
 
-1. **PR 머지 백로그**: PR #91–#99 + 이번 M108 PR — 모두 draft, `pr_merge_gate` operator 승인 대기.
-2. **M108 완료**: Axis 1+2+doc-sync 완료 — commit/push/PR 대기.
+1. **PR 머지 백로그**: PR #91–#100 + 이번 M109 PR — 모두 draft, `pr_merge_gate` operator 승인 대기.
+2. **M109 완료**: Axis 1+2+doc-sync 완료 — commit/push/PR 대기.
 3. **장기**: cross-session memory 강화, north star 방향 유지.
 
 ## Do Not Pull Forward

@@ -367,7 +367,13 @@ class LocalAssistantHandler(BaseHTTPRequestHandler):
             self._send_json(HTTPStatus.OK, {"ok": True})
             return
         if parsed.path == "/api/preferences":
-            self._send_json(HTTPStatus.OK, self.server.service.list_preferences_payload())
+            qs = parse_qs(parsed.query)
+            limit = _parse_positive_int((qs.get("limit") or [None])[0], default=20)
+            offset = _parse_positive_int((qs.get("offset") or [None])[0], default=0)
+            self._send_json(
+                HTTPStatus.OK,
+                self.server.service.list_preferences_payload(limit=limit, offset=offset),
+            )
             return
         if parsed.path == "/api/preferences/audit":
             self._send_json(HTTPStatus.OK, {"ok": True, "audit": self.server.service.get_preference_audit()})

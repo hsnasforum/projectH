@@ -11941,7 +11941,7 @@ test("활성 교정이 있으면 동기화 버튼이 보이고 클릭 시 후보
   let auditRequests = 0;
   let syncRequests = 0;
 
-  await page.route(/\/api\/preferences$/, async (route) => {
+  await page.route(/\/api\/preferences(\?.*)?$/, async (route) => {
     await route.fulfill({
       status: 200,
       contentType: "application/json",
@@ -12026,7 +12026,7 @@ test("preference delete removes preference from list", async ({ page }) => {
     updated_at: "2026-04-30T00:00:00Z",
   });
 
-  await page.route(/\/api\/preferences$/, async (route) => {
+  await page.route(/\/api\/preferences(\?.*)?$/, async (route) => {
     await route.fulfill({
       status: 200,
       contentType: "application/json",
@@ -12107,7 +12107,7 @@ test("preference reliability toggle updates badge", async ({ page }) => {
     updated_at: "2026-04-30T00:00:00Z",
   });
 
-  await page.route(/\/api\/preferences$/, async (route) => {
+  await page.route(/\/api\/preferences(\?.*)?$/, async (route) => {
     await route.fulfill({
       status: 200,
       contentType: "application/json",
@@ -12190,7 +12190,7 @@ test("preference text edit updates corrected text", async ({ page }) => {
     updated_at: "2026-04-30T00:00:00Z",
   });
 
-  await page.route(/\/api\/preferences$/, async (route) => {
+  await page.route(/\/api\/preferences(\?.*)?$/, async (route) => {
     await route.fulfill({
       status: 200,
       contentType: "application/json",
@@ -12286,7 +12286,7 @@ test("corrections: GET /api/corrections/summary 응답이 ok, total, by_status, 
 });
 
 test("correction summary compact display shows total and active count", async ({ page }) => {
-  await page.route(/\/api\/preferences$/, async (route) => {
+  await page.route(/\/api\/preferences(\?.*)?$/, async (route) => {
     await route.fulfill({
       status: 200,
       contentType: "application/json",
@@ -12357,7 +12357,7 @@ test("correction summary compact display shows total and active count", async ({
 });
 
 test("correction top pattern compact line shows original snippet", async ({ page }) => {
-  await page.route(/\/api\/preferences$/, async (route) => {
+  await page.route(/\/api\/preferences(\?.*)?$/, async (route) => {
     if (route.request().method() === "GET") {
       await route.fulfill({
         status: 200,
@@ -12438,7 +12438,7 @@ test("correction top pattern compact line shows original snippet", async ({ page
 });
 
 test("correction confirm pattern button calls confirm-pattern endpoint", async ({ page }) => {
-  await page.route(/\/api\/preferences$/, async (route) => {
+  await page.route(/\/api\/preferences(\?.*)?$/, async (route) => {
     if (route.request().method() === "GET") {
       await route.fulfill({
         status: 200,
@@ -12515,7 +12515,7 @@ test("correction confirm pattern button calls confirm-pattern endpoint", async (
 });
 
 test("correction dismiss pattern button calls dismiss-pattern endpoint", async ({ page }) => {
-  await page.route(/\/api\/preferences$/, async (route) => {
+  await page.route(/\/api\/preferences(\?.*)?$/, async (route) => {
     if (route.request().method() === "GET") {
       await route.fulfill({
         status: 200,
@@ -12625,7 +12625,7 @@ test("correction list endpoint returns recent corrections", async ({ page }) => 
 test("correction list item click shows correction detail panel", async ({ page }) => {
   const correctionId = "correction-detail-001";
 
-  await page.route(/\/api\/preferences$/, async (route) => {
+  await page.route(/\/api\/preferences(\?.*)?$/, async (route) => {
     if (route.request().method() === "GET") {
       await route.fulfill({
         status: 200,
@@ -12760,7 +12760,7 @@ test("correction list item click shows correction detail panel", async ({ page }
 });
 
 test("correction promote pattern button calls promote-pattern endpoint", async ({ page }) => {
-  await page.route(/\/api\/preferences$/, async (route) => {
+  await page.route(/\/api\/preferences(\?.*)?$/, async (route) => {
     if (route.request().method() === "GET") {
       await route.fulfill({
         status: 200,
@@ -12843,7 +12843,7 @@ test("correction promote pattern button calls promote-pattern endpoint", async (
 });
 
 test("correction list search endpoint filters by query parameter", async ({ page }) => {
-  await page.route(/\/api\/preferences$/, async (route) => {
+  await page.route(/\/api\/preferences(\?.*)?$/, async (route) => {
     if (route.request().method() === "GET") {
       await route.fulfill({
         status: 200,
@@ -12926,7 +12926,7 @@ test("correction list search endpoint filters by query parameter", async ({ page
 });
 
 test("correction history search filters by query", async ({ page }) => {
-  await page.route(/\/api\/preferences$/, async (route) => {
+  await page.route(/\/api\/preferences(\?.*)?$/, async (route) => {
     if (route.request().method() === "GET") {
       await route.fulfill({
         status: 200,
@@ -13045,7 +13045,7 @@ test("correction history search filters by query", async ({ page }) => {
 });
 
 test("correction history status filter narrows list", async ({ page }) => {
-  await page.route(/\/api\/preferences$/, async (route) => {
+  await page.route(/\/api\/preferences(\?.*)?$/, async (route) => {
     if (route.request().method() === "GET") {
       await route.fulfill({
         status: 200,
@@ -13141,7 +13141,7 @@ test("correction history status filter narrows list", async ({ page }) => {
 });
 
 test("correction history show more appends next page", async ({ page }) => {
-  await page.route(/\/api\/preferences$/, async (route) => {
+  await page.route(/\/api\/preferences(\?.*)?$/, async (route) => {
     if (route.request().method() === "GET") {
       await route.fulfill({
         status: 200,
@@ -13278,7 +13278,7 @@ test("correction promote pattern returns activated_count in response", async ({ 
 });
 
 test("promote correction pattern with high recurrence shows highly reliable feedback", async ({ page }) => {
-  await page.route(/\/api\/preferences$/, async (route) => {
+  await page.route(/\/api\/preferences(\?.*)?$/, async (route) => {
     if (route.request().method() === "GET") {
       await route.fulfill({
         status: 200,
@@ -13475,7 +13475,7 @@ test("preference auto activation notice appears in PreferencePanel after correct
       body: JSON.stringify({ session: sessionPayload() }),
     });
   });
-  await page.route(/\/api\/preferences$/, async (route) => {
+  await page.route(/\/api\/preferences(\?.*)?$/, async (route) => {
     await route.fulfill({
       status: 200,
       contentType: "application/json",
@@ -13690,7 +13690,7 @@ test("reviewed-memory loop: 활성화된 선호가 PreferencePanel 이번 응답
     updated_at: "2026-04-28T00:00:00Z",
   });
 
-  await page.route(/\/api\/preferences$/, async (route) => {
+  await page.route(/\/api\/preferences(\?.*)?$/, async (route) => {
     await route.fulfill({
       status: 200,
       contentType: "application/json",
@@ -13837,7 +13837,7 @@ test("reviewed-memory loop: preference-not-applied-btn 클릭 시 record-correct
     updated_at: "2026-04-28T00:00:00Z",
   });
 
-  await page.route(/\/api\/preferences$/, async (route) => {
+  await page.route(/\/api\/preferences(\?.*)?$/, async (route) => {
     await route.fulfill({
       status: 200,
       contentType: "application/json",
@@ -14361,7 +14361,7 @@ test("reviewed-memory loop: resume/reject lifecycle은 count 기반으로 검증
 });
 
 test("PreferencePanel 헤더에 충돌 위험 N건이 표시됩니다 (M48 A2 high_severity_conflict_count)", async ({ page }) => {
-  await page.route(/\/api\/preferences$/, async (route) => {
+  await page.route(/\/api\/preferences(\?.*)?$/, async (route) => {
     await route.fulfill({
       status: 200,
       contentType: "application/json",
@@ -14419,7 +14419,7 @@ test("PreferencePanel 헤더에 충돌 위험 N건이 표시됩니다 (M48 A2 hi
 });
 
 test("reviewed-memory loop: low-reliability-count 배지가 신뢰도 저하 활성 선호 존재 시 표시됩니다", async ({ page }) => {
-  await page.route(/\/api\/preferences$/, async (route) => {
+  await page.route(/\/api\/preferences(\?.*)?$/, async (route) => {
     await route.fulfill({
       status: 200,
       contentType: "application/json",
@@ -14479,7 +14479,7 @@ test("reviewed-memory loop: low-reliability-count 배지가 신뢰도 저하 활
 });
 
 test("reviewed-memory loop: preference-low-reliability-badge가 신뢰도 저하 활성 선호 카드에 표시됩니다", async ({ page }) => {
-  await page.route(/\/api\/preferences$/, async (route) => {
+  await page.route(/\/api\/preferences(\?.*)?$/, async (route) => {
     await route.fulfill({
       status: 200,
       contentType: "application/json",
@@ -14553,9 +14553,110 @@ test("reviewed-memory loop: preference-low-reliability-badge가 신뢰도 저하
   await expect(lowReliabilityBadge).toContainText("신뢰도 저하");
 });
 
+test("preference show more appends next page", async ({ page }) => {
+  let offsetRequests = 0;
+  await page.route(/\/api\/preferences(\?.*)?$/, async (route) => {
+    if (route.request().method() !== "GET") {
+      await route.continue();
+      return;
+    }
+    const url = new URL(route.request().url());
+    const limit = Number(url.searchParams.get("limit") || "20");
+    const offset = Number(url.searchParams.get("offset") || "0");
+    if (offset > 0) offsetRequests += 1;
+    const preferences = Array.from({ length: offset > 0 ? 1 : limit }, (_, index) => {
+      const itemNumber = offset + index + 1;
+      return {
+        preference_id: `pref-show-more-${itemNumber}`,
+        delta_fingerprint: `sha256:pref-show-more-${itemNumber}`,
+        description: `show more preference item ${itemNumber}`,
+        status: "active",
+        evidence_count: 1,
+        cross_session_count: 1,
+        reliability_stats: { applied_count: itemNumber, corrected_count: 0 },
+        quality_info: { avg_similarity_score: 0.9, is_high_quality: true },
+        is_highly_reliable: false,
+        conflict_info: null,
+        corrected_text: `show more corrected text ${itemNumber}`,
+        activated_at: "2026-04-30T00:00:00Z",
+        created_at: "2026-04-30T00:00:00Z",
+        updated_at: `2026-04-30T00:${String(itemNumber).padStart(2, "0")}:00Z`,
+      };
+    });
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: true,
+        preferences,
+        total_count: 21,
+        active_count: 21,
+        candidate_count: 0,
+        paused_count: 0,
+        total_applied: 231,
+        total_corrected: 0,
+        high_quality_active_count: 21,
+        highly_reliable_active_count: 0,
+        high_severity_conflict_count: 0,
+        low_reliability_active_count: 0,
+      }),
+    });
+  });
+  await page.route(/\/api\/preferences\/audit$/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: true,
+        audit: {
+          total: 21,
+          by_status: { active: 21, candidate: 0, paused: 0 },
+          conflict_pair_count: 0,
+          adopted_corrections_count: 0,
+          available_to_sync_count: 0,
+        },
+      }),
+    });
+  });
+  await page.route(/\/api\/corrections\/summary$/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ ok: true, total: 0, by_status: {}, top_recurring_fingerprints: [] }),
+    });
+  });
+  await page.route(/\/api\/corrections\/list(\?.*)?$/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ ok: true, corrections: [] }),
+    });
+  });
+
+  await page.goto("/app-preview");
+  const preferenceCards = page.locator('[id^="pref-card-pref-show-more-"]');
+  await expect(preferenceCards).toHaveCount(20, { timeout: 10_000 });
+  await expect(page.locator("#pref-card-pref-show-more-1")).toBeVisible();
+
+  const nextPageRequest = page.waitForRequest((request) => {
+    if (!request.url().includes("/api/preferences")) return false;
+    const url = new URL(request.url());
+    return Number(url.searchParams.get("offset") || "0") > 0 &&
+      Number(url.searchParams.get("limit") || "0") > 0;
+  });
+  await page.getByTestId("preference-show-more-btn").click();
+  await nextPageRequest;
+
+  await expect(preferenceCards).toHaveCount(21, { timeout: 10_000 });
+  await expect(page.locator("#pref-card-pref-show-more-1")).toBeVisible();
+  await expect(page.locator("#pref-card-pref-show-more-21")).toBeVisible();
+  await expect(page.getByTestId("preference-show-more-btn")).toBeHidden();
+  expect(offsetRequests).toBe(1);
+});
+
 test("preference search filters preference list", async ({ page }) => {
   let preferenceRequests = 0;
-  await page.route(/\/api\/preferences$/, async (route) => {
+  await page.route(/\/api\/preferences(\?.*)?$/, async (route) => {
     if (route.request().method() === "GET") {
       preferenceRequests += 1;
     }
@@ -14690,7 +14791,7 @@ test("preference search filters preference list", async ({ page }) => {
 });
 
 test("PreferencePanel 헤더에 신뢰도 높음 N개가 표시됩니다 (M47 highly_reliable_active_count)", async ({ page }) => {
-  await page.route(/\/api\/preferences$/, async (route) => {
+  await page.route(/\/api\/preferences(\?.*)?$/, async (route) => {
     await route.fulfill({
       status: 200,
       contentType: "application/json",

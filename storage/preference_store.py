@@ -353,8 +353,10 @@ class PreferenceStore:
             atomic_write(self._path(preference_id), record)
             return record
 
-    def list_all(self, limit: int = 50) -> list[PreferenceRecord]:
+    def list_all(self, limit: int = 50, offset: int = 0) -> list[PreferenceRecord]:
         with self._lock:
             all_records = self._scan_all()
             all_records.sort(key=lambda d: d.get("updated_at", ""), reverse=True)
-            return all_records[:limit]
+            start = max(0, offset)
+            safe_limit = max(0, limit)
+            return all_records[start:start + safe_limit]

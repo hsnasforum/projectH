@@ -87,8 +87,11 @@ class SQLitePreferenceStore:
             return None
         return self._record_from_row(row)
 
-    def list_all(self, limit: int = 50) -> list[PreferenceRecord]:
-        rows = self._db.fetchall("SELECT * FROM preferences ORDER BY updated_at DESC LIMIT ?", (limit,))
+    def list_all(self, limit: int = 50, offset: int = 0) -> list[PreferenceRecord]:
+        rows = self._db.fetchall(
+            "SELECT * FROM preferences ORDER BY updated_at DESC LIMIT ? OFFSET ?",
+            (max(0, limit), max(0, offset)),
+        )
         results = []
         for r in rows:
             record = self._record_from_row(r)

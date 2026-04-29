@@ -1323,11 +1323,25 @@ Axis 1 (CONTROL_SEQ 1268): sqlite_store.py 분리 — DONE
 `storage/sqlite/{database,session,task_log,artifact,preference,correction,migrate}.py`
 신규 생성. 기존 import 사이트 수정 없이 129 tests PASS.
 
+## M77 Reviewed Memory Handler Decomposition
+
+Axis 1 (CONTROL_SEQ 1275): ReviewedMemoryHandlerMixin 분리 — DONE
+6개 aggregate lifecycle 메서드(emit/apply/confirm/stop_apply/reverse/conflict_visibility)를
+`app/handlers/reviewed_memory.py`로 이동. `aggregate.py` 822→352줄.
+Pure structural refactoring — 150 smoke tests PASS.
+
+## M78 Candidate Handler Decomposition — aggregate.py 완전 해소
+
+Axis 1 (CONTROL_SEQ 1278): CandidateHandlerMixin 분리 + aggregate.py 삭제 — DONE
+`submit_candidate_confirmation`/`submit_candidate_review`를
+`app/handlers/candidates.py`로 이동. `aggregate.py` 352→0 (삭제).
+M70→M77→M78 handler 분리 3부작 완결: aggregate.py 937→0줄.
+
 ## Next 3 Implementation Priorities
 
-1. **v1.5 structural hardening 완료 (M70–M75)**: CorrectionHandlerMixin 분리 + docs sync + 4개 store physical validation (M72–M74) + SQLite store 구조 분리 (M75). PR #54–#61 머지 대기 중.
-2. **PR 머지 백로그**: operator 승인 대기 — PR #54→…→#61 순서 머지 후 main 기준 M76+ 시작.
-3. **M76 방향**: 새 기능 축(Axis 3: Reliability 등) 또는 추가 structural 개선 중 advisory에서 결정.
+1. **handler 분리 3부작 완결 (M70→M77→M78)**: aggregate.py 937→0줄 해소. CorrectionHandlerMixin(M70), ReviewedMemoryHandlerMixin(M77), CandidateHandlerMixin(M78). PR #62–#64 머지 대기.
+2. **PR 머지 백로그**: operator 승인 대기 — PR #62→#63→#64 순서. 머지 후 main 기준 M79+ 시작.
+3. **M79 방향**: 새 기능 축 또는 추가 structural 개선 중 advisory에서 결정.
 
 ## Do Not Pull Forward
 

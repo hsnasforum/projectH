@@ -1431,10 +1431,20 @@ Axis 2: dist rebuild + E2E stabilization — DONE
 `npx vite build`로 dist 재빌드 (313K). `candidate_preferences` wiring 1건 확인.
 `preference-not-applied-btn` E2E DOM detach 수정; 격리 1 passed (10.1s).
 
+## M91 PreferencePanel 후보 탭 candidatePreferences 렌더링 연결
+
+Axis 1: filteredPreferences 후보 탭 분기 — DONE
+`PreferencePanel.tsx` `filteredPreferences` 계산에 `statusFilter === "candidate"`
+분기 추가. `candidatePreferences` 존재 시 서버 pre-filtered 후보 목록 우선 사용;
+fallback: `preferences.filter(status)`. `list_all(limit=50)` 범위 초과 후보 누락 gap 해소.
+
+Axis 2: dist rebuild + E2E — DONE
+`npx vite build` dist 재빌드 (313K). preference 격리 E2E 5 passed (29.4s).
+
 ## Next 3 Implementation Priorities
 
-1. **PR 머지 백로그**: operator 승인 대기 — PR #71-#80 스택.
-2. **M91 방향**: M90 완료; 다음 기능 축은 main 머지 후 fresh advisory 결정.
+1. **PR 머지 백로그**: operator 승인 대기 — PR #71-#81 스택.
+2. **M92 방향**: M91 완료; 다음 기능 축은 main 머지 후 fresh advisory 결정.
 3. **장기**: cross-session memory 강화, north star 방향 유지.
 
 ## Do Not Pull Forward

@@ -54,6 +54,7 @@ from pipeline_runtime.automation_health import (
 )
 from pipeline_runtime.lane_surface import (
     capture_pane_text as _shared_capture_pane_text,
+    pane_text_busy_age_seconds as _shared_pane_text_busy_age_seconds,
     pane_text_has_busy_indicator as _shared_pane_text_has_busy_indicator,
     pane_text_has_codex_activity as _shared_pane_text_has_codex_activity,
     pane_text_has_gemini_activity as _shared_pane_text_has_gemini_activity,
@@ -476,6 +477,8 @@ class WatcherCore:
         self._last_advisory_retry_at: float = 0.0
         self._last_advisory_recovery_sig: str = ""
         self._last_advisory_recovery_at: float = 0.0
+        self._last_inactive_advisory_cancel_fingerprint: str = ""
+        self._last_inactive_advisory_cancel_at: float = 0.0
         self._runtime_export_enabled: bool = os.environ.get("PIPELINE_RUNTIME_DISABLE_EXPORTER", "").strip().lower() not in {
             "1",
             "true",
@@ -2139,6 +2142,23 @@ class WatcherCore:
         now = time.time()
         request_started_at = max(self._turn_entered_at, request_control.mtime)
         pending_age = now - request_started_at
+        advisory_target = self._prompt_pane_target("advisory")
+        advisory_lane = self._prompt_owner("advisory") or "Gemini"
+        advisory_lane_busy = False
+        advisory_busy_age_sec: Optional[int] = None
+        if advisory_target:
+            advisory_snapshot = _shared_capture_pane_text(advisory_target)
+            advisory_lane_busy = _shared_pane_text_has_busy_indicator(
+                advisory_snapshot,
+                advisory_lane,
+            )
+            if advisory_lane_busy:
+                advisory_busy_age_sec = _shared_pane_text_busy_age_seconds(
+                    advisory_snapshot,
+                    advisory_lane,
+                )
+                if advisory_busy_age_sec is not None:
+                    pending_age = max(pending_age, float(advisory_busy_age_sec))
         if pending_age < self.advisory_recovery_sec:
             return None
 
@@ -2161,9 +2181,185 @@ class WatcherCore:
             "control_seq": request_seq,
             "request_sig": request_sig,
             "advisory_pending_age_sec": int(pending_age),
+            "advisory_lane_target": advisory_target,
+            "advisory_lane_busy": advisory_lane_busy,
+            "advisory_lane_busy_age_sec": advisory_busy_age_sec,
             "verify_lane_ready": True,
             "verify_lane_ready_reason": defer_reason,
         }
+
+    # ------------------------------------------------------------------
+    def _cancel_advisory_lane_for_recovery(self, marker: dict[str, object]) -> bool:
+        target = str(
+            marker.get("advisory_lane_target")
+            or self._prompt_pane_target("advisory")
+            or ""
+        ).strip()
+        if not target:
+            return False
+        lane_name = self._prompt_owner("advisory") or "Gemini"
+        if not bool(marker.get("advisory_lane_busy")):
+            snapshot = _shared_capture_pane_text(target)
+            if not _shared_pane_text_has_busy_indicator(snapshot, lane_name):
+                return False
+
+        payload = {
+            "reason": "advisory_recovery",
+            "target": target,
+            "control_file": marker.get("control_file"),
+            "control_seq": marker.get("control_seq"),
+            "advisory_lane_busy_age_sec": marker.get("advisory_lane_busy_age_sec"),
+            "dry_run": bool(self.dry_run),
+            "success": False,
+        }
+        if self.dry_run:
+            payload["success"] = True
+            marker["advisory_lane_cancelled"] = True
+            marker["advisory_lane_cancel_dry_run"] = True
+            self._append_runtime_event("advisory_lane_cancelled", payload)
+            return True
+
+        try:
+            result = subprocess.run(
+                ["tmux", "send-keys", "-t", target, "Escape"],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            success = result.returncode == 0
+            payload["success"] = success
+            if not success:
+                payload["returncode"] = result.returncode
+                payload["stderr"] = (result.stderr or "").strip()[-500:]
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            success = False
+            payload["error"] = repr(exc)
+
+        marker["advisory_lane_cancelled"] = success
+        self._append_runtime_event("advisory_lane_cancelled", payload)
+        return success
+
+    # ------------------------------------------------------------------
+    def _cancel_inactive_advisory_lane_if_busy(self) -> bool:
+        if not self._advisory_enabled():
+            return False
+        if self._current_turn_state == WatcherTurnState.ADVISORY_ACTIVE:
+            return False
+        target = self._prompt_pane_target("advisory")
+        if not target:
+            return False
+
+        lane_name = self._prompt_owner("advisory") or "Gemini"
+        snapshot = _shared_capture_pane_text(target)
+        if not _shared_pane_text_has_busy_indicator(snapshot, lane_name):
+            return False
+
+        fingerprint = hashlib.sha256(snapshot.encode("utf-8", errors="replace")).hexdigest()
+        now = time.time()
+        if (
+            fingerprint == self._last_inactive_advisory_cancel_fingerprint
+            and now - self._last_inactive_advisory_cancel_at < 30.0
+        ):
+            return False
+
+        self._last_inactive_advisory_cancel_fingerprint = fingerprint
+        self._last_inactive_advisory_cancel_at = now
+        busy_age_sec = _shared_pane_text_busy_age_seconds(snapshot, lane_name)
+        payload = {
+            "reason": "inactive_advisory_lane_busy",
+            "target": target,
+            "turn_state": self._current_turn_state.value,
+            "turn_active_control_file": self._turn_active_control_file,
+            "turn_active_control_seq": self._turn_active_control_seq,
+            "advisory_lane_busy_age_sec": busy_age_sec,
+            "dry_run": bool(self.dry_run),
+            "success": False,
+        }
+        if self.dry_run:
+            payload["success"] = True
+            self._append_runtime_event("inactive_advisory_lane_cancelled", payload)
+            return True
+
+        try:
+            result = subprocess.run(
+                ["tmux", "send-keys", "-t", target, "Escape"],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            success = result.returncode == 0
+            payload["success"] = success
+            if not success:
+                payload["returncode"] = result.returncode
+                payload["stderr"] = (result.stderr or "").strip()[-500:]
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            success = False
+            payload["error"] = repr(exc)
+
+        self._append_runtime_event("inactive_advisory_lane_cancelled", payload)
+        return success
+
+    # ------------------------------------------------------------------
+    def _supersede_advisory_request_for_recovery(self, marker: dict[str, object]) -> bool:
+        request_seq = control_seq_value(marker.get("control_seq"), default=-1)
+        if self._read_status_from_path(self.advisory_request_path) != "request_open":
+            return False
+        slot_seq = self._read_control_seq_from_path(self.advisory_request_path)
+        if request_seq >= 0 and slot_seq != request_seq:
+            return False
+        try:
+            original_text = self.advisory_request_path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return False
+
+        supersede_lines = [
+            "SUPERSEDED_BY: advisory_recovery",
+            f"SUPERSEDED_BY_SEQ: {request_seq}",
+            "SUPERSEDED_REASON: stale_advisory_recovery",
+        ]
+        output_lines: list[str] = []
+        status_written = False
+        supersede_written = False
+        for raw_line in original_text.splitlines():
+            stripped = raw_line.strip()
+            if stripped.startswith(
+                ("SUPERSEDED_BY:", "SUPERSEDED_BY_SEQ:", "SUPERSEDED_REASON:")
+            ):
+                continue
+            if stripped.startswith("STATUS:") and not status_written:
+                output_lines.append("STATUS: superseded")
+                status_written = True
+                continue
+            output_lines.append(raw_line)
+            if stripped.startswith("CONTROL_SEQ:") and not supersede_written:
+                output_lines.extend(supersede_lines)
+                supersede_written = True
+
+        if not status_written:
+            output_lines.insert(0, "STATUS: superseded")
+        if not supersede_written:
+            insert_at = 1 if output_lines and output_lines[0].strip().startswith("STATUS:") else 0
+            output_lines[insert_at:insert_at] = supersede_lines
+
+        atomic_write_text(self.advisory_request_path, "\n".join(output_lines).rstrip() + "\n")
+        self._last_advisory_request_sig = self._get_path_sig(self.advisory_request_path)
+        payload = {
+            "reason": "advisory_recovery",
+            "control_file": self.advisory_request_path.name,
+            "control_seq": slot_seq,
+            "superseded_by": "advisory_recovery",
+        }
+        marker["advisory_request_superseded"] = True
+        self._log_raw(
+            "advisory_request_superseded",
+            str(self.advisory_request_path),
+            "turn_signal",
+            payload,
+        )
+        self._append_runtime_event("advisory_request_superseded", payload)
+        return True
 
     # ------------------------------------------------------------------
     def _recover_stale_advisory(self) -> bool:
@@ -2175,6 +2371,8 @@ class WatcherCore:
         request_sig = str(marker.get("request_sig") or "")
         self._last_advisory_recovery_sig = request_sig
         self._last_advisory_recovery_at = time.time()
+        self._cancel_advisory_lane_for_recovery(marker)
+        self._supersede_advisory_request_for_recovery(marker)
         self._clear_implement_blocked_state("advisory_recovery")
         self._log_raw(
             "advisory_recovery",
@@ -3766,6 +3964,8 @@ class WatcherCore:
 
         # --- rolling handoff / operator 슬롯 감시 (verify → implement / operator 방향) ---
         self._check_pipeline_signal_updates()
+        if self._cancel_inactive_advisory_lane_if_busy():
+            return
         if self._promote_operator_retriage_no_next_control():
             return
         if self._check_operator_recovery_without_signal():

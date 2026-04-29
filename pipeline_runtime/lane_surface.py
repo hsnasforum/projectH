@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import subprocess
 import time
 
@@ -21,6 +22,10 @@ _ACTIVE_BUSY_MARKERS = (
     "esc to interrupt",
     "esc to cancel",
     "thinking with ",
+)
+_BUSY_AGE_TOKEN_RE = re.compile(
+    r"(?P<value>\d+)\s*(?P<unit>hours?|hrs?|h|minutes?|mins?|m|seconds?|secs?|s)\b",
+    re.IGNORECASE,
 )
 
 LANE_SURFACE_PROFILES = {
@@ -163,6 +168,41 @@ def pane_text_has_busy_indicator(text: str, lane_name: str | None = None) -> boo
     if prompt_indices and prompt_indices[-1] > busy_indices[-1]:
         return False
     return True
+
+
+def _duration_seconds_from_text(text: str) -> int | None:
+    total = 0
+    matched = False
+    for match in _BUSY_AGE_TOKEN_RE.finditer(str(text or "")):
+        matched = True
+        value = int(match.group("value"))
+        unit = match.group("unit").lower()
+        if unit.startswith("h"):
+            total += value * 3600
+        elif unit.startswith("m"):
+            total += value * 60
+        else:
+            total += value
+    if not matched:
+        return None
+    return total
+
+
+def pane_text_busy_age_seconds(text: str, lane_name: str | None = None) -> int | None:
+    window = _recent_nonempty_lines(text, limit=18)
+    if not window:
+        return None
+    busy_markers = tuple(marker.lower() for marker in busy_markers_for_lane(lane_name))
+    active_markers = tuple(marker.lower() for marker in _ACTIVE_BUSY_MARKERS)
+    for line in reversed(window):
+        if not any(marker in line for marker in active_markers):
+            continue
+        if not any(marker in line for marker in busy_markers + active_markers):
+            continue
+        seconds = _duration_seconds_from_text(line)
+        if seconds is not None:
+            return seconds
+    return None
 
 
 def pane_text_has_input_cursor(text: str) -> bool:

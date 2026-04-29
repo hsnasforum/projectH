@@ -1,6 +1,12 @@
+"""Candidate confirmation and review handler methods.
+
+Extracted from AggregateHandlerMixin (the final extraction completing
+the aggregate.py decomposition trilogy: M70, M77, M78).
+"""
 from __future__ import annotations
 
 from typing import Any
+from uuid import uuid4
 
 from app.errors import WebApiError
 from app.handlers.corrections import _first_correction_snippets
@@ -13,8 +19,8 @@ from core.contracts import (
 )
 
 
-class AggregateHandlerMixin:
-    """Candidate confirmation and review methods extracted from WebAppService."""
+class CandidateHandlerMixin:
+    """Candidate confirmation and review methods."""
 
     def submit_candidate_confirmation(self, payload: dict[str, Any]) -> dict[str, Any]:
         session_id = self._normalize_session_id(payload.get("session_id"))

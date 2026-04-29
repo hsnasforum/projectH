@@ -5795,6 +5795,80 @@ class RollingSignalTransitionTest(unittest.TestCase):
             raw_text = (base_dir / "logs" / "experimental" / "raw.jsonl").read_text(encoding="utf-8")
             self.assertIn("operator_retriage_no_next_control", raw_text)
 
+    def test_inactive_advisory_busy_preempts_operator_retriage_promotion(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            watch_dir = root / "work"
+            base_dir = root / ".pipeline"
+            watch_dir.mkdir(parents=True, exist_ok=True)
+            base_dir.mkdir(parents=True, exist_ok=True)
+            _write_active_profile(root)
+
+            operator_path = base_dir / "operator_request.md"
+            operator_path.write_text(
+                "\n".join(
+                    [
+                        "STATUS: needs_operator",
+                        "CONTROL_SEQ: 31",
+                        "REASON_CODE: slice_ambiguity",
+                        "OPERATOR_POLICY: gate_24h",
+                        "DECISION_CLASS: next_slice_selection",
+                        "DECISION_REQUIRED: (B) runtime validation; (C) docs reconciliation",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            core = watcher_core.WatcherCore(
+                {
+                    "watch_dir": str(watch_dir),
+                    "base_dir": str(base_dir),
+                    "repo_root": str(root),
+                    "dry_run": True,
+                    "startup_grace_sec": 0,
+                    "operator_retriage_no_control_sec": 0,
+                    "verify_pane_target": "codex-pane",
+                    "gemini_pane_target": "gemini-pane",
+                }
+            )
+            core._initial_turn_checked = True
+            marker = core._operator_gate_marker()
+            self.assertIsNotNone(marker)
+            core._last_operator_retriage_sig = core._get_path_sig(operator_path)
+            core._last_operator_retriage_fingerprint = str((marker or {}).get("fingerprint") or "")
+            core._operator_retriage_started_at = time.time() - 10.0
+            core._transition_turn(
+                WatcherTurnState.VERIFY_FOLLOWUP,
+                "test_setup_operator_retriage",
+                active_control_file="operator_request.md",
+                active_control_seq=31,
+            )
+
+            with (
+                mock.patch(
+                    "watcher_core._shared_capture_pane_text",
+                    return_value="⠹ Thinking... (esc to cancel, 4m 19s)\n * Type your message",
+                ),
+                mock.patch.object(
+                    core.dispatch_queue,
+                    "lane_prompt_readiness",
+                    return_value=(True, "prompt_visible"),
+                ),
+                mock.patch.object(core, "_notify_advisory_owner") as notify,
+            ):
+                core._poll()
+
+            notify.assert_not_called()
+            self.assertFalse((base_dir / "advisory_request.md").exists())
+            events = [
+                json.loads(line)
+                for line in core.run_events_path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            self.assertTrue(
+                any(event.get("event_type") == "inactive_advisory_lane_cancelled" for event in events)
+            )
+
     def test_pr_merge_recovery_no_next_control_promotes_to_advisory_request(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -6699,6 +6773,7 @@ class BusyLaneNotificationDeferTest(unittest.TestCase):
             self.assertIn("ROLE: advisory_recovery", args[1])
             self.assertIn("REQUEST_SEQ: 18", args[1])
             self.assertIn("write exactly one next control", args[1])
+            self.assertIn("do not reopen the same stale advisory request", args[1])
             self.assertEqual(core._current_turn_state, WatcherTurnState.VERIFY_FOLLOWUP)
             self.assertEqual(core._turn_active_control_file, "advisory_request.md")
             self.assertEqual(core._turn_active_control_seq, 18)
@@ -6785,6 +6860,108 @@ class BusyLaneNotificationDeferTest(unittest.TestCase):
             recovery_payload = recovery_events[-1].get("payload") or {}
             self.assertEqual(recovery_payload.get("advisory_lane_busy_age_sec"), 2193)
             self.assertTrue(recovery_payload.get("advisory_lane_cancelled"))
+            request_text = request_path.read_text(encoding="utf-8")
+            self.assertIn("STATUS: superseded", request_text)
+            self.assertIn("SUPERSEDED_BY: advisory_recovery", request_text)
+            self.assertIn("SUPERSEDED_REASON: stale_advisory_recovery", request_text)
+            self.assertTrue(recovery_payload.get("advisory_request_superseded"))
+
+    def test_inactive_advisory_lane_busy_is_cancelled(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            watch_dir = root / "work"
+            base_dir = root / ".pipeline"
+            watch_dir.mkdir(parents=True, exist_ok=True)
+            base_dir.mkdir(parents=True, exist_ok=True)
+            _write_active_profile(root)
+
+            core = watcher_core.WatcherCore(
+                {
+                    "watch_dir": str(watch_dir),
+                    "base_dir": str(base_dir),
+                    "repo_root": str(root),
+                    "dry_run": False,
+                    "gemini_pane_target": "gemini-pane",
+                }
+            )
+            core._initial_turn_checked = True
+            core._transition_turn(
+                WatcherTurnState.VERIFY_FOLLOWUP,
+                "test_setup_followup",
+                active_control_file="operator_request.md",
+                active_control_seq=42,
+            )
+
+            with (
+                mock.patch(
+                    "watcher_core._shared_capture_pane_text",
+                    return_value="⠹ Thinking... (esc to cancel, 4m 19s)\n * Type your message",
+                ),
+                mock.patch(
+                    "watcher_core.subprocess.run",
+                    return_value=mock.Mock(returncode=0, stderr=""),
+                ) as send_escape,
+            ):
+                cancelled = core._cancel_inactive_advisory_lane_if_busy()
+
+            self.assertTrue(cancelled)
+            send_escape.assert_called_once_with(
+                ["tmux", "send-keys", "-t", "gemini-pane", "Escape"],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            events = [
+                json.loads(line)
+                for line in core.run_events_path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            cancel_events = [
+                event
+                for event in events
+                if event.get("event_type") == "inactive_advisory_lane_cancelled"
+            ]
+            self.assertTrue(cancel_events)
+            payload = cancel_events[-1].get("payload") or {}
+            self.assertEqual(payload.get("turn_state"), "VERIFY_FOLLOWUP")
+            self.assertEqual(payload.get("advisory_lane_busy_age_sec"), 259)
+
+    def test_active_advisory_lane_busy_is_not_inactive_cancelled(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            watch_dir = root / "work"
+            base_dir = root / ".pipeline"
+            watch_dir.mkdir(parents=True, exist_ok=True)
+            base_dir.mkdir(parents=True, exist_ok=True)
+            _write_active_profile(root)
+
+            core = watcher_core.WatcherCore(
+                {
+                    "watch_dir": str(watch_dir),
+                    "base_dir": str(base_dir),
+                    "repo_root": str(root),
+                    "dry_run": False,
+                    "gemini_pane_target": "gemini-pane",
+                }
+            )
+            core._initial_turn_checked = True
+            core._transition_turn(
+                WatcherTurnState.ADVISORY_ACTIVE,
+                "test_setup_advisory",
+                active_control_file="advisory_request.md",
+                active_control_seq=42,
+            )
+
+            with (
+                mock.patch("watcher_core._shared_capture_pane_text") as capture,
+                mock.patch("watcher_core.subprocess.run") as send_escape,
+            ):
+                cancelled = core._cancel_inactive_advisory_lane_if_busy()
+
+            self.assertFalse(cancelled)
+            capture.assert_not_called()
+            send_escape.assert_not_called()
 
     def test_stale_advisory_recovery_skips_when_current_advice_exists(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

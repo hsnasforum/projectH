@@ -128,6 +128,7 @@ DEFAULT_ADVISORY_RECOVERY_PROMPT = (
     "- write exactly one next control\n"
     "- do not write `.pipeline/advisory_advice.md` on behalf of the advisory owner\n"
     "- if advisory is still needed, write a newer, narrower `.pipeline/advisory_request.md`\n"
+    "- do not reopen the same stale advisory request after recovery; choose implement/operator, or ask advisory only with materially narrower new evidence\n"
     "- if you write `.pipeline/implement_handoff.md`, keep its `READ_FIRST` to the implement-owner root doc only\n"
     "- operator stop header must include STATUS, CONTROL_SEQ, REASON_CODE, OPERATOR_POLICY, DECISION_CLASS, DECISION_REQUIRED, BASED_ON_WORK, BASED_ON_VERIFY\n"
     "- use `.pipeline/operator_request.md` only for a real operator-only decision, approval/truth-sync blocker, immediate safety stop, auth/credential blocker, or external publication boundary"

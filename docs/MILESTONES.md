@@ -1419,10 +1419,22 @@ Axis 1: candidate_preferences TypeScript type sync — DONE
 M88 Axis 1 backend 키와 TypeScript 계약 동기화. `tsc --noEmit` PASS.
 dist·E2E 불필요 (타입 선언만). Axis 2 없음.
 
+## M90 PreferencePanel candidate_preferences 연결
+
+Axis 1: candidatePreferences state in PreferencePanel — DONE
+`app/frontend/src/components/PreferencePanel.tsx`에 `candidatePreferences` 상태 추가.
+`fetchPreferences()` 응답의 `candidate_preferences` 값을 state에 저장.
+`candidateCount`가 서버 pre-filtered 후보 목록 우선, `preferences.filter` fallback 유지.
+tsc PASS.
+
+Axis 2: dist rebuild + E2E stabilization — DONE
+`npx vite build`로 dist 재빌드 (313K). `candidate_preferences` wiring 1건 확인.
+`preference-not-applied-btn` E2E DOM detach 수정; 격리 1 passed (10.1s).
+
 ## Next 3 Implementation Priorities
 
-1. **PR 머지 백로그**: operator 승인 대기 — PR #71-#79 스택.
-2. **M90 방향**: M89 완료; 다음 기능 축은 main 머지 후 fresh advisory 결정.
+1. **PR 머지 백로그**: operator 승인 대기 — PR #71-#80 스택.
+2. **M91 방향**: M90 완료; 다음 기능 축은 main 머지 후 fresh advisory 결정.
 3. **장기**: cross-session memory 강화, north star 방향 유지.
 
 ## Do Not Pull Forward

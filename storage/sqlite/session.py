@@ -166,6 +166,82 @@ class SQLiteSessionStore:
         data = self._load(session_id)
         return data.get("permissions", {"web_search": "disabled"})
 
+    def get_global_audit_summary(self) -> dict[str, Any]:
+        """Return aggregate trace counts across all sessions for precondition assessment."""
+        with self._lock:
+            summary: dict[str, Any] = {
+                "session_count": 0,
+                "correction_pair_count": 0,
+                "feedback_like_count": 0,
+                "feedback_dislike_count": 0,
+                "personalized_response_count": 0,
+                "personalized_correction_count": 0,
+                "per_preference_stats": {},
+                "operator_executed_count": 0,
+                "operator_rolled_back_count": 0,
+                "operator_failed_count": 0,
+            }
+
+            def count_feedback(feedback: Any) -> None:
+                if not isinstance(feedback, dict):
+                    return
+                label = str(feedback.get("label") or "").strip().lower()
+                if label in {"helpful", "like"}:
+                    summary["feedback_like_count"] += 1
+                elif label in {"unclear", "incorrect", "dislike"}:
+                    summary["feedback_dislike_count"] += 1
+
+            rows = self._db.fetchall("SELECT data FROM sessions")
+            for row in rows:
+                try:
+                    data = json.loads(row["data"])
+                except Exception:
+                    continue
+                summary["session_count"] += 1
+                for msg in data.get("messages", []):
+                    if not isinstance(msg, dict):
+                        continue
+                    if (
+                        str(msg.get("artifact_kind") or "") == "grounded_brief"
+                        and msg.get("corrected_text") is not None
+                    ):
+                        summary["correction_pair_count"] += 1
+                    if msg.get("applied_preference_ids"):
+                        summary["personalized_response_count"] += 1
+                        is_personalized_correction = msg.get("corrected_text") is not None
+                        if is_personalized_correction:
+                            summary["personalized_correction_count"] += 1
+                        for pref_id in msg["applied_preference_ids"]:
+                            pstats = summary["per_preference_stats"].setdefault(
+                                pref_id, {"applied_count": 0, "corrected_count": 0}
+                            )
+                            pstats["applied_count"] += 1
+                            if is_personalized_correction:
+                                pstats["corrected_count"] += 1
+                    for event in msg.get("preference_correction_events", []):
+                        if not isinstance(event, dict):
+                            continue
+                        event_fingerprint = str(event.get("fingerprint") or "").strip()
+                        if not event_fingerprint:
+                            continue
+                        event_stats = summary["per_preference_stats"].setdefault(
+                            event_fingerprint, {"applied_count": 0, "corrected_count": 0}
+                        )
+                        event_stats["corrected_count"] += 1
+                    count_feedback(msg.get("feedback"))
+                count_feedback(data.get("feedback"))
+                for action in data.get("operator_action_history", []):
+                    if not isinstance(action, dict):
+                        continue
+                    status = str(action.get("status") or "").strip()
+                    if status == "executed":
+                        summary["operator_executed_count"] += 1
+                    elif status == "rolled_back":
+                        summary["operator_rolled_back_count"] += 1
+                    elif status == "failed":
+                        summary["operator_failed_count"] += 1
+            return summary
+
     # ── Data-processing parity with SessionStore ─────────────────
     # Reuse logic from the JSON SessionStore rather than maintaining
     # divergent simplified implementations.  All methods below operate
@@ -203,4 +279,3 @@ class SQLiteSessionStore:
     record_content_reason_note_for_message = _SS.record_content_reason_note_for_message
     add_pending_approval = _SS.add_pending_approval
     del _SS
-

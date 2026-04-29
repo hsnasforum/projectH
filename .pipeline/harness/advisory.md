@@ -25,6 +25,9 @@ the active control slot, latest `/work`, latest `/verify`, or supervisor
 
 - Prefer a short answer within a few minutes.
 - Do not perform broad repository exploration by default.
+- Do not use broad full-file `cat` reads on large planning docs such as
+  `docs/TASK_BACKLOG.md`, `docs/MILESTONES.md`, or `docs/NEXT_STEPS.md`.
+  Use targeted search or section reads instead.
 - If evidence is insufficient, return `INSUFFICIENT_CONTEXT` plus the exact
   missing evidence instead of expanding the search.
 

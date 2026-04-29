@@ -101,6 +101,10 @@ If a prompt already names exact source paths, docs, or tests, read those first
 and avoid widening into historical planning folders. `docs/superpowers/**`,
 `docs/recycle/**`, and `plandoc/**` are not current truth unless the user,
 latest `/work`, latest `/verify`, or active control explicitly cites them.
+For large planning docs such as `docs/TASK_BACKLOG.md`, `docs/MILESTONES.md`,
+or `docs/NEXT_STEPS.md`, prefer targeted `rg` / section reads over full-file
+`cat`; if that evidence is insufficient, record the missing exact evidence
+instead of widening the search by default.
 
 ## Repository Map
 

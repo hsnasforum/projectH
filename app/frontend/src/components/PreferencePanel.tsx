@@ -238,6 +238,8 @@ export default function PreferencePanel({ lastAppliedFingerprints = [] }: PanelP
   const pausedCount = preferences.filter((p) => p.status === "paused").length;
   const filteredPreferences = statusFilter === "all"
     ? preferences
+    : statusFilter === "candidate" && candidatePreferences != null
+    ? candidatePreferences
     : preferences.filter((p) => p.status === statusFilter);
   const statusTabs: Array<{ key: PreferenceStatusFilter; label: string; count: number }> = [
     { key: "all", label: "전체", count: preferences.length },

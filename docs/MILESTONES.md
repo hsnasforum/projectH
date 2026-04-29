@@ -1484,10 +1484,21 @@ Axis 2: dist rebuild + E2E — DONE
 dist 재빌드 (314K, Apr 29 17:38). `pref-card-` / `선호에서 보기` 2건 dist 반영.
 preference E2E 5 passed. e2e 파일 변경 없음.
 
+## M96 Applied Preferences 팝오버 data-testid 패턴 완결
+
+Axis 1: pref-navigate-to-card data-testid 추가 — DONE
+`MessageBubble.tsx` applied preferences 팝오버의 `선호에서 보기` anchor에
+`data-testid="pref-navigate-to-card"` 추가. applied preferences 팝오버 내
+모든 인터랙티브 요소가 `data-testid` 패턴을 가지게 됨. tsc PASS.
+
+Axis 2: dist rebuild + E2E — DONE
+dist 재빌드 (314K, Apr 29 17:51). `pref-navigate-to-card` 1건 dist 반영.
+preference E2E 5 passed.
+
 ## Next 3 Implementation Priorities
 
-1. **PR 머지 백로그**: operator 승인 대기 — PR #71-#85 스택.
-2. **M96 방향**: M95 완료; 다음 기능 축은 main 머지 후 fresh advisory 결정.
+1. **PR 머지 백로그**: operator 승인 대기 — PR #71-#86 스택.
+2. **M97 방향**: M96 완료; 다음 기능 축은 main 머지 후 fresh advisory 결정.
 3. **장기**: cross-session memory 강화, north star 방향 유지.
 
 ## Do Not Pull Forward

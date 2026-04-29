@@ -615,6 +615,15 @@ export default function MessageBubble({
                               적용 {appliedCount}회 · 교정 {visibleCorrectedCount}회
                             </p>
                           )}
+                          {fullPref?.preference_id && (
+                            <a
+                              href={`#pref-card-${fullPref.preference_id}`}
+                              className="w-fit text-[10px] text-violet-400 underline hover:text-violet-600"
+                              onClick={() => setPrefPopoverOpen(false)}
+                            >
+                              선호에서 보기
+                            </a>
+                          )}
                           {fullPref?.original_snippet && (
                             <div className="pl-1 text-[10px] text-stone-400" data-testid="pref-original-snippet">
                               <span className="font-medium">원본: </span>{fullPref.original_snippet}

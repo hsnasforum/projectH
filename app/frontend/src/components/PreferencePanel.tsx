@@ -138,11 +138,10 @@ export default function PreferencePanel({ lastAppliedFingerprints = [] }: PanelP
           ? data.low_reliability_active_count
           : visible.filter(isActiveLowReliabilityPreference).length,
       );
-      const dataWithConflict = data as typeof data & { high_severity_conflict_count?: number | null };
       setHighSeverityConflictCount(
-        typeof dataWithConflict.high_severity_conflict_count === "number" &&
-          Number.isFinite(dataWithConflict.high_severity_conflict_count)
-          ? dataWithConflict.high_severity_conflict_count
+        typeof data.high_severity_conflict_count === "number" &&
+          Number.isFinite(data.high_severity_conflict_count)
+          ? data.high_severity_conflict_count
           : visible.filter(
               (pref) =>
                 pref.status === "active" &&

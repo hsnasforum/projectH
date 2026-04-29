@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 
 from pipeline_runtime.automation_health import (
+    IMPLEMENT_READY_IDLE_CYCLE_THRESHOLD,
     STALE_ADVISORY_GRACE_CYCLES,
     STALE_CONTROL_CYCLE_THRESHOLD,
     derive_automation_health,
@@ -307,6 +308,69 @@ class PipelineRuntimeAutomationHealthTest(unittest.TestCase):
         self.assertEqual(health["automation_health"], "attention")
         self.assertEqual(health["automation_reason_code"], "signal_mismatch")
         self.assertEqual(health["automation_next_action"], "verify_followup")
+
+    def test_active_implement_lane_ready_too_long_is_not_silent_ok(self) -> None:
+        health = derive_automation_health(
+            {
+                "runtime_state": "RUNNING",
+                "control_age_cycles": IMPLEMENT_READY_IDLE_CYCLE_THRESHOLD,
+                "control": {"active_control_status": "implement"},
+                "turn_state": {
+                    "state": "IMPLEMENT_ACTIVE",
+                    "active_lane": "Codex",
+                    "active_role": "implement",
+                },
+                "lanes": [{"name": "Codex", "state": "READY", "note": "prompt_visible"}],
+                "active_round": None,
+            }
+        )
+
+        self.assertEqual(health["automation_health"], "attention")
+        self.assertEqual(health["automation_reason_code"], "implement_active_idle")
+        self.assertEqual(health["automation_incident_family"], "idle_release_pending")
+        self.assertEqual(health["automation_next_action"], "retrying")
+
+    def test_implement_idle_timeout_with_active_handoff_is_recovering(self) -> None:
+        health = derive_automation_health(
+            {
+                "runtime_state": "RUNNING",
+                "control": {"active_control_status": "implement"},
+                "turn_state": {
+                    "state": "IDLE",
+                    "reason": "implement_idle_timeout",
+                },
+                "lanes": [{"name": "Codex", "state": "READY", "note": "prompt_visible"}],
+            }
+        )
+
+        self.assertEqual(health["automation_health"], "recovering")
+        self.assertEqual(health["automation_reason_code"], "idle_release_pending")
+        self.assertEqual(health["automation_incident_family"], "idle_release_pending")
+        self.assertEqual(health["automation_next_action"], "retrying")
+
+    def test_current_work_verify_round_is_not_misread_as_idle_release(self) -> None:
+        health = derive_automation_health(
+            {
+                "runtime_state": "RUNNING",
+                "control": {"active_control_status": "implement"},
+                "turn_state": {
+                    "state": "IDLE",
+                    "reason": "implement_idle_timeout",
+                },
+                "active_round": {
+                    "state": "VERIFY_PENDING",
+                    "artifact_path": "/repo/work/4/29/2026-04-29-current.md",
+                },
+                "artifacts": {
+                    "latest_work": {"path": "4/29/2026-04-29-current.md"},
+                },
+                "lanes": [{"name": "Claude", "state": "READY", "note": "verify_pending"}],
+            }
+        )
+
+        self.assertEqual(health["automation_health"], "ok")
+        self.assertEqual(health["automation_reason_code"], "")
+        self.assertEqual(health["automation_next_action"], "continue")
 
 
 if __name__ == "__main__":

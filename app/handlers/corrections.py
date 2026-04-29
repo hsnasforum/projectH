@@ -5,6 +5,7 @@ from typing import Any
 
 from app.errors import WebApiError
 from core.contracts import CandidateFamily, PreferenceStatus
+from storage.preference_utils import seed_reliability_from_recurrence
 
 
 def _first_correction_snippets(
@@ -126,6 +127,9 @@ class CorrectionHandlerMixin:
                 },
                 original_snippet=first_original,
                 corrected_snippet=first_corrected,
+                initial_reliability_stats=seed_reliability_from_recurrence(
+                    int(correction.get("recurrence_count") or 1)
+                ),
             )
             if pref and pref.get("status") == PreferenceStatus.CANDIDATE:
                 result = self.preference_store.activate_preference(pref["preference_id"])

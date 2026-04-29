@@ -13,6 +13,12 @@ def preference_fingerprint(preference: Mapping[str, Any]) -> str:
     return str(preference.get("fingerprint") or preference.get("delta_fingerprint") or "")
 
 
+def seed_reliability_from_recurrence(recurrence_count: int) -> dict[str, int]:
+    if recurrence_count < 1:
+        return {}
+    return {"applied_count": recurrence_count, "corrected_count": 0}
+
+
 def _normalized_reliability_stats(stats: Any) -> dict[str, int]:
     if not isinstance(stats, Mapping):
         return {"applied_count": 0, "corrected_count": 0}

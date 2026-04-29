@@ -7,12 +7,19 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from app.handlers.corrections import CorrectionHandlerMixin
+from core.contracts import PreferenceStatus
 from storage.correction_store import CorrectionStore
+from storage.preference_store import PreferenceStore
 
 
 class _CorrectionSummaryService(CorrectionHandlerMixin):
-    def __init__(self, store: CorrectionStore) -> None:
+    def __init__(
+        self,
+        store: CorrectionStore,
+        preference_store: PreferenceStore | None = None,
+    ) -> None:
         self.correction_store = store
+        self.preference_store = preference_store
 
 
 class CorrectionSummaryTest(unittest.TestCase):
@@ -87,6 +94,40 @@ class CorrectionSummaryTest(unittest.TestCase):
             self.assertIs(payload["ok"], True)
             self.assertEqual(len(payload["corrections"]), 1)
             self.assertEqual(payload["corrections"][0]["correction_id"], record["correction_id"])
+
+    def test_promote_pattern_seeds_reliability_from_recurrence(self) -> None:
+        with TemporaryDirectory() as d:
+            correction_store = self._make_store(d)
+            preference_store = PreferenceStore(base_dir=str(Path(d) / "preferences"))
+            records = []
+            for index, session_id in enumerate(["s1", "s2", "s3"]):
+                record = correction_store.record_correction(
+                    artifact_id=f"art-recur-{index}",
+                    session_id=session_id,
+                    source_message_id=f"msg-recur-{index}",
+                    original_text="Make the answer short.",
+                    corrected_text="Make the answer concise.",
+                )
+                self.assertIsNotNone(record)
+                records.append(record)
+            delta_fingerprint = records[0]["delta_fingerprint"]
+            confirmed = correction_store.confirm_by_fingerprint(delta_fingerprint)
+            self.assertEqual(len(confirmed), 3)
+
+            payload = _CorrectionSummaryService(
+                correction_store,
+                preference_store,
+            ).promote_correction_pattern({"delta_fingerprint": delta_fingerprint})
+
+            self.assertEqual(payload["promoted_count"], 3)
+            preference = preference_store.find_by_fingerprint(delta_fingerprint)
+            self.assertIsNotNone(preference)
+            assert preference is not None
+            self.assertEqual(preference["status"], PreferenceStatus.ACTIVE)
+            self.assertEqual(
+                preference["reliability_stats"],
+                {"applied_count": 3, "corrected_count": 0},
+            )
 
 
 if __name__ == "__main__":

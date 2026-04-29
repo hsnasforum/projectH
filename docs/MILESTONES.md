@@ -1624,10 +1624,23 @@ Axis 2: dist rebuild — DONE
 `e2e/tests/web-smoke.spec.mjs`에 `correction history show more appends next page` 시나리오 추가.
 Playwright webServer는 sandbox socket 제한으로 미실행; CI 위임.
 
+## M108 preference search visibility parity
+
+Axis 1: preference search — DONE (client-side filtering)
+`PreferencePanel`에 `data-testid="preference-search-input"` 검색 입력 추가.
+기존 상태 탭 필터 위에 텍스트 필터 레이어: description/corrected_text/original_snippet/status 검색.
+빈 검색어 = 전체; 미매칭 = "검색 결과가 없습니다". API/Python 변경 없음.
+
+Axis 2: dist rebuild — DONE
+`npx vite build`로 dist 갱신; `preference-search-input` testid 포함.
+`e2e/tests/web-smoke.spec.mjs`에 `preference search filters preference list` 시나리오 추가.
+시나리오는 API mock + DOM 필터 동작 확인 + API 재호출 없음 확인.
+Playwright webServer는 sandbox socket 제한으로 미실행; CI 위임.
+
 ## Next 3 Implementation Priorities
 
-1. **PR 머지 백로그**: PR #91–#98 + 이번 M107 PR — 모두 draft, `pr_merge_gate` operator 승인 대기.
-2. **M107 완료**: Axis 1+2+doc-sync 완료 — commit/push/PR 대기.
+1. **PR 머지 백로그**: PR #91–#99 + 이번 M108 PR — 모두 draft, `pr_merge_gate` operator 승인 대기.
+2. **M108 완료**: Axis 1+2+doc-sync 완료 — commit/push/PR 대기.
 3. **장기**: cross-session memory 강화, north star 방향 유지.
 
 ## Do Not Pull Forward

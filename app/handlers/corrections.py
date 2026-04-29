@@ -5,6 +5,10 @@ from typing import Any
 
 from app.errors import WebApiError
 from core.contracts import CandidateFamily, PreferenceStatus
+from storage.preference_utils import (
+    enrich_preference_reliability,
+    seed_reliability_from_recurrence,
+)
 
 
 def _first_correction_snippets(
@@ -107,8 +111,12 @@ class CorrectionHandlerMixin:
             raise WebApiError(400, "delta_fingerprint 값이 필요합니다.")
         promoted = self.correction_store.promote_by_fingerprint(delta_fingerprint)
         activated_count = 0
+        is_highly_reliable = False
         for correction in promoted:
             first_original, first_corrected = _first_correction_snippets([correction])
+            avg_similarity_score = correction.get("similarity_score")
+            if not isinstance(avg_similarity_score, (int, float)):
+                avg_similarity_score = None
             pref = self.preference_store.record_reviewed_candidate_preference(
                 delta_fingerprint=delta_fingerprint,
                 candidate_family=str(
@@ -124,15 +132,23 @@ class CorrectionHandlerMixin:
                     ),
                     "promotion_source": "promote_pattern",
                 },
+                avg_similarity_score=avg_similarity_score,
                 original_snippet=first_original,
                 corrected_snippet=first_corrected,
+                initial_reliability_stats=seed_reliability_from_recurrence(
+                    int(correction.get("recurrence_count") or 1)
+                ),
             )
             if pref and pref.get("status") == PreferenceStatus.CANDIDATE:
                 result = self.preference_store.activate_preference(pref["preference_id"])
                 if result is not None:
                     activated_count += 1
+                    enriched = enrich_preference_reliability(result)
+                    if enriched.get("is_highly_reliable") is True:
+                        is_highly_reliable = True
         return {
             "ok": True,
             "promoted_count": len(promoted),
             "activated_count": activated_count,
+            "is_highly_reliable": is_highly_reliable,
         }

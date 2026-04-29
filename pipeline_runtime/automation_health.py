@@ -16,6 +16,7 @@ from .operator_autonomy import (
 # "an agent is still working through a normal round".
 STALE_CONTROL_CYCLE_THRESHOLD = 900
 STALE_ADVISORY_GRACE_CYCLES = 60
+IMPLEMENT_READY_IDLE_CYCLE_THRESHOLD = 120
 
 AUTOMATION_HEALTH_VALUES = frozenset({"ok", "recovering", "attention", "needs_operator"})
 AUTOMATION_NEXT_ACTION_VALUES = frozenset({
@@ -104,6 +105,8 @@ def automation_incident_family(reason_code: object) -> str:
     reason = _clean(reason_code)
     if not reason:
         return ""
+    if reason == "implement_active_idle":
+        return "idle_release_pending"
     if reason == "post_accept_completion_stall" or reason.startswith("receipt_"):
         return "completion_stall"
     if reason == "dispatch_stall":
@@ -142,6 +145,44 @@ def _lane_note_reason(status: Mapping[str, Any]) -> str:
         if note in {"signal_mismatch", "idle_release_pending"}:
             return note
     return ""
+
+
+def _active_implement_lane_ready(status: Mapping[str, Any]) -> bool:
+    turn_state = status.get("turn_state")
+    if not isinstance(turn_state, Mapping):
+        return False
+    active_lane = _clean(turn_state.get("active_lane"))
+    if not active_lane:
+        return False
+    for lane in list(status.get("lanes") or []):
+        if not isinstance(lane, Mapping):
+            continue
+        if _clean(lane.get("name")) != active_lane:
+            continue
+        return _clean(lane.get("state")) == "READY" and _clean(lane.get("note")) in {
+            "",
+            "prompt_visible",
+        }
+    return False
+
+
+def _active_round_matches_latest_work(status: Mapping[str, Any]) -> bool:
+    active_round = status.get("active_round")
+    if not isinstance(active_round, Mapping):
+        return False
+    artifacts = status.get("artifacts")
+    if not isinstance(artifacts, Mapping):
+        return False
+    latest_work = artifacts.get("latest_work")
+    if not isinstance(latest_work, Mapping):
+        return False
+    latest_path = _clean(latest_work.get("path"))
+    round_path = _clean(active_round.get("artifact_path"))
+    if not latest_path or latest_path == "—" or not round_path:
+        return False
+    normalized_latest = latest_path.lstrip("./")
+    normalized_round = round_path.replace("\\", "/").lstrip("./")
+    return normalized_round.endswith(normalized_latest)
 
 
 def _first_recovery_exhaustion(degraded_reasons: list[str]) -> str:
@@ -231,6 +272,12 @@ def derive_automation_health(status: Mapping[str, Any] | None) -> dict[str, obje
         or _clean(autonomy.get("degraded_reason"))
     )
     control_status = _clean(control.get("active_control_status"))
+    turn_state = status.get("turn_state")
+    turn_name = ""
+    turn_reason = ""
+    if isinstance(turn_state, Mapping):
+        turn_name = _clean(turn_state.get("state"))
+        turn_reason = _clean(turn_state.get("reason"))
 
     if control_status == "needs_operator" or autonomy_mode == "needs_operator":
         reason = autonomy_reason or degraded_reason or "operator_required"
@@ -281,6 +328,33 @@ def derive_automation_health(status: Mapping[str, Any] | None) -> dict[str, obje
         action = "retrying" if note_reason == "idle_release_pending" else "verify_followup"
         health = "recovering" if note_reason == "idle_release_pending" else "attention"
         return payload(health=health, reason_code=note_reason, next_action=action)
+
+    if (
+        runtime_state == "RUNNING"
+        and control_status == "implement"
+        and turn_name == "IDLE"
+        and turn_reason == "implement_idle_timeout"
+        and not _active_round_matches_latest_work(status)
+    ):
+        return payload(
+            health="recovering",
+            reason_code="idle_release_pending",
+            next_action="retrying",
+        )
+
+    if (
+        runtime_state == "RUNNING"
+        and control_status == "implement"
+        and turn_name == "IMPLEMENT_ACTIVE"
+        and not _active_round_matches_latest_work(status)
+        and control_age_cycles >= IMPLEMENT_READY_IDLE_CYCLE_THRESHOLD
+        and _active_implement_lane_ready(status)
+    ):
+        return payload(
+            health="attention",
+            reason_code="implement_active_idle",
+            next_action="retrying",
+        )
 
     if degraded_reason:
         if degraded_reason in RECOVERY_REASONS:

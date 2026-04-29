@@ -1361,11 +1361,51 @@ Axis 1 (CONTROL_SEQ 1298): 승격 결과 피드백 UI — DONE
 
 Axis 2 (CONTROL_SEQ 1299): dist 재빌드 + E2E 격리 — DONE
 
+## M85 Correction Reliability Seed → Preference Reliability Feedback
+
+Axis 1: correction reliability seed — DONE
+`storage/preference_utils.py`에 `seed_reliability_from_recurrence(recurrence_count)`
+helper 추가. `PreferenceStore`/`SQLitePreferenceStore.record_reviewed_candidate_preference`에
+`initial_reliability_stats` 선택 파라미터 추가; 신규 record 생성 시 seed 적용.
+`CorrectionHandlerMixin.promote_correction_pattern`에서 `recurrence_count` 전달.
+
+Axis 2: promote result reliability feedback — DONE
+`promote_correction_pattern` 응답에 `is_highly_reliable` boolean 추가.
+`app/frontend/src/api/client.ts` 반환 타입에 `is_highly_reliable?: boolean` 추가.
+`PreferencePanel.tsx` `lastPromoteResult`에 `신뢰도 높음` 인라인 표시.
+
+Axis 3: dist 재빌드 + E2E + automation health — DONE
+dist 재빌드 (`isHighlyReliable` 1건, 신뢰도 배지 반영).
+Playwright 격리 시나리오 `promote correction pattern with high recurrence shows
+highly reliable feedback` 추가·통과.
+`pipeline_runtime/automation_health.py`에 `implement_active_idle` /
+`idle_release_pending` attention 추가; 25건 테스트; `.pipeline/README.md`
+no-silent-stall 계약 문서화.
+
+## M86 SQLitePreferenceStore Candidate Query Parity
+
+Axis 1: SQLite 후보 조회 parity — DONE
+`storage/sqlite/preference.py` `SQLitePreferenceStore`에 `get_candidates(limit=50)`
+(status='candidate', updated_at DESC)와 `find_by_fingerprint(delta_fingerprint)`
+추가. `_record_from_row()` private helper로 row→PreferenceRecord 변환 통일.
+JSON `PreferenceStore` 공개 조회 API와 대칭 완성. 45 unit tests OK.
+
+## M87 SQLiteSessionStore Global Audit Summary Parity
+
+Axis 1: get_global_audit_summary() parity — DONE
+`storage/sqlite/session.py` `SQLiteSessionStore`에 `get_global_audit_summary()`
+추가. 전체 세션 JSON blob을 스캔해 per-preference `applied_count`/`corrected_count`,
+feedback like/dislike, correction pair count, operator action count를 집계.
+`app/handlers/preferences.py` fallback(`getattr` → `{}`)이 SQLite 기본 백엔드에서
+항상 비어 있던 `per_preference_stats` 갭 해소.
+`enrich_preference_reliability()`가 SQLite 백엔드에서도 live correction outcome
+반영 가능. adoption list + 2건 신규 테스트; 47 unit tests OK.
+
 ## Next 3 Implementation Priorities
 
-1. **PR 머지 백로그**: operator 승인 대기 — PR #62→#63→…→#69 (8단 스택, M76–M83). 머지 후 main 기준 M84+ 시작.
-2. **M84 방향**: correction→preference→active 관측 루프 완결 후 다음 기능 축 또는 structural 개선 — advisory에서 결정.
-3. **장기**: cross-session memory 강화, 승격 결과 persistence 등 north star 방향.
+1. **PR 머지 백로그**: operator 승인 대기 — PR #71-#76 스택.
+2. **M87 방향**: Axis 1 완료; 추가 Axis 없음 (backend-only 변경). M88 방향 advisory 결정 예정.
+3. **장기**: cross-session memory 강화, north star 방향 유지.
 
 ## Do Not Pull Forward
 

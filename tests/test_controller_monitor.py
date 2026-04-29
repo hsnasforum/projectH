@@ -103,6 +103,48 @@ class ControllerMonitorTests(unittest.TestCase):
         self.assertEqual(snapshot["communications"][0]["to"], "Codex")
         self.assertEqual(snapshot["teams"][0]["agents"], ["Claude", "Codex"])
 
+    def test_lane_ready_clears_stale_approval_wait(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            project = Path(td) / "project"
+            project.mkdir()
+            manager = RuntimeMonitorStateManager(project)
+
+            manager.ingest_events(
+                [
+                    ParsedLogEvent(
+                        agent_id="Gemini",
+                        event_type="approval_wait",
+                        approval_wait=True,
+                        message="waiting for operator",
+                        source_path="memory:test",
+                    )
+                ]
+            )
+            waiting_snapshot = manager.snapshot(
+                runtime_status={"runtime_state": "RUNNING", "lanes": [{"name": "Gemini", "state": "READY"}]},
+                dashboard_payload={"today_totals": {}, "collector_status": {}, "agent_totals": []},
+            )
+
+            manager.ingest_events(
+                [
+                    ParsedLogEvent(
+                        agent_id="Gemini",
+                        state="ready",
+                        event_type="lane_ready",
+                        message="Gemini lane ready",
+                        source_path="status:test",
+                    )
+                ]
+            )
+            ready_snapshot = manager.snapshot(
+                runtime_status={"runtime_state": "RUNNING", "lanes": [{"name": "Gemini", "state": "READY"}]},
+                dashboard_payload={"today_totals": {}, "collector_status": {}, "agent_totals": []},
+            )
+
+        self.assertTrue(waiting_snapshot["coordination_state"]["Gemini"]["approval_wait"])
+        self.assertFalse(ready_snapshot["coordination_state"]["Gemini"]["approval_wait"])
+        self.assertFalse(ready_snapshot["hud"]["agents"][0]["approval_wait"])
+
 
 if __name__ == "__main__":
     unittest.main()

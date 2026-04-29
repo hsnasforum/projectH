@@ -37,6 +37,7 @@ class TestSQLiteSessionStoreAdoptionList(unittest.TestCase):
         "get_active_context",
         "set_permissions",
         "get_permissions",
+        "get_global_audit_summary",
         "find_artifact_source_message",
         "record_correction_for_message",
         "record_corrected_outcome_for_artifact",
@@ -54,6 +55,76 @@ class TestSQLiteSessionStoreAdoptionList(unittest.TestCase):
                     hasattr(SQLiteSessionStore, name),
                     f"SQLiteSessionStore is missing required method: {name}",
                 )
+
+
+class TestSQLiteSessionStoreGlobalAuditSummary(unittest.TestCase):
+    def setUp(self) -> None:
+        self.db = SQLiteDatabase(":memory:")
+        self.store = SQLiteSessionStore(self.db)
+
+    def tearDown(self) -> None:
+        self.db.close()
+
+    def test_sqlite_global_audit_summary_empty(self) -> None:
+        summary = self.store.get_global_audit_summary()
+
+        self.assertEqual(summary["session_count"], 0)
+        self.assertEqual(summary["correction_pair_count"], 0)
+        self.assertEqual(summary["feedback_like_count"], 0)
+        self.assertEqual(summary["feedback_dislike_count"], 0)
+        self.assertEqual(summary["personalized_response_count"], 0)
+        self.assertEqual(summary["personalized_correction_count"], 0)
+        self.assertEqual(summary["per_preference_stats"], {})
+        self.assertEqual(summary["operator_executed_count"], 0)
+        self.assertEqual(summary["operator_rolled_back_count"], 0)
+        self.assertEqual(summary["operator_failed_count"], 0)
+
+    def test_sqlite_global_audit_summary_per_preference_stats(self) -> None:
+        session_id = "sqlite-per-pref-session"
+        data = self.store.get_session(session_id)
+        data["messages"].append({
+            "message_id": "msg-pp1",
+            "role": "assistant",
+            "artifact_id": "artifact-pp1",
+            "artifact_kind": "grounded_brief",
+            "applied_preference_ids": ["pref-A", "pref-B"],
+            "corrected_text": "corrected",
+            "original_response_snapshot": {
+                "artifact_id": "artifact-pp1",
+                "artifact_kind": "grounded_brief",
+                "draft_text": "original",
+                "source_paths": [],
+            },
+            "text": "original",
+        })
+        data["messages"].append({
+            "message_id": "msg-pp2",
+            "role": "assistant",
+            "artifact_kind": "grounded_brief",
+            "applied_preference_ids": ["pref-A"],
+            "text": "no correction",
+        })
+        data["messages"].append({
+            "message_id": "msg-pp3",
+            "role": "assistant",
+            "applied_preference_ids": ["fp-X"],
+            "preference_correction_events": [{"fingerprint": "fp-X"}],
+            "text": "explicit correction",
+        })
+        self.store._save(session_id, data)
+
+        summary = self.store.get_global_audit_summary()
+        per = summary["per_preference_stats"]
+
+        self.assertEqual(summary["session_count"], 1)
+        self.assertEqual(summary["personalized_response_count"], 3)
+        self.assertEqual(summary["personalized_correction_count"], 1)
+        self.assertEqual(per["pref-A"]["applied_count"], 2)
+        self.assertEqual(per["pref-A"]["corrected_count"], 1)
+        self.assertEqual(per["pref-B"]["applied_count"], 1)
+        self.assertEqual(per["pref-B"]["corrected_count"], 1)
+        self.assertEqual(per["fp-X"]["applied_count"], 1)
+        self.assertEqual(per["fp-X"]["corrected_count"], 1)
 
 
 class TestMigrationIntegrity(unittest.TestCase):
@@ -348,6 +419,44 @@ class TestSQLitePreferenceStoreAutoActivation(unittest.TestCase):
         preference_ids = {record["preference_id"] for record in active}
         self.assertIn(valid["preference_id"], preference_ids)
         self.assertNotIn("pref-invalid-active", preference_ids)
+
+    def test_sqlite_get_candidates_returns_only_candidate_status(self) -> None:
+        candidate = self._record(
+            delta_fingerprint="fingerprint-candidate-status",
+            candidate_id="candidate-status-candidate",
+        )
+        active = self._record(
+            delta_fingerprint="fingerprint-active-status",
+            candidate_id="candidate-status-active",
+        )
+        paused = self._record(
+            delta_fingerprint="fingerprint-paused-status",
+            candidate_id="candidate-status-paused",
+        )
+        self.assertIsNotNone(self.store.activate_preference(active["preference_id"]))
+        self.assertIsNotNone(self.store.pause_preference(paused["preference_id"]))
+
+        candidates = self.store.get_candidates()
+
+        self.assertEqual(
+            {record["preference_id"] for record in candidates},
+            {candidate["preference_id"]},
+        )
+        self.assertEqual(candidates[0]["status"], PreferenceStatus.CANDIDATE)
+
+    def test_sqlite_find_by_fingerprint_returns_record_and_none(self) -> None:
+        record = self._record(
+            delta_fingerprint="fingerprint-find-by-fingerprint",
+            candidate_id="candidate-find-by-fingerprint",
+        )
+
+        found = self.store.find_by_fingerprint("fingerprint-find-by-fingerprint")
+        missing = self.store.find_by_fingerprint("fingerprint-missing")
+
+        self.assertIsNotNone(found)
+        self.assertEqual(found["preference_id"], record["preference_id"])
+        self.assertEqual(found["delta_fingerprint"], "fingerprint-find-by-fingerprint")
+        self.assertIsNone(missing)
 
 
 class TestSQLiteCorrectionStore(unittest.TestCase):

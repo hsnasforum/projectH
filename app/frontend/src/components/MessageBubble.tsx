@@ -478,6 +478,7 @@ export default function MessageBubble({
                       const displayDescription = fullPref?.description ?? pref.description;
                       const hasPreferenceConflict = fullPref?.conflict_info?.has_conflict === true;
                       const isHighQualityPreference = fullPref?.quality_info?.is_high_quality === true;
+                      const isHighlyReliable = fullPref?.is_highly_reliable === true;
                       const appliedCount = fullPref?.reliability_stats?.applied_count;
                       const correctedCount = fullPref?.reliability_stats?.corrected_count;
                       const shouldShowReliabilityStats =
@@ -580,6 +581,11 @@ export default function MessageBubble({
                           {isHighQualityPreference && (
                             <span className="w-fit rounded bg-sky-50 px-1 py-0.5 text-[9px] font-medium text-sky-600">
                               고품질
+                            </span>
+                          )}
+                          {isHighlyReliable && (
+                            <span className="w-fit rounded bg-violet-50 px-1 py-0.5 text-[9px] font-medium text-violet-600">
+                              신뢰도 높음
                             </span>
                           )}
                           {hasPreferenceConflict && (

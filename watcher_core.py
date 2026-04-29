@@ -54,6 +54,7 @@ from pipeline_runtime.automation_health import (
 )
 from pipeline_runtime.lane_surface import (
     capture_pane_text as _shared_capture_pane_text,
+    pane_text_busy_age_seconds as _shared_pane_text_busy_age_seconds,
     pane_text_has_busy_indicator as _shared_pane_text_has_busy_indicator,
     pane_text_has_codex_activity as _shared_pane_text_has_codex_activity,
     pane_text_has_gemini_activity as _shared_pane_text_has_gemini_activity,
@@ -2139,6 +2140,23 @@ class WatcherCore:
         now = time.time()
         request_started_at = max(self._turn_entered_at, request_control.mtime)
         pending_age = now - request_started_at
+        advisory_target = self._prompt_pane_target("advisory")
+        advisory_lane = self._prompt_owner("advisory") or "Gemini"
+        advisory_lane_busy = False
+        advisory_busy_age_sec: Optional[int] = None
+        if advisory_target:
+            advisory_snapshot = _shared_capture_pane_text(advisory_target)
+            advisory_lane_busy = _shared_pane_text_has_busy_indicator(
+                advisory_snapshot,
+                advisory_lane,
+            )
+            if advisory_lane_busy:
+                advisory_busy_age_sec = _shared_pane_text_busy_age_seconds(
+                    advisory_snapshot,
+                    advisory_lane,
+                )
+                if advisory_busy_age_sec is not None:
+                    pending_age = max(pending_age, float(advisory_busy_age_sec))
         if pending_age < self.advisory_recovery_sec:
             return None
 
@@ -2161,9 +2179,64 @@ class WatcherCore:
             "control_seq": request_seq,
             "request_sig": request_sig,
             "advisory_pending_age_sec": int(pending_age),
+            "advisory_lane_target": advisory_target,
+            "advisory_lane_busy": advisory_lane_busy,
+            "advisory_lane_busy_age_sec": advisory_busy_age_sec,
             "verify_lane_ready": True,
             "verify_lane_ready_reason": defer_reason,
         }
+
+    # ------------------------------------------------------------------
+    def _cancel_advisory_lane_for_recovery(self, marker: dict[str, object]) -> bool:
+        target = str(
+            marker.get("advisory_lane_target")
+            or self._prompt_pane_target("advisory")
+            or ""
+        ).strip()
+        if not target:
+            return False
+        lane_name = self._prompt_owner("advisory") or "Gemini"
+        if not bool(marker.get("advisory_lane_busy")):
+            snapshot = _shared_capture_pane_text(target)
+            if not _shared_pane_text_has_busy_indicator(snapshot, lane_name):
+                return False
+
+        payload = {
+            "reason": "advisory_recovery",
+            "target": target,
+            "control_file": marker.get("control_file"),
+            "control_seq": marker.get("control_seq"),
+            "advisory_lane_busy_age_sec": marker.get("advisory_lane_busy_age_sec"),
+            "dry_run": bool(self.dry_run),
+            "success": False,
+        }
+        if self.dry_run:
+            payload["success"] = True
+            marker["advisory_lane_cancelled"] = True
+            marker["advisory_lane_cancel_dry_run"] = True
+            self._append_runtime_event("advisory_lane_cancelled", payload)
+            return True
+
+        try:
+            result = subprocess.run(
+                ["tmux", "send-keys", "-t", target, "Escape"],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            success = result.returncode == 0
+            payload["success"] = success
+            if not success:
+                payload["returncode"] = result.returncode
+                payload["stderr"] = (result.stderr or "").strip()[-500:]
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            success = False
+            payload["error"] = repr(exc)
+
+        marker["advisory_lane_cancelled"] = success
+        self._append_runtime_event("advisory_lane_cancelled", payload)
+        return success
 
     # ------------------------------------------------------------------
     def _recover_stale_advisory(self) -> bool:
@@ -2175,6 +2248,7 @@ class WatcherCore:
         request_sig = str(marker.get("request_sig") or "")
         self._last_advisory_recovery_sig = request_sig
         self._last_advisory_recovery_at = time.time()
+        self._cancel_advisory_lane_for_recovery(marker)
         self._clear_implement_blocked_state("advisory_recovery")
         self._log_raw(
             "advisory_recovery",

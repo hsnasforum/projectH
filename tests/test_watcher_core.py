@@ -6709,6 +6709,83 @@ class BusyLaneNotificationDeferTest(unittest.TestCase):
             ]
             self.assertTrue(any(event.get("event_type") == "advisory_recovery" for event in events))
 
+    def test_stale_advisory_recovery_uses_visible_advisory_busy_age(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            watch_dir = root / "work"
+            base_dir = root / ".pipeline"
+            watch_dir.mkdir(parents=True, exist_ok=True)
+            base_dir.mkdir(parents=True, exist_ok=True)
+            _write_active_profile(root)
+
+            request_path = base_dir / "advisory_request.md"
+            request_path.write_text("STATUS: request_open\nCONTROL_SEQ: 18\n", encoding="utf-8")
+
+            core = watcher_core.WatcherCore(
+                {
+                    "watch_dir": str(watch_dir),
+                    "base_dir": str(base_dir),
+                    "repo_root": str(root),
+                    "dry_run": False,
+                    "verify_pane_target": "codex-pane",
+                    "gemini_pane_target": "gemini-pane",
+                    "advisory_recovery_sec": 300.0,
+                }
+            )
+            core._initial_turn_checked = True
+            core._last_advisory_request_sig = core._get_path_sig(request_path)
+            core._transition_turn(
+                WatcherTurnState.ADVISORY_ACTIVE,
+                "test_setup_advisory",
+                active_control_file="advisory_request.md",
+                active_control_seq=18,
+            )
+            core._turn_entered_at = time.time()
+
+            pane_texts = {
+                "codex-pane": "openai codex\n› ",
+                "gemini-pane": "⠇ Thinking... (esc to cancel, 36m 33s)\n * Type your message",
+            }
+
+            with (
+                mock.patch(
+                    "watcher_core._shared_capture_pane_text",
+                    side_effect=lambda target: pane_texts[target],
+                ),
+                mock.patch(
+                    "watcher_core.subprocess.run",
+                    return_value=mock.Mock(returncode=0, stderr=""),
+                ) as send_escape,
+                mock.patch("watcher_dispatch.tmux_send_keys", return_value=True) as send_prompt,
+            ):
+                recovered = core._recover_stale_advisory()
+
+            self.assertTrue(recovered)
+            send_escape.assert_called_once_with(
+                ["tmux", "send-keys", "-t", "gemini-pane", "Escape"],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            send_prompt.assert_called_once()
+            args, kwargs = send_prompt.call_args
+            self.assertEqual(args[0], "codex-pane")
+            self.assertEqual(kwargs.get("pane_type"), "codex")
+            self.assertEqual(core._current_turn_state, WatcherTurnState.VERIFY_FOLLOWUP)
+            events = [
+                json.loads(line)
+                for line in core.run_events_path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            recovery_events = [
+                event for event in events if event.get("event_type") == "advisory_recovery"
+            ]
+            self.assertTrue(recovery_events)
+            recovery_payload = recovery_events[-1].get("payload") or {}
+            self.assertEqual(recovery_payload.get("advisory_lane_busy_age_sec"), 2193)
+            self.assertTrue(recovery_payload.get("advisory_lane_cancelled"))
+
     def test_stale_advisory_recovery_skips_when_current_advice_exists(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

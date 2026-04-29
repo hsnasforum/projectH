@@ -15,6 +15,17 @@ from core.contracts import ArtifactRecord
 from .json_store_base import utc_now_iso, json_path, atomic_write, read_json, scan_json_dir
 
 
+_ARTIFACT_REQUIRED_FIELDS = frozenset(
+    {"artifact_id", "session_id", "created_at"}
+)
+
+
+def _is_valid_artifact_record(record: object) -> bool:
+    if not isinstance(record, dict):
+        return False
+    return all(bool(record.get(field)) for field in _ARTIFACT_REQUIRED_FIELDS)
+
+
 class ArtifactStore:
     def __init__(self, base_dir: str = "data/artifacts") -> None:
         self.base_dir = Path(base_dir)
@@ -134,11 +145,18 @@ class ArtifactStore:
 
     def list_by_session(self, session_id: str) -> list[ArtifactRecord]:
         with self._lock:
-            results = [d for d in scan_json_dir(self.base_dir) if d.get("session_id") == session_id]
+            results = [
+                d
+                for d in scan_json_dir(self.base_dir)
+                if _is_valid_artifact_record(d) and d.get("session_id") == session_id
+            ]
             return sorted(results, key=lambda d: d.get("created_at", ""), reverse=True)
 
     def list_recent(self, limit: int = 20) -> list[ArtifactRecord]:
         with self._lock:
-            all_records = scan_json_dir(self.base_dir)
+            all_records = [
+                d for d in scan_json_dir(self.base_dir)
+                if _is_valid_artifact_record(d)
+            ]
             all_records.sort(key=lambda d: d.get("updated_at", ""), reverse=True)
             return all_records[:limit]

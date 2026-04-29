@@ -339,6 +339,7 @@ export interface CorrectionListItem {
   corrected_text?: string;
   delta_fingerprint?: string;
   created_at?: string;
+  has_active_preference?: boolean;
 }
 
 export interface CorrectionListResponse {
@@ -346,8 +347,14 @@ export interface CorrectionListResponse {
   corrections: CorrectionListItem[];
 }
 
-export async function fetchCorrectionList(): Promise<CorrectionListResponse> {
-  const res = await fetch(`${BASE}/api/corrections/list`);
+export async function fetchCorrectionList(params?: {
+  query?: string;
+  status?: string;
+}): Promise<CorrectionListResponse> {
+  const url = new URL(`${BASE}/api/corrections/list`, window.location.origin);
+  if (params?.query) url.searchParams.set("query", params.query);
+  if (params?.status) url.searchParams.set("status", params.status);
+  const res = await fetch(url.toString());
   if (!res.ok) throw new Error("correction list fetch failed");
   return res.json() as Promise<CorrectionListResponse>;
 }

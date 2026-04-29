@@ -1208,80 +1208,126 @@ Axis 2 (CONTROL_SEQ 1204): SQLiteTaskLog iter_session_records 반환 타입 — 
 
 ## M61 Correction Analytics
 
-Axis 1 (CONTROL_SEQ 1210): GET /api/corrections/summary 엔드포인트 — ACTIVE
+Axis 1 (CONTROL_SEQ 1210): GET /api/corrections/summary 엔드포인트 — DONE
 `AggregateHandlerMixin.get_correction_summary()` — total, by_status, top_recurring_fingerprints;
 `GET /api/corrections/summary` route 추가. 단위 테스트 포함.
 
-Axis 2 (CONTROL_SEQ 1211): E2E smoke 격리 시나리오 — ACTIVE
+Axis 2 (CONTROL_SEQ 1211): E2E smoke 격리 시나리오 — DONE
 `page.route` mock + `page.evaluate fetch` 방식으로 응답 shape 계약 고정. 1 passed (12.4s).
 
 ## M62 Correction Analytics Visibility
 
-Axis 1 (CONTROL_SEQ 1214): correction summary frontend 표시 — ACTIVE
+Axis 1 (CONTROL_SEQ 1214): correction summary frontend 표시 — DONE
 `client.ts` `fetchCorrectionSummary()` + `CorrectionSummary` 타입;
 `PreferencePanel.tsx` load() 병렬 fetch + "교정 전체 N개 · 활성 N개" 컴팩트 표시.
 dist 재빌드·E2E는 Axis 2 대상.
 
-Axis 2 (CONTROL_SEQ 1215): dist 재빌드 + data-testid + E2E 격리 — ACTIVE
+Axis 2 (CONTROL_SEQ 1215): dist 재빌드 + data-testid + E2E 격리 — DONE
 
 ## M63 Correction Pattern Visibility
 
-Axis 1 (CONTROL_SEQ 1217): backend snippet 추가 + frontend top pattern 표시 — ACTIVE
+Axis 1 (CONTROL_SEQ 1217): backend snippet 추가 + frontend top pattern 표시 — DONE
 `get_correction_summary()` `original_snippet`/`corrected_snippet` 필드;
 `PreferencePanel.tsx` 반복 교정 패턴 compact 라인.
 dist 재빌드·E2E는 Axis 2 대상.
 
-Axis 2 (CONTROL_SEQ 1218): dist 재빌드 + E2E 격리 — ACTIVE
+Axis 2 (CONTROL_SEQ 1218): dist 재빌드 + E2E 격리 — DONE
 
 ## M64 Correction Pattern Confirmation
 
-Axis 1 (CONTROL_SEQ 1221): pattern-level 일괄 승인 — ACTIVE
+Axis 1 (CONTROL_SEQ 1221): pattern-level 일괄 승인 — DONE
 `CorrectionStore.confirm_by_fingerprint()`;
 `POST /api/corrections/confirm-pattern` endpoint;
 `PreferencePanel.tsx` 승인 버튼.
 dist 재빌드·E2E는 Axis 2 대상.
 
-Axis 2 (CONTROL_SEQ 1222): dist 재빌드 + E2E 격리 — ACTIVE
+Axis 2 (CONTROL_SEQ 1222): dist 재빌드 + E2E 격리 — DONE
 
 ## M65 SQLite CorrectionStore Parity
 
-Axis 1 (CONTROL_SEQ 1224): `SQLiteCorrectionStore._scan_all()` + `confirm_by_fingerprint()` — ACTIVE
+Axis 1 (CONTROL_SEQ 1224): `SQLiteCorrectionStore._scan_all()` + `confirm_by_fingerprint()` — DONE
 `/api/corrections/summary` + `/api/corrections/confirm-pattern` SQLite 백엔드 크래시 해소.
 frontend 변경 없음.
 
 ## M66 Correction Pattern Dismiss
 
-Axis 1 (CONTROL_SEQ 1227): pattern-level 일괄 무시 — ACTIVE
+Axis 1 (CONTROL_SEQ 1227): pattern-level 일괄 무시 — DONE
 `CORRECTION_STATUS_TRANSITIONS[RECORDED]` STOPPED 전이 추가;
 `dismiss_by_fingerprint()` JSON + SQLite parity;
 `POST /api/corrections/dismiss-pattern` endpoint;
 `PreferencePanel.tsx` 무시 버튼.
 dist 재빌드·E2E는 Axis 2 대상.
 
-Axis 2 (CONTROL_SEQ 1228): dist 재빌드 + E2E 격리 — ACTIVE
+Axis 2 (CONTROL_SEQ 1228): dist 재빌드 + E2E 격리 — DONE
 
 ## M67 Correction List Recent View
 
-Axis 1 (CONTROL_SEQ 1231): `GET /api/corrections/list` + frontend compact 목록 — ACTIVE
+Axis 1 (CONTROL_SEQ 1231): `GET /api/corrections/list` + frontend compact 목록 — DONE
 `get_correction_list()` handler; `fetchCorrectionList()` + `CorrectionListResponse` 타입;
 `PreferencePanel.tsx` 최근 교정 3개 compact 목록.
 dist 재빌드·E2E는 Axis 2 대상.
 
-Axis 2 (CONTROL_SEQ 1232): dist 재빌드 + E2E 격리 — ACTIVE
+Axis 2 (CONTROL_SEQ 1232): dist 재빌드 + E2E 격리 — DONE
 
 ## M68 Correction Pattern Promotion
 
-Axis 1 (CONTROL_SEQ 1237): CONFIRMED 교정 패턴 → PreferenceRecord 승격 — ACTIVE
+Axis 1 (CONTROL_SEQ 1237): CONFIRMED 교정 패턴 → PreferenceRecord 승격 — DONE
 `promote_by_fingerprint()` JSON + SQLite parity;
 `POST /api/corrections/promote-pattern` endpoint;
 `PreferencePanel.tsx` 승격 버튼.
 
-Axis 2 (CONTROL_SEQ 1238): dist 재빌드 + E2E 격리 — ACTIVE
+Axis 2 (CONTROL_SEQ 1238): dist 재빌드 + E2E 격리 — DONE
+
+## M69 Correction List Search Conflict
+
+Axis 1 (CONTROL_SEQ 1243): 교정 목록 검색/필터 + 활성 선호도 충돌 신호 — DONE
+`list_filtered(query, status, limit)` JSON + SQLite parity;
+`/api/corrections/list?query=&status=` GET 파라미터;
+`PreferencePanel.tsx` 검색 input + `[충돌]` 배지.
+
+Axis 2 (CONTROL_SEQ 1244): dist 재빌드 + E2E 격리 — DONE
+
+## M70 Correction Handler Decomposition
+
+Axis 1 (CONTROL_SEQ 1248): CorrectionHandlerMixin 분리 — DONE
+`app/handlers/corrections.py` 신규 생성; `get_correction_summary`,
+`get_correction_list`, `confirm/dismiss/promote_correction_pattern`,
+`_first_correction_snippets`를 `AggregateHandlerMixin`에서 분리.
+`aggregate.py` 937→822줄. Pure structural refactoring.
+
+## M72 Correction Store Physical Validation
+
+Axis 1 (CONTROL_SEQ 1256): correction store read-path physical validation — DONE
+`_is_valid_correction_record()` + `_scan_all()` filter in `CorrectionStore`.
+`SQLiteCorrectionStore.list_recent()`/`list_filtered()` post-filter. Silent
+exclusion of malformed records.
+
+## M73 Preference Store Physical Validation
+
+Axis 1 (CONTROL_SEQ 1260): preference store read-path physical validation — DONE
+`_is_valid_preference_record()` replacing minimal `isinstance` check in
+`PreferenceStore._scan_all()`. `SQLitePreferenceStore.get_active_preferences()`/
+`list_all()` post-filter.
+
+## M74 Artifact & TaskLog Physical Validation
+
+Axis 1 (CONTROL_SEQ 1264): artifact store + task log read-path validation — DONE
+`_is_valid_artifact_record()` in `ArtifactStore.list_by_session()`/`list_recent()`.
+`SQLiteArtifactStore` equivalents. `TaskLogger.iter_session_records()` ts/action
+mandatory-field checks. New `tests/test_task_log.py`.
+
+## M75 SQLite Store Structural Decomposition
+
+Axis 1 (CONTROL_SEQ 1268): sqlite_store.py 분리 — DONE
+`storage/sqlite_store.py` 1125→23줄 thin re-export wrapper. 8개 모듈
+`storage/sqlite/{database,session,task_log,artifact,preference,correction,migrate}.py`
+신규 생성. 기존 import 사이트 수정 없이 129 tests PASS.
 
 ## Next 3 Implementation Priorities
 
-1. **M49–M59 shipped**: 선호도 주입·가시성·피드백·신뢰도 경고(M49-M52) + docs truth-sync(M53, M56, M59) + TypedDict 계약 시리즈(M54-M58: CorrectionRecord, PerPreferenceStats, PreferenceRecord, ArtifactRecord JSON+SQLite) 완료. PR #49 대기 중(feat/m50-axis1-axis2-pref-visibility).
-2. **PR 머지 백로그**: operator_request CONTROL_SEQ 1190 — #47 (M47/M48) → #48 (M49 Axis 3) → #49 (M50–M59) 순서 대기 중. 머지 후 main 기준 새 브랜치에서 M60+ 시작.
+1. **v1.5 structural hardening 완료 (M70–M75)**: CorrectionHandlerMixin 분리 + docs sync + 4개 store physical validation (M72–M74) + SQLite store 구조 분리 (M75). PR #54–#61 머지 대기 중.
+2. **PR 머지 백로그**: operator 승인 대기 — PR #54→…→#61 순서 머지 후 main 기준 M76+ 시작.
+3. **M76 방향**: 새 기능 축(Axis 3: Reliability 등) 또는 추가 structural 개선 중 advisory에서 결정.
 
 ## Do Not Pull Forward
 

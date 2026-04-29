@@ -42,6 +42,7 @@ from storage.web_search_store import WebSearchStore
 
 from app.errors import WebApiError
 from app.handlers.aggregate import AggregateHandlerMixin
+from app.handlers.corrections import CorrectionHandlerMixin
 from app.handlers.feedback import FeedbackHandlerMixin
 from app.handlers.preferences import PreferenceHandlerMixin
 from app.handlers.chat import ChatHandlerMixin
@@ -94,7 +95,14 @@ def _effective_service_settings(settings: AppSettings) -> AppSettings:
     return settings
 
 
-class WebAppService(ChatHandlerMixin, AggregateHandlerMixin, FeedbackHandlerMixin, PreferenceHandlerMixin, SerializerMixin):
+class WebAppService(
+    ChatHandlerMixin,
+    AggregateHandlerMixin,
+    CorrectionHandlerMixin,
+    FeedbackHandlerMixin,
+    PreferenceHandlerMixin,
+    SerializerMixin,
+):
     def __init__(
         self,
         settings: AppSettings,
@@ -355,7 +363,10 @@ class LocalAssistantHandler(BaseHTTPRequestHandler):
             self._send_json(HTTPStatus.OK, response)
             return
         if parsed.path == "/api/corrections/list":
-            response = self.server.service.get_correction_list()
+            qs = parse_qs(parsed.query)
+            query = (qs.get("query") or [None])[0]
+            status = (qs.get("status") or [None])[0]
+            response = self.server.service.get_correction_list(query=query, status=status)
             self._send_json(HTTPStatus.OK, response)
             return
         if parsed.path.startswith("/controller-assets/"):

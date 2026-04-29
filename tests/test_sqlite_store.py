@@ -6,6 +6,7 @@ from time import sleep
 
 from core.contracts import CorrectionStatus, PreferenceStatus
 from storage.sqlite_store import (
+    SQLiteArtifactStore,
     SQLiteCorrectionStore,
     SQLiteDatabase,
     SQLitePreferenceStore,
@@ -95,6 +96,71 @@ class TestMigrationIntegrity(unittest.TestCase):
                 preferences_dir=os.path.join(tmp, "preferences"),
             )
             self.assertEqual(counts2.get("corrections"), 0)
+
+
+class TestSQLiteArtifactStore(unittest.TestCase):
+    def setUp(self) -> None:
+        self.db = SQLiteDatabase(":memory:")
+        self.store = SQLiteArtifactStore(self.db)
+
+    def tearDown(self) -> None:
+        self.db.close()
+
+    def _create(
+        self,
+        *,
+        artifact_id: str = "artifact-valid",
+        session_id: str = "session-artifact",
+    ) -> dict:
+        return self.store.create(
+            artifact_id=artifact_id,
+            artifact_kind="grounded_brief",
+            session_id=session_id,
+            source_message_id=f"message-{artifact_id}",
+            draft_text="sqlite artifact draft",
+        )
+
+    def _insert_invalid_artifact_row(
+        self,
+        *,
+        artifact_id: str = "artifact-invalid",
+        session_id: str = "session-artifact",
+    ) -> None:
+        self.db.execute(
+            "INSERT INTO artifacts "
+            "(artifact_id, artifact_kind, session_id, source_message_id, data, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                artifact_id,
+                "grounded_brief",
+                session_id,
+                f"message-{artifact_id}",
+                json.dumps({"draft_text": "malformed artifact"}),
+                "",
+                "2099-01-01T00:00:00+00:00",
+            ),
+        )
+        self.db.commit()
+
+    def test_invalid_artifact_row_filtered_from_list_by_session(self) -> None:
+        valid = self._create()
+        self._insert_invalid_artifact_row()
+
+        records = self.store.list_by_session("session-artifact")
+
+        artifact_ids = {record["artifact_id"] for record in records}
+        self.assertIn(valid["artifact_id"], artifact_ids)
+        self.assertNotIn("artifact-invalid", artifact_ids)
+
+    def test_invalid_artifact_row_filtered_from_list_recent(self) -> None:
+        valid = self._create()
+        self._insert_invalid_artifact_row()
+
+        records = self.store.list_recent(10)
+
+        artifact_ids = {record["artifact_id"] for record in records}
+        self.assertIn(valid["artifact_id"], artifact_ids)
+        self.assertNotIn("artifact-invalid", artifact_ids)
 
 
 class TestSQLitePreferenceStoreAutoActivation(unittest.TestCase):
@@ -256,6 +322,32 @@ class TestSQLitePreferenceStoreAutoActivation(unittest.TestCase):
         fetched = self.store.get(result["preference_id"])
         self.assertIsNotNone(fetched)
         self.assertEqual(fetched["status"], PreferenceStatus.REJECTED)
+
+    def test_malformed_preference_row_filtered_from_get_active(self) -> None:
+        valid = self._record(candidate_id="candidate-valid-active")
+        self.store.activate_preference(valid["preference_id"])
+        self.db.execute(
+            "INSERT INTO preferences "
+            "(preference_id, delta_fingerprint, description, status, data, created_at, updated_at, activated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                "pref-invalid-active",
+                "",
+                "Malformed active preference",
+                PreferenceStatus.ACTIVE,
+                json.dumps({"preference_id": "pref-invalid-active"}),
+                "2099-01-01T00:00:00+00:00",
+                "2099-01-01T00:00:00+00:00",
+                "2099-01-01T00:00:00+00:00",
+            ),
+        )
+        self.db.commit()
+
+        active = self.store.get_active_preferences()
+
+        preference_ids = {record["preference_id"] for record in active}
+        self.assertIn(valid["preference_id"], preference_ids)
+        self.assertNotIn("pref-invalid-active", preference_ids)
 
 
 class TestSQLiteCorrectionStore(unittest.TestCase):
@@ -535,6 +627,34 @@ class TestSQLiteCorrectionStore(unittest.TestCase):
 
         self.assertEqual(len(matches), 2)
 
+    def test_invalid_sqlite_row_filtered_from_list_recent(self) -> None:
+        self.db.execute(
+            "INSERT INTO corrections "
+            "(correction_id, artifact_id, session_id, delta_fingerprint, status, data, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                "correction-invalid",
+                "artifact-invalid",
+                "session-invalid",
+                "",
+                CorrectionStatus.RECORDED,
+                json.dumps({"correction_id": "correction-invalid"}),
+                "2099-01-01T00:00:00+00:00",
+                "2099-01-01T00:00:00+00:00",
+            ),
+        )
+        self.db.commit()
+        valid = self._record(
+            artifact_id="artifact-valid-row",
+            source_message_id="message-valid-row",
+        )
+
+        matches = self.store.list_recent(10)
+
+        correction_ids = {record["correction_id"] for record in matches}
+        self.assertIn(valid["correction_id"], correction_ids)
+        self.assertNotIn("correction-invalid", correction_ids)
+
     def test_list_incomplete_corrections_returns_only_non_terminal_records(self) -> None:
         recorded = self._record(
             artifact_id="artifact-incomplete-recorded",
@@ -681,6 +801,76 @@ class TestSQLiteCorrectionStore(unittest.TestCase):
         self.assertEqual(len(result), 2)
         statuses = {r["status"] for r in result}
         self.assertEqual(statuses, {"recorded"})
+
+    def test_list_filtered_by_query_matches_original_or_corrected_text(self) -> None:
+        original_match = self._record(
+            artifact_id="artifact-query-original",
+            source_message_id="message-query-original",
+            original_text="needle original text",
+            corrected_text="plain corrected text",
+        )
+        corrected_match = self._record(
+            artifact_id="artifact-query-corrected",
+            source_message_id="message-query-corrected",
+            original_text="plain original text",
+            corrected_text="needle corrected text",
+        )
+        self._record(
+            artifact_id="artifact-query-miss",
+            source_message_id="message-query-miss",
+            original_text="other original text",
+            corrected_text="other corrected text",
+        )
+
+        results = self.store.list_filtered(query="needle")
+
+        self.assertEqual(
+            {record["correction_id"] for record in results},
+            {original_match["correction_id"], corrected_match["correction_id"]},
+        )
+
+    def test_list_filtered_by_status(self) -> None:
+        recorded = self._record(
+            artifact_id="artifact-recorded-filter",
+            source_message_id="message-recorded-filter",
+        )
+        confirmed = self._record(
+            artifact_id="artifact-confirmed-filter",
+            source_message_id="message-confirmed-filter",
+        )
+        self.assertIsNotNone(self.store.confirm_correction(confirmed["correction_id"]))
+
+        results = self.store.list_filtered(status=CorrectionStatus.CONFIRMED)
+
+        self.assertEqual([record["correction_id"] for record in results], [confirmed["correction_id"]])
+        self.assertNotIn(recorded["correction_id"], {record["correction_id"] for record in results})
+
+    def test_list_filtered_applies_query_and_status(self) -> None:
+        recorded_match = self._record(
+            artifact_id="artifact-recorded-query-filter",
+            source_message_id="message-recorded-query-filter",
+            original_text="needle recorded original",
+            corrected_text="needle recorded corrected",
+        )
+        confirmed_match = self._record(
+            artifact_id="artifact-confirmed-query-filter",
+            source_message_id="message-confirmed-query-filter",
+            original_text="needle confirmed original",
+            corrected_text="needle confirmed corrected",
+        )
+        self.assertIsNotNone(self.store.confirm_correction(confirmed_match["correction_id"]))
+
+        results = self.store.list_filtered(query="needle", status=CorrectionStatus.CONFIRMED)
+
+        self.assertEqual([record["correction_id"] for record in results], [confirmed_match["correction_id"]])
+        self.assertNotIn(recorded_match["correction_id"], {record["correction_id"] for record in results})
+
+    def test_list_filtered_empty_result(self) -> None:
+        self._record()
+
+        results = self.store.list_filtered(query="missing needle")
+
+        self.assertEqual(results, [])
 
     def test_confirm_by_fingerprint_batch(self) -> None:
         first = self._record(artifact_id="art1", session_id="s1", source_message_id="msg1")

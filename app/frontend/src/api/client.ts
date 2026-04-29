@@ -246,6 +246,7 @@ export interface PreferenceRecord {
     replacements?: Array<{ from: string; to: string }>;
   };
   original_snippet?: string | null;
+  corrected_text?: string | null;
   corrected_snippet?: string | null;
   conflict_info?: {
     has_conflict: boolean;
@@ -559,5 +560,20 @@ export async function togglePreferenceReliability(preferenceId: string): Promise
   if (!res.ok) throw new Error("toggle preference reliability failed");
   const data = await res.json() as { ok?: boolean; preference?: PreferenceRecord };
   if (!data.preference) throw new Error("toggle preference reliability response missing preference");
+  return data.preference;
+}
+
+export async function editPreferenceText(
+  preferenceId: string,
+  correctedText: string,
+): Promise<PreferenceRecord> {
+  const res = await fetch(`${BASE}/api/preferences/${encodeURIComponent(preferenceId)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ corrected_text: correctedText }),
+  });
+  if (!res.ok) throw new Error("edit preference text failed");
+  const data = await res.json() as { ok?: boolean; preference?: PreferenceRecord };
+  if (!data.preference) throw new Error("edit preference text response missing preference");
   return data.preference;
 }

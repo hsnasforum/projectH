@@ -6513,6 +6513,84 @@ class WebAppServiceTest(unittest.TestCase):
 
             self.assertEqual(ctx.exception.status_code, 404)
 
+    def test_edit_preference_text_updates_corrected_text(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                preferences_dir=str(tmp_path / "preferences"),
+                model_provider="mock",
+            )
+            service = WebAppService(settings=settings)
+            preference = service.preference_store.record_reviewed_candidate_preference(
+                delta_fingerprint="pref-edit-text",
+                candidate_family="correction_rewrite",
+                description="내용 편집 선호",
+                source_refs={"session_id": "pref-edit", "candidate_id": "edit"},
+                corrected_snippet="이전 교정 텍스트",
+            )
+
+            response = service.edit_preference_text(
+                preference["preference_id"],
+                "새 교정 텍스트",
+            )
+
+            self.assertTrue(response["ok"])
+            self.assertEqual(response["preference"]["corrected_text"], "새 교정 텍스트")
+            stored = service.preference_store.get(preference["preference_id"])
+            self.assertIsNotNone(stored)
+            self.assertEqual(stored["corrected_text"], "새 교정 텍스트")
+            records = service.task_logger.iter_session_records("system")
+            edited = [
+                record for record in records
+                if record.get("action") == "preference_text_edited"
+                and record.get("detail", {}).get("preference_id") == preference["preference_id"]
+            ]
+            self.assertTrue(edited)
+            self.assertEqual(
+                edited[-1].get("detail", {}).get("previous_corrected_text"),
+                "이전 교정 텍스트",
+            )
+
+    def test_edit_preference_text_returns_404_for_unknown_id(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                preferences_dir=str(tmp_path / "preferences"),
+                model_provider="mock",
+            )
+            service = WebAppService(settings=settings)
+
+            with self.assertRaises(WebApiError) as ctx:
+                service.edit_preference_text("missing-preference", "새 교정 텍스트")
+
+            self.assertEqual(ctx.exception.status_code, 404)
+
+    def test_edit_preference_text_rejects_empty_text(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                preferences_dir=str(tmp_path / "preferences"),
+                model_provider="mock",
+            )
+            service = WebAppService(settings=settings)
+            preference = service.preference_store.record_reviewed_candidate_preference(
+                delta_fingerprint="pref-edit-empty",
+                candidate_family="correction_rewrite",
+                description="빈 텍스트 거부 선호",
+                source_refs={"session_id": "pref-edit", "candidate_id": "empty"},
+            )
+
+            with self.assertRaises(WebApiError) as ctx:
+                service.edit_preference_text(preference["preference_id"], "   ")
+
+            self.assertEqual(ctx.exception.status_code, 400)
+
     def test_list_preferences_payload_includes_last_transition_reason(self) -> None:
         with TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)

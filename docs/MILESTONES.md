@@ -1568,11 +1568,24 @@ Axis 2: dist rebuild — DONE
 `e2e/tests/web-smoke.spec.mjs`에 `preference reliability toggle updates badge` 시나리오 추가.
 Playwright webServer는 sandbox socket 제한으로 미실행; CI 위임.
 
+## M104 preference text edit
+
+Axis 1: corrected_text edit — DONE
+`edit_preference_text()` handler + `PATCH /api/preferences/<id>` route (body: corrected_text).
+공백 텍스트 400, unknown id 404. `preference_text_edited` task log.
+`editPreferenceText()` TypeScript function + `edit-preference-btn` / `save-preference-text-btn` UI.
+저장 버튼은 빈 입력 시 비활성화. M103의 `preference_store.update()` 재사용.
+신규 unittest 3개 (update, 404, 400).
+
+Axis 2: dist rebuild — DONE
+`npx vite build`로 dist 갱신; `edit-preference-btn`/`save-preference-text-btn` testid 포함.
+`e2e/tests/web-smoke.spec.mjs`에 `preference text edit updates corrected text` 시나리오 추가.
+Playwright webServer는 sandbox socket 제한으로 미실행; CI 위임.
+
 ## Next 3 Implementation Priorities
 
-1. **PR 머지 백로그**: PR #91 (M98) + PR #92 (M99) + PR #93 (M100-M101) + PR #94 (M102) — 모두 draft,
-   `pr_merge_gate` operator 승인 대기. M103 PR은 이번 commit/push/PR 이후 추가.
-2. **M103 완료**: Axis 1+2+doc-sync 완료 — commit/push/PR 대기.
+1. **PR 머지 백로그**: PR #91–#95 + 이번 M104 PR — 모두 draft, `pr_merge_gate` operator 승인 대기.
+2. **M104 완료**: Axis 1+2+doc-sync 완료 — commit/push/PR 대기.
 3. **장기**: cross-session memory 강화, north star 방향 유지.
 
 ## Do Not Pull Forward

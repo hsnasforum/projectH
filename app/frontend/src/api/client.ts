@@ -307,6 +307,7 @@ export interface PreferencesPayload {
   total_corrected?: number | null;
   high_quality_active_count?: number | null;
   highly_reliable_active_count?: number | null;
+  high_severity_conflict_count?: number | null;
   low_reliability_active_count?: number | null;
 }
 

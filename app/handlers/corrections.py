@@ -68,9 +68,10 @@ class CorrectionHandlerMixin:
         query: str | None = None,
         status: str | None = None,
         limit: int = 20,
+        offset: int = 0,
     ) -> dict[str, Any]:
         corrections = self.correction_store.list_filtered(
-            query=query, status=status, limit=limit
+            query=query, status=status, limit=limit, offset=offset
         )
         preference_store = getattr(self, "preference_store", None)
         active_preferences = (

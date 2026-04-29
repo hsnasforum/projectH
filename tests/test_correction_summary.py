@@ -192,6 +192,31 @@ class CorrectionSummaryTest(unittest.TestCase):
             self.assertIs(payload["ok"], True)
             self.assertEqual(len(payload["corrections"]), 2)
 
+    def test_correction_list_respects_offset(self) -> None:
+        with TemporaryDirectory() as d:
+            store = self._make_store(d)
+            for index in range(4):
+                record = store.record_correction(
+                    artifact_id=f"art-offset-{index}",
+                    session_id=f"s-offset-{index}",
+                    source_message_id=f"msg-offset-{index}",
+                    original_text=f"offset original text {index}",
+                    corrected_text=f"offset corrected text {index}",
+                )
+                self.assertIsNotNone(record)
+
+            full_payload = _CorrectionSummaryService(store).get_correction_list(limit=4)
+            offset_payload = _CorrectionSummaryService(store).get_correction_list(limit=1, offset=2)
+
+            self.assertIs(full_payload["ok"], True)
+            self.assertIs(offset_payload["ok"], True)
+            self.assertEqual(len(full_payload["corrections"]), 4)
+            self.assertEqual(len(offset_payload["corrections"]), 1)
+            self.assertEqual(
+                offset_payload["corrections"][0]["correction_id"],
+                full_payload["corrections"][2]["correction_id"],
+            )
+
     def test_promote_pattern_seeds_reliability_from_recurrence(self) -> None:
         with TemporaryDirectory() as d:
             correction_store = self._make_store(d)

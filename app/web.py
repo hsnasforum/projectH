@@ -381,7 +381,10 @@ class LocalAssistantHandler(BaseHTTPRequestHandler):
             query = (qs.get("query") or [None])[0]
             status = (qs.get("status") or [None])[0]
             limit = _parse_positive_int((qs.get("limit") or [None])[0], default=20)
-            response = self.server.service.get_correction_list(query=query, status=status, limit=limit)
+            offset = _parse_positive_int((qs.get("offset") or [None])[0], default=0)
+            response = self.server.service.get_correction_list(
+                query=query, status=status, limit=limit, offset=offset
+            )
             self._send_json(HTTPStatus.OK, response)
             return
         correction_detail_prefix = "/api/corrections/"

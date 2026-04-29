@@ -21,6 +21,10 @@ export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const [toasts, setToasts] = useState<ToastItem[]>([]);
+  const [autoActivatedPreferenceNotice, setAutoActivatedPreferenceNotice] = useState<{
+    id: string;
+    preferenceId: string;
+  } | null>(null);
   const chat = useChat(settings);
 
   const toggleSidebar = useCallback(() => setSidebarOpen((v) => !v), []);
@@ -36,7 +40,19 @@ export default function App() {
 
   const handleCorrection = useCallback(async (messageId: string, correctedText: string) => {
     try {
-      await postCorrection(chat.sessionId, messageId, correctedText);
+      const result = await postCorrection(chat.sessionId, messageId, correctedText);
+      if (result.auto_activated && result.preference_id) {
+        const notice = {
+          id: `auto-pref-${result.preference_id}-${Date.now()}`,
+          preferenceId: result.preference_id,
+        };
+        setAutoActivatedPreferenceNotice(notice);
+        window.setTimeout(() => {
+          setAutoActivatedPreferenceNotice((current) => (
+            current?.id === notice.id ? null : current
+          ));
+        }, 7000);
+      }
       await chat.loadSession(chat.sessionId);
       addToast("success", "교정이 제출되었습니다.");
     } catch {
@@ -143,6 +159,7 @@ export default function App() {
         reviewQueueItems={chat.reviewQueueItems}
         reviewQueueCount={chat.reviewQueueCount}
         lastAppliedFingerprints={lastAppliedFingerprints}
+        autoActivatedPreferenceNotice={autoActivatedPreferenceNotice}
         onSelectSession={chat.switchSession}
         onNewSession={chat.newSession}
         onDeleteSession={chat.deleteSession}

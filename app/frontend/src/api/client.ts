@@ -87,12 +87,15 @@ export async function postCorrection(
   sessionId: string,
   messageId: string,
   correctedText: string,
-): Promise<void> {
-  await fetch(`${BASE}/api/correction`, {
+): Promise<CorrectionResponse> {
+  const res = await fetch(`${BASE}/api/correction`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ session_id: sessionId, message_id: messageId, corrected_text: correctedText }),
   });
+  const data = await res.json() as CorrectionResponse;
+  if (!res.ok) throw new Error("correction submit failed");
+  return data;
 }
 
 export async function postPreferenceExplicitCorrection(
@@ -321,6 +324,16 @@ export interface CorrectionSummary {
     original_snippet?: string;
     corrected_snippet?: string;
   }[];
+}
+
+export interface CorrectionResponse {
+  ok: boolean;
+  message_id: string;
+  artifact_id?: string | null;
+  corrected_text?: string | null;
+  corrected_outcome?: Record<string, unknown> | null;
+  auto_activated?: boolean;
+  preference_id?: string | null;
 }
 
 export async function fetchPreferences(): Promise<PreferencesPayload> {

@@ -1495,10 +1495,21 @@ Axis 2: dist rebuild + E2E — DONE
 dist 재빌드 (314K, Apr 29 17:51). `pref-navigate-to-card` 1건 dist 반영.
 preference E2E 5 passed.
 
+## M97 자동 활성화 알림 UX
+
+Axis 1: correction-submit auto activation notice — DONE
+`app/handlers/feedback.py`가 반복 교정으로 highly reliable preference가 자동 활성화될 때
+`auto_activated: true`와 `preference_id`를 응답에 포함한다.
+`App.tsx` → `Sidebar.tsx` → `PreferencePanel.tsx`로 이벤트를 전달하고,
+`PreferencePanel`은 `선호도로 자동 저장됨` inline notice와
+`선호에서 보기` 링크(`href="#pref-card-{preference_id}"`)를 표시한다.
+`e2e/tests/web-smoke.spec.mjs`에 preference auto activation notice 시나리오 추가.
+py_compile / tsc / diff-check PASS. Playwright webServer는 현재 sandbox socket 제한으로 미실행.
+
 ## Next 3 Implementation Priorities
 
 1. **PR 머지 백로그**: operator 승인 대기 — PR #71-#86 스택.
-2. **M97 방향**: M96 완료; 다음 기능 축은 main 머지 후 fresh advisory 결정.
+2. **M97 후속**: auto activation notice source 변경은 완료; dist rebuild 또는 추가 browser verification은 별도 검증 환경에서 수행.
 3. **장기**: cross-session memory 강화, north star 방향 유지.
 
 ## Do Not Pull Forward

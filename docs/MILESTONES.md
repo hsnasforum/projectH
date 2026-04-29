@@ -1401,10 +1401,20 @@ feedback like/dislike, correction pair count, operator action count를 집계.
 `enrich_preference_reliability()`가 SQLite 백엔드에서도 live correction outcome
 반영 가능. adoption list + 2건 신규 테스트; 47 unit tests OK.
 
+## M88 Candidate Preferences Payload Wiring
+
+Axis 1: get_candidates() wiring into list_preferences_payload() — DONE
+`app/handlers/preferences.py` `list_preferences_payload()`에 `candidate_preferences`
+키 추가. `getattr` feature-detect으로 `get_candidates()`가 있는 store에서는 M86 Axis 1의
+효율적 쿼리를 사용하고, 없는 store에서는 `list_all()` 필터 fallback 유지.
+M86 Axis 1에서 추가된 SQLite/JSON `get_candidates()` 메서드를 app 경로에 연결.
+신규 테스트 2건 (`get_candidates()` 호출 경로 + fallback 경로); 22 tests OK.
+Axis 2 없음 (backend-only 변경, dist·E2E 불필요).
+
 ## Next 3 Implementation Priorities
 
-1. **PR 머지 백로그**: operator 승인 대기 — PR #71-#76 스택.
-2. **M87 방향**: Axis 1 완료; 추가 Axis 없음 (backend-only 변경). M88 방향 advisory 결정 예정.
+1. **PR 머지 백로그**: operator 승인 대기 — PR #71-#77 스택.
+2. **M88 방향**: Axis 1 완료; M89 방향은 advisor 결정 예정.
 3. **장기**: cross-session memory 강화, north star 방향 유지.
 
 ## Do Not Pull Forward

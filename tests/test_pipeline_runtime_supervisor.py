@@ -5396,6 +5396,19 @@ class RuntimeSupervisorTest(unittest.TestCase):
             self.assertIn(".pipeline/operator_request.md", prompt)
             self.assertIn("no truthful exact slice", prompt)
 
+    def test_advisory_prompt_bounds_large_document_reads(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+
+            prompt = supervisor._prompt_templates()["advisory"]
+
+            self.assertEqual(prompt, DEFAULT_ADVISORY_PROMPT)
+            self.assertIn("do not use broad full-file `cat` reads", prompt)
+            self.assertIn("docs/TASK_BACKLOG.md", prompt)
+            self.assertIn("INSUFFICIENT_CONTEXT", prompt)
+
     def test_prompt_templates_use_shared_watcher_defaults_when_lanes_exist(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

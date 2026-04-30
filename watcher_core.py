@@ -96,6 +96,7 @@ from pipeline_runtime.schema import (
     control_slot_spec,
     control_slot_spec_for_filename,
     iter_job_state_paths,
+    iter_control_slot_specs,
     latest_verify_note_for_work,
     process_starttime_fingerprint,
     read_control_meta,
@@ -213,6 +214,7 @@ logging.basicConfig(
     datefmt="%Y-%m-%dT%H:%M:%S",
 )
 log = logging.getLogger("watcher_core")
+DEFAULT_ADVISORY_RECOVERY_SEC = 300.0
 
 __all__ = ["WatcherCore", "main"]
 
@@ -469,7 +471,9 @@ class WatcherCore:
         self.advisory_retry_sec: float = float(
             config.get("advisory_idle_retry_sec", config.get("advisory_retry_sec", 30.0))
         )
-        self.advisory_recovery_sec: float = float(config.get("advisory_recovery_sec", 900.0))
+        self.advisory_recovery_sec: float = float(
+            config.get("advisory_recovery_sec", DEFAULT_ADVISORY_RECOVERY_SEC)
+        )
         self.operator_retriage_no_control_sec: float = float(
             config.get("operator_retriage_no_control_sec", 45.0)
         )
@@ -1223,8 +1227,17 @@ class WatcherCore:
 
     # ------------------------------------------------------------------
     def _get_next_control_seq(self) -> int:
-        candidates = self._iter_valid_control_signals()
-        seqs = [candidate.control_seq for candidate in candidates if candidate is not None and candidate.control_seq >= 0]
+        seqs: list[int] = []
+        seen: set[Path] = set()
+        for spec in iter_control_slot_specs():
+            for filename in spec.accepted_filenames:
+                path = self.pipeline_dir / filename
+                if path in seen or not path.exists():
+                    continue
+                seen.add(path)
+                control_seq = self._read_control_seq_from_path(path)
+                if control_seq >= 0:
+                    seqs.append(control_seq)
         if not seqs:
             return 1
         return max(seqs) + 1

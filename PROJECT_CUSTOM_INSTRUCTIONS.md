@@ -30,6 +30,9 @@ Playwright smoke coverage입니다. 이 목록은 제품 방향을 넓히기 위
     `docs/MILESTONES.md`, `docs/TASK_BACKLOG.md`
 - `work/README.md`, `verify/README.md`, `.pipeline/README.md` 같은 정적 guide는
   매 prompt에 기본 포함하지 말고, 해당 정책이 필요한 경우에만 읽습니다.
+- `docs/TASK_BACKLOG.md`, `docs/MILESTONES.md`, `docs/NEXT_STEPS.md`처럼 큰
+  계획 문서는 전체 `cat` 대신 targeted search나 필요한 section만 읽습니다.
+  그래도 근거가 부족하면 더 넓히지 말고 필요한 exact evidence를 남깁니다.
 
 ## 2. 범위를 넓히지 않습니다
 

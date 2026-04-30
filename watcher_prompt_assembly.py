@@ -67,6 +67,8 @@ DEFAULT_ADVISORY_PROMPT = (
     "- keep `READ_FIRST` to the listed advisory-owner root doc only\n"
     "- if the request cites exact shipped docs or a current runtime-doc family, inspect those first\n"
     "- do not widen to `docs/superpowers/**`, `plandoc/**`, or historical planning docs unless the request, latest `/work`, or latest `/verify` cites them as current evidence\n"
+    "- do not use broad full-file `cat` reads on large planning docs such as `docs/TASK_BACKLOG.md`, `docs/MILESTONES.md`, or `docs/NEXT_STEPS.md`; use targeted search or section reads\n"
+    "- if named evidence is still insufficient after targeted reads, write `INSUFFICIENT_CONTEXT` with the exact missing evidence instead of expanding context\n"
     "- pane-only answer is not completion\n"
     "- use edit/write tools only; no shell heredoc or redirection\n"
     "- do not modify other repo files\n"

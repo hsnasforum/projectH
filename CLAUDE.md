@@ -152,6 +152,9 @@ Common commands:
 Do not read `docs/superpowers/**`, `docs/recycle/**`, or `plandoc/**` unless
 the task, active control, latest notes, or user explicitly makes them current
 evidence.
+For large planning docs such as `docs/TASK_BACKLOG.md`, `docs/MILESTONES.md`,
+or `docs/NEXT_STEPS.md`, use targeted `rg` / section reads instead of full-file
+`cat`; if evidence remains insufficient, name the missing exact evidence.
 
 When docs must sync, use implementation truth. UI changes usually affect
 `README.md`, `docs/PRODUCT_SPEC.md`, and `docs/ACCEPTANCE_CRITERIA.md`;

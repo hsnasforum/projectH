@@ -47,8 +47,7 @@ const CORRECTION_STATUS_OPTIONS: Array<{ value: CorrectionStatusFilter; label: s
   { value: "stopped", label: "STOPPED" },
 ];
 
-const CORRECTION_LIST_INITIAL_LIMIT = 5;
-const CORRECTION_LIST_LIMIT_STEP = 5;
+const CORRECTION_LIST_PAGE_SIZE = 5;
 
 interface PanelProps {
   lastAppliedFingerprints?: string[];
@@ -86,12 +85,18 @@ function isActiveLowReliabilityPreference(pref: PreferenceRecord) {
   );
 }
 
-function buildCorrectionListParams(query: string, status: CorrectionStatusFilter, limit: number) {
+function buildCorrectionListParams(
+  query: string,
+  status: CorrectionStatusFilter,
+  limit: number,
+  offset = 0,
+) {
   const trimmedQuery = query.trim();
-  const params: { query?: string; status?: string; limit?: number } = {};
+  const params: { query?: string; status?: string; limit?: number; offset?: number } = {};
   if (trimmedQuery) params.query = trimmedQuery;
   if (status !== "all") params.status = status;
   if (limit > 0) params.limit = limit;
+  if (offset > 0) params.offset = offset;
   return Object.keys(params).length ? params : undefined;
 }
 
@@ -120,7 +125,7 @@ export default function PreferencePanel({
   const [correctionList, setCorrectionList] = useState<CorrectionListResponse | null>(null);
   const [correctionQuery, setCorrectionQuery] = useState("");
   const [correctionStatusFilter, setCorrectionStatusFilter] = useState<CorrectionStatusFilter>("all");
-  const [correctionListLimit, setCorrectionListLimit] = useState(CORRECTION_LIST_INITIAL_LIMIT);
+  const [correctionListHasMore, setCorrectionListHasMore] = useState(false);
   const [loading, setLoading] = useState(false);
   const [expanded, setExpanded] = useState(true);
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
@@ -161,7 +166,7 @@ export default function PreferencePanel({
         fetchPreferenceAudit(),
         fetchCorrectionSummary().catch(() => null),
         fetchCorrectionList(
-          buildCorrectionListParams(correctionQuery, correctionStatusFilter, correctionListLimit),
+          buildCorrectionListParams(correctionQuery, correctionStatusFilter, CORRECTION_LIST_PAGE_SIZE),
         ).catch(() => null),
       ]);
       // Filter out rejected items entirely
@@ -210,12 +215,13 @@ export default function PreferencePanel({
       setAudit(auditData);
       setCorrectionSummary(summary);
       setCorrectionList(list);
+      setCorrectionListHasMore((list?.corrections.length ?? 0) >= CORRECTION_LIST_PAGE_SIZE);
     } catch {
       // silent
     } finally {
       setLoading(false);
     }
-  }, [correctionQuery, correctionStatusFilter, correctionListLimit]);
+  }, [correctionQuery, correctionStatusFilter]);
 
   useEffect(() => { load(); }, []);
 
@@ -243,21 +249,50 @@ export default function PreferencePanel({
       setSelectedCorrectionDetail(null);
       setCorrectionDetailMessage(null);
       fetchCorrectionList(
-        buildCorrectionListParams(correctionQuery, correctionStatusFilter, correctionListLimit),
+        buildCorrectionListParams(correctionQuery, correctionStatusFilter, CORRECTION_LIST_PAGE_SIZE),
       )
-        .then(setCorrectionList)
-        .catch(() => setCorrectionList(null));
+        .then((list) => {
+          setCorrectionList(list);
+          setCorrectionListHasMore(list.corrections.length >= CORRECTION_LIST_PAGE_SIZE);
+        })
+        .catch(() => {
+          setCorrectionList(null);
+          setCorrectionListHasMore(false);
+        });
     }, 250);
     return () => window.clearTimeout(timer);
-  }, [correctionQuery, correctionStatusFilter, correctionListLimit]);
+  }, [correctionQuery, correctionStatusFilter]);
 
   const handleCorrectionStatusFilterChange = useCallback((nextStatus: CorrectionStatusFilter) => {
     setCorrectionStatusFilter(nextStatus);
-    setCorrectionListLimit(CORRECTION_LIST_INITIAL_LIMIT);
     setSelectedCorrectionId(null);
     setSelectedCorrectionDetail(null);
     setCorrectionDetailMessage(null);
   }, []);
+
+  const handleCorrectionShowMore = useCallback(async () => {
+    const offset = correctionList?.corrections.length ?? 0;
+    try {
+      const nextList = await fetchCorrectionList(
+        buildCorrectionListParams(
+          correctionQuery,
+          correctionStatusFilter,
+          CORRECTION_LIST_PAGE_SIZE,
+          offset,
+        ),
+      );
+      setCorrectionList((current) => {
+        if (!current) return nextList;
+        return {
+          ...nextList,
+          corrections: [...current.corrections, ...nextList.corrections],
+        };
+      });
+      setCorrectionListHasMore(nextList.corrections.length >= CORRECTION_LIST_PAGE_SIZE);
+    } catch {
+      setCorrectionListHasMore(false);
+    }
+  }, [correctionList?.corrections.length, correctionQuery, correctionStatusFilter]);
 
   const handleAction = useCallback(async (
     pref: PreferenceRecord,
@@ -605,10 +640,7 @@ export default function PreferencePanel({
                         className="min-w-0 flex-1 text-[10px] bg-transparent border-b border-sidebar-muted/20 text-sidebar-foreground placeholder:text-sidebar-muted/40 px-2 py-0.5 outline-none"
                         placeholder="교정 검색..."
                         value={correctionQuery}
-                        onChange={(e) => {
-                          setCorrectionQuery(e.target.value);
-                          setCorrectionListLimit(CORRECTION_LIST_INITIAL_LIMIT);
-                        }}
+                        onChange={(e) => setCorrectionQuery(e.target.value)}
                         onKeyDown={(e) => { if (e.key === "Enter") load(); }}
                       />
                       <select
@@ -662,14 +694,14 @@ export default function PreferencePanel({
                         [{c.status}] {(c.original_text ?? "").slice(0, 35)}
                       </div>
                     ))}
-                    {correctionList.corrections.length >= correctionListLimit && (
+                    {correctionListHasMore && (
                       <button
                         type="button"
                         data-testid="correction-show-more-btn"
                         className="mt-1 w-full rounded bg-white/5 px-2 py-1 text-[10px] text-sidebar-muted/70 hover:bg-white/10 hover:text-sidebar-text"
                         onClick={(event) => {
                           event.stopPropagation();
-                          setCorrectionListLimit((current) => current + CORRECTION_LIST_LIMIT_STEP);
+                          handleCorrectionShowMore();
                         }}
                       >
                         더 보기

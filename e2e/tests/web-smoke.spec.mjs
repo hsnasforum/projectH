@@ -13140,6 +13140,111 @@ test("correction history status filter narrows list", async ({ page }) => {
   expect(confirmedStatusRequests).toBe(1);
 });
 
+test("correction history show more appends next page", async ({ page }) => {
+  await page.route(/\/api\/preferences$/, async (route) => {
+    if (route.request().method() === "GET") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          ok: true,
+          preferences: [
+            {
+              preference_id: "pref-correction-pagination-anchor",
+              delta_fingerprint: "sha256:correction-pagination-anchor",
+              description: "교정 페이지네이션 UI 표시용 활성 선호",
+              status: "active",
+              evidence_count: 1,
+              cross_session_count: 1,
+              reliability_stats: { applied_count: 1, corrected_count: 0 },
+              quality_info: { avg_similarity_score: null, is_high_quality: null },
+              is_highly_reliable: null,
+              activated_at: "2026-04-30T00:00:00Z",
+              created_at: "2026-04-30T00:00:00Z",
+              updated_at: "2026-04-30T00:00:00Z",
+            },
+          ],
+          active_count: 1,
+          candidate_count: 0,
+          paused_count: 0,
+          total_applied: 1,
+          total_corrected: 0,
+        }),
+      });
+    } else {
+      await route.continue();
+    }
+  });
+  await page.route(/\/api\/preferences\/audit$/, async (route) => {
+    if (route.request().method() === "GET") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ ok: true, audit: null }),
+      });
+    } else {
+      await route.continue();
+    }
+  });
+  await page.route(/\/api\/corrections\/summary$/, async (route) => {
+    if (route.request().method() === "GET") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ ok: true, total: 6, by_status: { recorded: 6 }, top_recurring_fingerprints: [] }),
+      });
+    } else {
+      await route.continue();
+    }
+  });
+
+  let offsetRequests = 0;
+  await page.route(/\/api\/corrections\/list(\?.*)?$/, async (route) => {
+    if (route.request().method() !== "GET") {
+      await route.continue();
+      return;
+    }
+    const url = new URL(route.request().url());
+    const limit = Number(url.searchParams.get("limit") || "5");
+    const offset = Number(url.searchParams.get("offset") || "0");
+    if (offset > 0) offsetRequests += 1;
+    const corrections = Array.from({ length: offset > 0 ? 1 : limit }, (_, index) => {
+      const itemNumber = offset + index + 1;
+      return {
+        correction_id: `correction-page-${itemNumber}`,
+        status: "recorded",
+        original_text: `pagination item ${itemNumber}`,
+        corrected_text: `pagination corrected ${itemNumber}`,
+        delta_fingerprint: `fp-pagination-${itemNumber}`,
+        created_at: `2026-04-30T10:0${index}:00Z`,
+      };
+    });
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ ok: true, corrections }),
+    });
+  });
+
+  await page.goto("/app-preview");
+  await expect(page.getByTestId("correction-list-item")).toHaveCount(5, { timeout: 10_000 });
+  await expect(page.getByTestId("correction-list-item").filter({ hasText: "pagination item 1" })).toBeVisible();
+
+  const nextPageRequest = page.waitForRequest((request) => {
+    if (!request.url().includes("/api/corrections/list")) return false;
+    const url = new URL(request.url());
+    return Number(url.searchParams.get("offset") || "0") > 0 &&
+      Number(url.searchParams.get("limit") || "0") > 0;
+  });
+  await page.getByTestId("correction-show-more-btn").click();
+  await nextPageRequest;
+
+  await expect(page.getByTestId("correction-list-item")).toHaveCount(6, { timeout: 10_000 });
+  await expect(page.getByTestId("correction-list-item").filter({ hasText: "pagination item 1" })).toBeVisible();
+  await expect(page.getByTestId("correction-list-item").filter({ hasText: "pagination item 6" })).toBeVisible();
+  expect(offsetRequests).toBe(1);
+});
+
 test("correction promote pattern returns activated_count in response", async ({ page }) => {
   await page.route(/\/api\/corrections\/promote-pattern$/, async (route) => {
     if (route.request().method() === "POST") {

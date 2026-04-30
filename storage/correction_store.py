@@ -229,6 +229,7 @@ class CorrectionStore:
         query: str | None = None,
         status: str | None = None,
         limit: int = 20,
+        offset: int = 0,
     ) -> list[CorrectionRecord]:
         with self._lock:
             records = self._scan_all()
@@ -242,7 +243,8 @@ class CorrectionStore:
             if status:
                 records = [r for r in records if r.get("status") == status]
             records.sort(key=lambda d: d.get("updated_at", ""), reverse=True)
-            return records[:limit]
+            start = max(0, offset)
+            return records[start:start + limit]
 
     def list_incomplete_corrections(self) -> list[CorrectionRecord]:
         _INCOMPLETE = {

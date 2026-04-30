@@ -10,6 +10,7 @@ import {
   fetchPreferenceAudit,
   fetchPreferences,
   activatePreference,
+  deletePreference,
   pausePreference,
   rejectPreference,
   postSyncAdoptedToPreferenceCandidates,
@@ -257,6 +258,29 @@ export default function PreferencePanel({
       // silent
     }
   }, [editDescriptions, load]);
+
+  const handleDeletePreference = useCallback(async (pref: PreferenceRecord) => {
+    try {
+      await deletePreference(pref.preference_id);
+      setPreferences((prev) => prev.filter((item) => item.preference_id !== pref.preference_id));
+      setCandidatePreferences((prev) =>
+        prev == null ? prev : prev.filter((item) => item.preference_id !== pref.preference_id),
+      );
+      setExpandedItems((prev) => {
+        const next = new Set(prev);
+        next.delete(pref.preference_id);
+        return next;
+      });
+      setEditDescriptions((prev) => {
+        const next = { ...prev };
+        delete next[pref.preference_id];
+        return next;
+      });
+      await load();
+    } catch {
+      // silent
+    }
+  }, [load]);
 
   const handleSyncAdopted = useCallback(async () => {
     setSyncingAdopted(true);
@@ -880,6 +904,14 @@ export default function PreferencePanel({
                       </button>
                     </>
                   )}
+                  <button
+                    data-testid="delete-preference-btn"
+                    aria-label={`선호 삭제: ${pref.description}`}
+                    onClick={() => handleDeletePreference(pref)}
+                    className="ml-auto text-[10px] px-1.5 py-0.5 rounded text-red-300/70 hover:bg-red-500/10 hover:text-red-200 transition-colors"
+                  >
+                    삭제
+                  </button>
                 </div>
               </div>
             );

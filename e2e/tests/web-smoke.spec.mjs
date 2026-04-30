@@ -12006,6 +12006,87 @@ test("활성 교정이 있으면 동기화 버튼이 보이고 클릭 시 후보
   await expect.poll(() => auditRequests).toBeGreaterThanOrEqual(2);
 });
 
+test("preference delete removes preference from list", async ({ page }) => {
+  const preferenceId = "pref-delete-list";
+  let deleted = false;
+  let deleteRequests = 0;
+
+  const preferencePayload = () => ({
+    preference_id: preferenceId,
+    delta_fingerprint: "sha256:delete-list",
+    description: "삭제 smoke 테스트 선호",
+    status: "active",
+    evidence_count: 1,
+    cross_session_count: 1,
+    reliability_stats: { applied_count: 1, corrected_count: 0 },
+    quality_info: { avg_similarity_score: null, is_high_quality: null },
+    is_highly_reliable: true,
+    activated_at: "2026-04-30T00:00:00Z",
+    created_at: "2026-04-30T00:00:00Z",
+    updated_at: "2026-04-30T00:00:00Z",
+  });
+
+  await page.route(/\/api\/preferences$/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: true,
+        preferences: deleted ? [] : [preferencePayload()],
+        active_count: deleted ? 0 : 1,
+        candidate_count: 0,
+        paused_count: 0,
+        total_applied: deleted ? 0 : 1,
+        total_corrected: 0,
+        high_quality_active_count: 0,
+        highly_reliable_active_count: deleted ? 0 : 1,
+        high_severity_conflict_count: 0,
+        low_reliability_active_count: 0,
+      }),
+    });
+  });
+  await page.route(/\/api\/preferences\/audit$/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: true,
+        audit: {
+          total: deleted ? 0 : 1,
+          by_status: { active: deleted ? 0 : 1, candidate: 0, paused: 0 },
+          conflict_pair_count: 0,
+          adopted_corrections_count: 0,
+          available_to_sync_count: 0,
+        },
+      }),
+    });
+  });
+  await page.route(new RegExp(`/api/preferences/${preferenceId}$`), async (route) => {
+    expect(route.request().method()).toBe("DELETE");
+    deleteRequests += 1;
+    deleted = true;
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: true,
+        deleted_preference_id: preferenceId,
+        previous_status: "active",
+        stop_applied: true,
+      }),
+    });
+  });
+
+  await page.goto("/app-preview");
+  const preferenceCard = page.locator(`#pref-card-${preferenceId}`);
+  await expect(preferenceCard).toBeVisible({ timeout: 10_000 });
+
+  await preferenceCard.getByTestId("delete-preference-btn").click();
+
+  await expect(preferenceCard).toBeHidden();
+  expect(deleteRequests).toBe(1);
+});
+
 test("corrections: GET /api/corrections/summary 응답이 ok, total, by_status, top_recurring_fingerprints를 포함합니다", async ({ page }) => {
   await page.route(/\/api\/corrections\/summary$/, async (route) => {
     expect(route.request().method()).toBe("GET");

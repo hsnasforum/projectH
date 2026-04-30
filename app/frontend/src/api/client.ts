@@ -544,3 +544,10 @@ export async function updatePreferenceDescription(
   });
   return res.json();
 }
+
+export async function deletePreference(preferenceId: string): Promise<void> {
+  const res = await fetch(`${BASE}/api/preferences/${encodeURIComponent(preferenceId)}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) throw new Error("delete preference failed");
+}

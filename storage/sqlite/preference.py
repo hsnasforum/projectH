@@ -105,6 +105,15 @@ class SQLitePreferenceStore:
     def reject_preference(self, preference_id: str) -> PreferenceRecord | None:
         return self._update_status(preference_id, "rejected")
 
+    def delete(self, preference_id: str) -> PreferenceRecord | None:
+        row = self._db.fetchone("SELECT * FROM preferences WHERE preference_id = ?", (preference_id,))
+        if row is None:
+            return None
+        record = self._record_from_row(row)
+        self._db.execute("DELETE FROM preferences WHERE preference_id = ?", (preference_id,))
+        self._db.commit()
+        return record
+
     def update_description(self, preference_id: str, description: str) -> PreferenceRecord | None:
         """Update the description of an existing preference. Returns None if not found."""
         now = _now_iso()

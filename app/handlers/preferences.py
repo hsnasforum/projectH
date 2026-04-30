@@ -365,6 +365,40 @@ class PreferenceHandlerMixin:
         self.task_logger.log(session_id="system", action="preference_rejected", detail=detail)
         return {"ok": True, "preference": result}
 
+    def delete_preference(self, preference_id: str) -> dict[str, Any]:
+        preference_id = self._normalize_optional_text(preference_id)
+        if not preference_id:
+            raise WebApiError(400, "삭제할 선호 ID가 필요합니다.")
+
+        existing = self.preference_store.get(preference_id)
+        if existing is None:
+            raise WebApiError(404, "해당 선호를 찾을 수 없습니다.")
+
+        previous_status = str(existing.get("status") or "")
+        was_active = previous_status == "active"
+        if was_active:
+            self.preference_store.pause_preference(preference_id)
+
+        deleted = self.preference_store.delete(preference_id)
+        if deleted is None:
+            raise WebApiError(404, "해당 선호를 찾을 수 없습니다.")
+
+        self.task_logger.log(
+            session_id="system",
+            action="preference_deleted",
+            detail={
+                "preference_id": preference_id,
+                "previous_status": previous_status,
+                "stop_applied": was_active,
+            },
+        )
+        return {
+            "ok": True,
+            "deleted_preference_id": preference_id,
+            "previous_status": previous_status,
+            "stop_applied": was_active,
+        }
+
     def update_preference_description(self, payload: dict[str, Any]) -> dict[str, Any]:
         preference_id = self._normalize_optional_text(payload.get("preference_id"))
         description = self._normalize_optional_text(payload.get("description"))

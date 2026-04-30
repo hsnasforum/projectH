@@ -1536,12 +1536,28 @@ watcher runtime 개선; product UI 변경 없음.
 commit: 9331c5b, branch: fix/m99-advisory-loop-recovery-guard,
 PR #92 (draft, base: feat/m98-axis1-correction-history)
 
+## M102 preference delete
+
+Axis 1: preference delete — DONE
+`app/handlers/preferences.py`에 `delete_preference(preference_id)` 추가.
+`app/web.py`에 `DELETE /api/preferences/<preference_id>` same-origin 라우트 등록.
+`storage/preference_store.py`와 `storage/sqlite/preference.py`에 `delete(preference_id)` 추가.
+`app/frontend/src/api/client.ts`에 `deletePreference(preferenceId)` 추가.
+`PreferencePanel.tsx`의 각 preference 카드에 `data-testid="delete-preference-btn"` 삭제 버튼 추가.
+ACTIVE 선호 삭제 시 pause 후 제거; `preference_deleted` task log 기록.
+unit test 2개 (delete 성공, 404).
+
+Axis 2: dist rebuild — DONE
+`npx vite build`로 `app/static/dist/assets/index.js`와 `index.css` 갱신.
+`delete-preference-btn` testid가 dist JS에 1건 포함됨 확인.
+`e2e/tests/web-smoke.spec.mjs`에 `preference delete removes preference from list` 시나리오 추가.
+Playwright webServer는 현재 sandbox socket 제한으로 미실행; CI 위임.
+
 ## Next 3 Implementation Priorities
 
-1. **PR 머지 백로그**: PR #91 (M98, feat/m98-axis1-correction-history → feat/m96-bundle)
-   + PR #92 (M99, fix/m99-advisory-loop-recovery-guard → feat/m98-axis1-correction-history) —
-   모두 draft, `pr_merge_gate` operator 승인 대기.
-2. **M100 방향**: advisory 결정 대기 중 (Gemini 미응답); 로컬 doc-sync 선행 실행.
+1. **PR 머지 백로그**: PR #91 (M98) + PR #92 (M99) + PR #93 (M100-M101) — 모두 draft,
+   `pr_merge_gate` operator 승인 대기. M102 PR은 이번 commit/push/PR 이후 추가.
+2. **M102 완료**: Axis 1+2+doc-sync 완료 — commit/push/PR 대기.
 3. **장기**: cross-session memory 강화, north star 방향 유지.
 
 ## Do Not Pull Forward

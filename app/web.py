@@ -552,6 +552,27 @@ class LocalAssistantHandler(BaseHTTPRequestHandler):
         except Exception as exc:
             self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"ok": False, "error": {"message": localize_text(str(exc))}})
 
+    def do_DELETE(self) -> None:
+        parsed = urlparse(self.path)
+        preference_prefix = "/api/preferences/"
+        if not parsed.path.startswith(preference_prefix):
+            self._send_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": {"message": "요청한 경로를 찾을 수 없습니다."}})
+            return
+
+        preference_id = parsed.path[len(preference_prefix):]
+        if not preference_id or "/" in preference_id:
+            self._send_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": {"message": "요청한 경로를 찾을 수 없습니다."}})
+            return
+
+        try:
+            self._validate_same_origin()
+            response = self.server.service.delete_preference(preference_id)
+            self._send_json(HTTPStatus.OK, response)
+        except WebApiError as exc:
+            self._send_json(exc.status_code, {"ok": False, "error": {"message": localize_text(exc.message)}})
+        except Exception as exc:
+            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"ok": False, "error": {"message": localize_text(str(exc))}})
+
     def log_message(self, format: str, *args: Any) -> None:
         return
 

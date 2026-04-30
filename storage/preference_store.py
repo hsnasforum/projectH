@@ -248,6 +248,15 @@ class PreferenceStore:
     def reject_preference(self, preference_id: str) -> PreferenceRecord | None:
         return self._transition(preference_id, PreferenceStatus.REJECTED, "rejected_at")
 
+    def delete(self, preference_id: str) -> PreferenceRecord | None:
+        with self._lock:
+            path = self._path(preference_id)
+            record = read_json(path)
+            if record is None:
+                return None
+            path.unlink()
+            return record
+
     def update_description(self, preference_id: str, description: str) -> PreferenceRecord | None:
         """Update the description of an existing preference. Returns None if not found."""
         with self._lock:

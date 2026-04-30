@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import logging
+import re
+import shlex
 import subprocess
 import threading
 import time
@@ -39,6 +41,48 @@ log = logging.getLogger(__name__)
 _DISPATCH_LOCKS_GUARD = threading.Lock()
 _DISPATCH_LOCKS: dict[str, threading.Lock] = {}
 _DISPATCH_LOCK_TIMEOUT_SEC = 30.0
+_GEMINI_GIT_PERMISSION_PROMPT_RE = re.compile(
+    r"Allow execution of\s*\[git\]\?",
+    re.IGNORECASE,
+)
+_GEMINI_ALLOW_FOR_SESSION_RE = re.compile(
+    r"\b2\.\s*Allow for this session\b",
+    re.IGNORECASE,
+)
+_GEMINI_SHELL_COMMAND_RE = re.compile(r"\bShell\s+(.+)$", re.IGNORECASE)
+_GEMINI_GIT_COMMAND_RE = re.compile(r"\bgit(?:\s+|$).*$", re.IGNORECASE)
+_GEMINI_PROMPT_BORDER_CHARS = "|│┃┆╎┊"
+_READONLY_GIT_SUBCOMMANDS = frozenset(
+    {
+        "describe",
+        "diff",
+        "for-each-ref",
+        "log",
+        "ls-files",
+        "ls-tree",
+        "merge-base",
+        "rev-list",
+        "rev-parse",
+        "show",
+        "status",
+    }
+)
+_BRANCH_MUTATING_OPTIONS = frozenset(
+    {
+        "-c",
+        "-C",
+        "-d",
+        "-D",
+        "-m",
+        "-M",
+        "--copy",
+        "--delete",
+        "--edit-description",
+        "--move",
+        "--set-upstream-to",
+        "--unset-upstream",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -444,6 +488,153 @@ class WatcherDispatchQueue:
                 self.last_lane_input_defer_at.pop(pending_key, None)
                 continue
             self.dispatch(self._intent_from_pending(pending_key, pending), from_pending=True)
+
+
+def _extract_gemini_git_permission_commands(text: str) -> list[str]:
+    commands: list[str] = []
+    seen: set[str] = set()
+    for raw_line in str(text or "").splitlines():
+        line = raw_line.strip()
+        shell_match = _GEMINI_SHELL_COMMAND_RE.search(line)
+        if shell_match:
+            candidate = shell_match.group(1).strip()
+        else:
+            git_match = _GEMINI_GIT_COMMAND_RE.search(line)
+            if git_match is None:
+                continue
+            candidate = git_match.group(0).strip()
+        candidate = candidate.strip(f" {_GEMINI_PROMPT_BORDER_CHARS}")
+        candidate = candidate.translate(str.maketrans({char: " " for char in _GEMINI_PROMPT_BORDER_CHARS}))
+        candidate = re.sub(r"\s+", " ", candidate).strip()
+        if not candidate.lower().startswith("git "):
+            continue
+        if candidate not in seen:
+            seen.add(candidate)
+            commands.append(candidate)
+    return commands
+
+
+def _git_branch_invocation_is_readonly(args: list[str]) -> bool:
+    for token in args:
+        lowered = token.lower()
+        if lowered in _BRANCH_MUTATING_OPTIONS:
+            return False
+        if lowered.startswith("--set-upstream-to="):
+            return False
+        if not token.startswith("-"):
+            return False
+    return True
+
+
+def _git_segment_is_readonly(segment: str) -> bool:
+    try:
+        tokens = shlex.split(segment)
+    except ValueError:
+        return False
+    if len(tokens) < 2:
+        return False
+    if tokens[0] != "git":
+        return False
+    subcommand = tokens[1].lower()
+    if subcommand == "branch":
+        return _git_branch_invocation_is_readonly(tokens[2:])
+    if subcommand not in _READONLY_GIT_SUBCOMMANDS:
+        return False
+    if any(token.startswith("--output") or token == "--ext-diff" for token in tokens[2:]):
+        return False
+    return True
+
+
+def _git_shell_command_is_readonly(command: str) -> bool:
+    command_text = str(command or "").strip()
+    if not command_text:
+        return False
+    if re.search(r"[`$<>;|]", command_text):
+        return False
+    if re.search(r"(?<!&)&(?!&)", command_text):
+        return False
+    segments = [segment.strip() for segment in command_text.split("&&")]
+    if not segments or any(not segment for segment in segments):
+        return False
+    return all(_git_segment_is_readonly(segment) for segment in segments)
+
+
+def gemini_git_permission_prompt_needs_session_allow(text: str) -> bool:
+    if _GEMINI_GIT_PERMISSION_PROMPT_RE.search(str(text or "")) is None:
+        return False
+    if _GEMINI_ALLOW_FOR_SESSION_RE.search(str(text or "")) is None:
+        return False
+    commands = _extract_gemini_git_permission_commands(text)
+    if not commands:
+        return False
+    return all(_git_shell_command_is_readonly(command) for command in commands)
+
+
+def maybe_answer_gemini_git_permission_prompt(
+    pane_target: str,
+    *,
+    dry_run: bool = False,
+) -> bool:
+    if not pane_target:
+        return False
+    snapshot = _shared_capture_pane_text(pane_target)
+    if not gemini_git_permission_prompt_needs_session_allow(snapshot):
+        return False
+    log.info(
+        "answering Gemini readonly git permission prompt target=%s dry_run=%s",
+        pane_target,
+        dry_run,
+    )
+    if dry_run:
+        return True
+    dispatch_lock = _dispatch_lock_for(pane_target)
+    if not dispatch_lock.acquire(timeout=_DISPATCH_LOCK_TIMEOUT_SEC):
+        log.warning(
+            "Gemini git permission prompt answer skipped: pane dispatch busy target=%s",
+            pane_target,
+        )
+        return False
+    try:
+        subprocess.run(
+            ["tmux", "send-keys", "-t", pane_target, "2", "Enter"],
+            check=True,
+            capture_output=True,
+        )
+        return True
+    except subprocess.CalledProcessError as e:
+        log.error("Gemini git permission prompt answer failed: %s", e.stderr.decode().strip())
+        return False
+    finally:
+        dispatch_lock.release()
+
+
+def tmux_send_escape(
+    pane_target: str,
+    *,
+    dry_run: bool = False,
+) -> bool:
+    """Send Escape to a tmux pane through the shared dispatch lock."""
+    if not pane_target:
+        return False
+    log.info("send Escape target=%s dry_run=%s", pane_target, dry_run)
+    if dry_run:
+        return True
+    dispatch_lock = _dispatch_lock_for(pane_target)
+    if not dispatch_lock.acquire(timeout=_DISPATCH_LOCK_TIMEOUT_SEC):
+        log.warning("send Escape skipped: pane dispatch busy target=%s", pane_target)
+        return False
+    try:
+        subprocess.run(
+            ["tmux", "send-keys", "-t", pane_target, "Escape"],
+            check=True,
+            capture_output=True,
+        )
+        return True
+    except subprocess.CalledProcessError as e:
+        log.error("send Escape failed: %s", e.stderr.decode().strip())
+        return False
+    finally:
+        dispatch_lock.release()
 
 
 def _wait_for_input_ready(

@@ -206,6 +206,37 @@ def _default_dispatch_pane_type() -> str:
     return str((specs[0] if specs else {}).get("pane_type") or "claude")
 
 
+def _config_bool(value: object, *, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    text = str(value).strip().lower()
+    if not text:
+        return default
+    return text not in {"0", "false", "no", "off"}
+
+
+def _pane_text_looks_like_advisory_dispatch(text: str) -> bool:
+    normalized = str(text or "").lower()
+    if not normalized.strip():
+        return False
+    return (
+        ("role: advisory" in normalized and "request: @.pipeline/advisory_request.md" in normalized)
+        or "role_harness: .pipeline/harness/advisory.md" in normalized
+    )
+
+
+def _extract_visible_advisory_next_control_seq(text: str) -> int:
+    match = re.search(r"(?im)^\s*next_control_seq:\s*(\d+)\s*$", str(text or ""))
+    if match is None:
+        return -1
+    try:
+        return int(match.group(1))
+    except ValueError:
+        return -1
+
+
 # ---------------------------------------------------------------------------
 # 로깅
 # ---------------------------------------------------------------------------
@@ -354,6 +385,10 @@ class WatcherCore:
 
         self.poll_interval = config.get("poll_interval", 1.0)
         self.dry_run       = config.get("dry_run", False)
+        self.gemini_git_permission_auto_allow = _config_bool(
+            config.get("gemini_git_permission_auto_allow"),
+            default=True,
+        )
         self.startup_grace_sec = float(config.get("startup_grace_sec", 8.0))
         self.state_cleanup_legacy_grace_sec = float(
             config.get("state_cleanup_legacy_grace_sec", 300.0)
@@ -475,6 +510,9 @@ class WatcherCore:
         self.advisory_recovery_sec: float = float(
             config.get("advisory_recovery_sec", DEFAULT_ADVISORY_RECOVERY_SEC)
         )
+        self.inactive_advisory_cancel_sec: float = float(
+            config.get("inactive_advisory_cancel_sec", 60.0)
+        )
         self.operator_retriage_no_control_sec: float = float(
             config.get("operator_retriage_no_control_sec", 45.0)
         )
@@ -482,7 +520,9 @@ class WatcherCore:
         self._last_advisory_retry_at: float = 0.0
         self._last_advisory_recovery_sig: str = ""
         self._last_advisory_recovery_at: float = 0.0
-        self._last_inactive_advisory_cancel_fingerprint: str = ""
+        self._inactive_advisory_busy_key: str = ""
+        self._inactive_advisory_busy_since: float = 0.0
+        self._last_inactive_advisory_cancel_key: str = ""
         self._last_inactive_advisory_cancel_at: float = 0.0
         self._runtime_export_enabled: bool = os.environ.get("PIPELINE_RUNTIME_DISABLE_EXPORTER", "").strip().lower() not in {
             "1",
@@ -707,6 +747,168 @@ class WatcherCore:
     # ------------------------------------------------------------------
     def _advisory_enabled(self) -> bool:
         return bool(self.runtime_controls.get("advisory_enabled")) and bool(self._role_owner("advisory"))
+
+    # ------------------------------------------------------------------
+    def _maybe_answer_gemini_git_permission_prompt(self) -> bool:
+        if not self.gemini_git_permission_auto_allow:
+            return False
+        target = self.gemini_pane_target
+        if not target:
+            return False
+        try:
+            answered = watcher_dispatch.maybe_answer_gemini_git_permission_prompt(
+                target,
+                dry_run=self.dry_run,
+            )
+        except Exception as exc:
+            log.warning("Gemini git permission prompt auto-answer check failed: %s", exc)
+            return False
+        if not answered:
+            return False
+        payload = {
+            "lane": "Gemini",
+            "pane_target": target,
+            "tool": "git",
+            "selection": "2",
+            "scope": "session",
+            "guard": "readonly_git_permission_prompt",
+        }
+        self._log_raw("gemini_git_permission_auto_allow_session", "", "lane_prompt", payload)
+        self._append_runtime_event("gemini_git_permission_auto_allow_session", payload)
+        return True
+
+    # ------------------------------------------------------------------
+    def _reset_inactive_advisory_busy_tracking(self) -> None:
+        self._inactive_advisory_busy_key = ""
+        self._inactive_advisory_busy_since = 0.0
+
+    # ------------------------------------------------------------------
+    def _active_advisory_request_in_progress(self) -> bool:
+        if self._current_turn_state != WatcherTurnState.ADVISORY_ACTIVE:
+            return False
+        active_control = self._get_active_control_signal()
+        request_control = self._control_signal_for_slot(
+            active_control,
+            "advisory_request",
+            "request_open",
+        )
+        if request_control is None:
+            return False
+        request_seq = request_control.control_seq
+        if request_seq >= 0 and request_seq < self._turn_active_control_seq:
+            return False
+        if self._advisory_advice_is_current_for_request(request_seq):
+            return False
+        return True
+
+    # ------------------------------------------------------------------
+    def _send_advisory_escape_for_snapshot(
+        self,
+        *,
+        reason: str,
+        snapshot: str,
+        payload_extra: Optional[dict[str, object]] = None,
+    ) -> bool:
+        target = self._prompt_pane_target("advisory")
+        if not target:
+            return False
+        owner = self._prompt_owner("advisory") or self._role_owner("advisory") or "advisory"
+        if not _pane_text_looks_like_advisory_dispatch(snapshot):
+            return False
+        if not _shared_pane_text_has_busy_indicator(snapshot, owner):
+            return False
+        visible_next_seq = _extract_visible_advisory_next_control_seq(snapshot)
+        payload: dict[str, object] = {
+            "reason": reason,
+            "lane": owner,
+            "pane_target": target,
+            "turn_state": self._current_turn_state.value,
+            "active_control_file": self._turn_active_control_file,
+            "active_control_seq": self._turn_active_control_seq,
+            "visible_next_control_seq": visible_next_seq,
+            "snapshot_hash": hashlib.sha256(snapshot.encode("utf-8")).hexdigest()[:16],
+        }
+        if payload_extra:
+            payload.update(payload_extra)
+        if not watcher_dispatch.tmux_send_escape(target, dry_run=self.dry_run):
+            return False
+        self._log_raw("advisory_lane_cancelled", "", "lane_prompt", payload)
+        self._append_runtime_event("advisory_lane_cancelled", payload)
+        return True
+
+    # ------------------------------------------------------------------
+    def _cancel_advisory_lane_if_busy(
+        self,
+        *,
+        reason: str,
+        payload_extra: Optional[dict[str, object]] = None,
+    ) -> bool:
+        target = self._prompt_pane_target("advisory")
+        if not target:
+            return False
+        snapshot = _shared_capture_pane_text(target)
+        return self._send_advisory_escape_for_snapshot(
+            reason=reason,
+            snapshot=snapshot,
+            payload_extra=payload_extra,
+        )
+
+    # ------------------------------------------------------------------
+    def _maybe_cancel_inactive_advisory_lane(self) -> bool:
+        if not self._advisory_enabled():
+            return False
+        if self._active_advisory_request_in_progress():
+            self._reset_inactive_advisory_busy_tracking()
+            return False
+        target = self._prompt_pane_target("advisory")
+        if not target:
+            self._reset_inactive_advisory_busy_tracking()
+            return False
+
+        snapshot = _shared_capture_pane_text(target)
+        owner = self._prompt_owner("advisory") or self._role_owner("advisory") or "advisory"
+        if (
+            not _pane_text_looks_like_advisory_dispatch(snapshot)
+            or not _shared_pane_text_has_busy_indicator(snapshot, owner)
+        ):
+            self._reset_inactive_advisory_busy_tracking()
+            return False
+
+        visible_next_seq = _extract_visible_advisory_next_control_seq(snapshot)
+        busy_key = ":".join(
+            [
+                target,
+                str(visible_next_seq),
+                self._turn_active_control_file,
+                str(self._turn_active_control_seq),
+            ]
+        )
+        now = time.time()
+        if busy_key != self._inactive_advisory_busy_key:
+            self._inactive_advisory_busy_key = busy_key
+            self._inactive_advisory_busy_since = now
+        busy_age = now - self._inactive_advisory_busy_since
+        if busy_age < self.inactive_advisory_cancel_sec:
+            return False
+        if (
+            busy_key == self._last_inactive_advisory_cancel_key
+            and now - self._last_inactive_advisory_cancel_at < max(60.0, self.inactive_advisory_cancel_sec)
+        ):
+            return False
+
+        cancelled = self._send_advisory_escape_for_snapshot(
+            reason="inactive_advisory_lane_busy",
+            snapshot=snapshot,
+            payload_extra={
+                "inactive_busy_age_sec": int(busy_age),
+                "cancel_threshold_sec": int(self.inactive_advisory_cancel_sec),
+            },
+        )
+        if cancelled:
+            self._last_inactive_advisory_cancel_key = busy_key
+            self._last_inactive_advisory_cancel_at = now
+            self._reset_inactive_advisory_busy_tracking()
+        return cancelled
 
     # ------------------------------------------------------------------
     def _operator_stop_enabled(self) -> bool:
@@ -2285,119 +2487,6 @@ class WatcherCore:
         return count
 
     # ------------------------------------------------------------------
-    def _cancel_advisory_lane_for_recovery(self, marker: dict[str, object]) -> bool:
-        target = str(
-            marker.get("advisory_lane_target")
-            or self._prompt_pane_target("advisory")
-            or ""
-        ).strip()
-        if not target:
-            return False
-        lane_name = self._prompt_owner("advisory") or "Gemini"
-        if not bool(marker.get("advisory_lane_busy")):
-            snapshot = _shared_capture_pane_text(target)
-            if not _shared_pane_text_has_busy_indicator(snapshot, lane_name):
-                return False
-
-        payload = {
-            "reason": "advisory_recovery",
-            "target": target,
-            "control_file": marker.get("control_file"),
-            "control_seq": marker.get("control_seq"),
-            "advisory_lane_busy_age_sec": marker.get("advisory_lane_busy_age_sec"),
-            "dry_run": bool(self.dry_run),
-            "success": False,
-        }
-        if self.dry_run:
-            payload["success"] = True
-            marker["advisory_lane_cancelled"] = True
-            marker["advisory_lane_cancel_dry_run"] = True
-            self._append_runtime_event("advisory_lane_cancelled", payload)
-            return True
-
-        try:
-            result = subprocess.run(
-                ["tmux", "send-keys", "-t", target, "Escape"],
-                check=False,
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
-            success = result.returncode == 0
-            payload["success"] = success
-            if not success:
-                payload["returncode"] = result.returncode
-                payload["stderr"] = (result.stderr or "").strip()[-500:]
-        except (OSError, subprocess.TimeoutExpired) as exc:
-            success = False
-            payload["error"] = repr(exc)
-
-        marker["advisory_lane_cancelled"] = success
-        self._append_runtime_event("advisory_lane_cancelled", payload)
-        return success
-
-    # ------------------------------------------------------------------
-    def _cancel_inactive_advisory_lane_if_busy(self) -> bool:
-        if not self._advisory_enabled():
-            return False
-        if self._current_turn_state == WatcherTurnState.ADVISORY_ACTIVE:
-            return False
-        target = self._prompt_pane_target("advisory")
-        if not target:
-            return False
-
-        lane_name = self._prompt_owner("advisory") or "Gemini"
-        snapshot = _shared_capture_pane_text(target)
-        if not _shared_pane_text_has_busy_indicator(snapshot, lane_name):
-            return False
-
-        fingerprint = hashlib.sha256(snapshot.encode("utf-8", errors="replace")).hexdigest()
-        now = time.time()
-        if (
-            fingerprint == self._last_inactive_advisory_cancel_fingerprint
-            and now - self._last_inactive_advisory_cancel_at < 30.0
-        ):
-            return False
-
-        self._last_inactive_advisory_cancel_fingerprint = fingerprint
-        self._last_inactive_advisory_cancel_at = now
-        busy_age_sec = _shared_pane_text_busy_age_seconds(snapshot, lane_name)
-        payload = {
-            "reason": "inactive_advisory_lane_busy",
-            "target": target,
-            "turn_state": self._current_turn_state.value,
-            "turn_active_control_file": self._turn_active_control_file,
-            "turn_active_control_seq": self._turn_active_control_seq,
-            "advisory_lane_busy_age_sec": busy_age_sec,
-            "dry_run": bool(self.dry_run),
-            "success": False,
-        }
-        if self.dry_run:
-            payload["success"] = True
-            self._append_runtime_event("inactive_advisory_lane_cancelled", payload)
-            return True
-
-        try:
-            result = subprocess.run(
-                ["tmux", "send-keys", "-t", target, "Escape"],
-                check=False,
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
-            success = result.returncode == 0
-            payload["success"] = success
-            if not success:
-                payload["returncode"] = result.returncode
-                payload["stderr"] = (result.stderr or "").strip()[-500:]
-        except (OSError, subprocess.TimeoutExpired) as exc:
-            success = False
-            payload["error"] = repr(exc)
-
-        self._append_runtime_event("inactive_advisory_lane_cancelled", payload)
-        return success
-
-    # ------------------------------------------------------------------
     def _supersede_advisory_request_for_recovery(self, marker: dict[str, object]) -> bool:
         request_seq = control_seq_value(marker.get("control_seq"), default=-1)
         if self._read_status_from_path(self.advisory_request_path) != "request_open":
@@ -2467,7 +2556,17 @@ class WatcherCore:
         request_sig = str(marker.get("request_sig") or "")
         self._last_advisory_recovery_sig = request_sig
         self._last_advisory_recovery_at = time.time()
-        self._cancel_advisory_lane_for_recovery(marker)
+        cancelled = self._cancel_advisory_lane_if_busy(
+            reason="advisory_recovery",
+            payload_extra={
+                "request_control_seq": request_seq,
+                "advisory_pending_age_sec": marker.get("advisory_pending_age_sec", 0),
+                "advisory_lane_busy_age_sec": marker.get("advisory_lane_busy_age_sec"),
+            },
+        )
+        if cancelled:
+            marker["advisory_lane_cancelled"] = True
+            marker["advisory_lane_cancel_dry_run"] = bool(self.dry_run)
         self._supersede_advisory_request_for_recovery(marker)
         self._clear_implement_blocked_state("advisory_recovery")
         self._log_raw(
@@ -3539,6 +3638,10 @@ class WatcherCore:
                     active_control_file=advice_path.name,
                     active_control_seq=advisory_adv_control_seq,
                 )
+                self._cancel_advisory_lane_if_busy(
+                    reason="advisory_advice_updated",
+                    payload_extra={"advice_control_seq": advisory_adv_control_seq},
+                )
                 self._notify_verify_followup("advisory_advice_updated")
             else:
                 self._log_raw(
@@ -3925,6 +4028,8 @@ class WatcherCore:
 
         self._refresh_control_seq_age()
         self._write_runtime_status()
+        if self._maybe_answer_gemini_git_permission_prompt():
+            return
         if self._maybe_write_stale_control_advisory_request():
             return
 
@@ -4060,7 +4165,7 @@ class WatcherCore:
 
         # --- rolling handoff / operator 슬롯 감시 (verify → implement / operator 방향) ---
         self._check_pipeline_signal_updates()
-        if self._cancel_inactive_advisory_lane_if_busy():
+        if self._maybe_cancel_inactive_advisory_lane():
             return
         if self._promote_operator_retriage_no_next_control():
             return
@@ -4244,6 +4349,8 @@ def main() -> None:
                         help=argparse.SUPPRESS)
     parser.add_argument("--codex-followup-prompt", default="",
                         help=argparse.SUPPRESS)
+    parser.add_argument("--disable-gemini-git-permission-auto-allow", action="store_true",
+                        help="disable narrow Gemini readonly git permission prompt auto-answer")
     args = parser.parse_args()
 
     config: dict = {
@@ -4255,6 +4362,7 @@ def main() -> None:
         "settle_sec":         args.settle,
         "startup_grace_sec":  args.startup_grace,
         "lease_ttl":          args.lease_ttl,
+        "gemini_git_permission_auto_allow": not args.disable_gemini_git_permission_auto_allow,
     }
     # pane target: 명시되면 config에 포함, 비어있으면 WatcherCore가 project-aware default 사용
     if args.verify_pane_target:

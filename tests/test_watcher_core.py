@@ -5827,6 +5827,7 @@ class RollingSignalTransitionTest(unittest.TestCase):
                     "dry_run": True,
                     "startup_grace_sec": 0,
                     "operator_retriage_no_control_sec": 0,
+                    "inactive_advisory_cancel_sec": 0.0,
                     "verify_pane_target": "codex-pane",
                     "gemini_pane_target": "gemini-pane",
                 }
@@ -5847,7 +5848,15 @@ class RollingSignalTransitionTest(unittest.TestCase):
             with (
                 mock.patch(
                     "watcher_core._shared_capture_pane_text",
-                    return_value="⠹ Thinking... (esc to cancel, 4m 19s)\n * Type your message",
+                    return_value="\n".join(
+                        [
+                            "ROLE: advisory",
+                            "ROLE_HARNESS: .pipeline/harness/advisory.md",
+                            "REQUEST: @.pipeline/advisory_request.md",
+                            "NEXT_CONTROL_SEQ: 32",
+                            "⠹ Thinking... (esc to cancel, 4m 19s)",
+                        ]
+                    ),
                 ),
                 mock.patch.object(
                     core.dispatch_queue,
@@ -5866,7 +5875,7 @@ class RollingSignalTransitionTest(unittest.TestCase):
                 if line.strip()
             ]
             self.assertTrue(
-                any(event.get("event_type") == "inactive_advisory_lane_cancelled" for event in events)
+                any(event.get("event_type") == "advisory_lane_cancelled" for event in events)
             )
 
     def test_pr_merge_recovery_no_next_control_promotes_to_advisory_request(self) -> None:
@@ -6860,6 +6869,79 @@ class BusyLaneNotificationDeferTest(unittest.TestCase):
             self.assertEqual(recovery_payload.get("advisory_recovery_attempt"), 2)
             self.assertFalse(recovery_payload.get("advisory_followup_allowed"))
 
+    def test_stale_advisory_recovery_cancels_busy_advisory_lane(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            watch_dir = root / "work"
+            base_dir = root / ".pipeline"
+            watch_dir.mkdir(parents=True, exist_ok=True)
+            base_dir.mkdir(parents=True, exist_ok=True)
+            _write_active_profile(root)
+
+            request_path = base_dir / "advisory_request.md"
+            request_path.write_text("STATUS: request_open\nCONTROL_SEQ: 18\n", encoding="utf-8")
+            old = time.time() - 20.0
+            os.utime(request_path, (old, old))
+
+            core = watcher_core.WatcherCore(
+                {
+                    "watch_dir": str(watch_dir),
+                    "base_dir": str(base_dir),
+                    "repo_root": str(root),
+                    "dry_run": True,
+                    "verify_pane_target": "codex-pane",
+                    "gemini_pane_target": "gemini-pane",
+                    "advisory_recovery_sec": 5.0,
+                }
+            )
+            core._initial_turn_checked = True
+            core._last_advisory_request_sig = core._get_path_sig(request_path)
+            core._transition_turn(
+                WatcherTurnState.ADVISORY_ACTIVE,
+                "test_setup_advisory",
+                active_control_file="advisory_request.md",
+                active_control_seq=18,
+            )
+            core._turn_entered_at = time.time() - 20.0
+
+            advisory_snapshot = "\n".join(
+                [
+                    "ROLE: advisory",
+                    "ROLE_HARNESS: .pipeline/harness/advisory.md",
+                    "REQUEST: @.pipeline/advisory_request.md",
+                    "NEXT_CONTROL_SEQ: 19",
+                    "Thinking... (esc to cancel, 17m 1s)",
+                ]
+            )
+
+            def capture(target: str) -> str:
+                return "openai codex\n› " if target == "codex-pane" else advisory_snapshot
+
+            def busy(text: str, *args) -> bool:
+                return "Thinking" in text
+
+            with (
+                mock.patch("watcher_core._shared_capture_pane_text", side_effect=capture),
+                mock.patch("watcher_core._shared_pane_text_has_busy_indicator", side_effect=busy),
+                mock.patch("watcher_dispatch.tmux_send_keys", return_value=True) as send_prompt,
+                mock.patch("watcher_dispatch.tmux_send_escape", return_value=True) as send_escape,
+            ):
+                recovered = core._recover_stale_advisory()
+
+            self.assertTrue(recovered)
+            send_prompt.assert_called_once()
+            send_escape.assert_called_once_with("gemini-pane", dry_run=True)
+            events = [
+                json.loads(line)
+                for line in core.run_events_path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            cancel_events = [
+                event for event in events if event.get("event_type") == "advisory_lane_cancelled"
+            ]
+            self.assertTrue(cancel_events)
+            self.assertEqual(cancel_events[-1]["payload"]["reason"], "advisory_recovery")
+
     def test_stale_advisory_recovery_uses_visible_advisory_busy_age(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -6893,32 +6975,29 @@ class BusyLaneNotificationDeferTest(unittest.TestCase):
             )
             core._turn_entered_at = time.time()
 
-            pane_texts = {
-                "codex-pane": "openai codex\n› ",
-                "gemini-pane": "⠇ Thinking... (esc to cancel, 36m 33s)\n * Type your message",
-            }
+            advisory_snapshot = "\n".join(
+                [
+                    "ROLE: advisory",
+                    "ROLE_HARNESS: .pipeline/harness/advisory.md",
+                    "REQUEST: @.pipeline/advisory_request.md",
+                    "NEXT_CONTROL_SEQ: 19",
+                    "⠇ Thinking... (esc to cancel, 36m 33s)",
+                ]
+            )
+            pane_texts = {"codex-pane": "openai codex\n› ", "gemini-pane": advisory_snapshot}
 
             with (
                 mock.patch(
                     "watcher_core._shared_capture_pane_text",
                     side_effect=lambda target: pane_texts[target],
                 ),
-                mock.patch(
-                    "watcher_core.subprocess.run",
-                    return_value=mock.Mock(returncode=0, stderr=""),
-                ) as send_escape,
+                mock.patch("watcher_dispatch.tmux_send_escape", return_value=True) as send_escape,
                 mock.patch("watcher_dispatch.tmux_send_keys", return_value=True) as send_prompt,
             ):
                 recovered = core._recover_stale_advisory()
 
             self.assertTrue(recovered)
-            send_escape.assert_called_once_with(
-                ["tmux", "send-keys", "-t", "gemini-pane", "Escape"],
-                check=False,
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
+            send_escape.assert_called_once_with("gemini-pane", dry_run=False)
             send_prompt.assert_called_once()
             args, kwargs = send_prompt.call_args
             self.assertEqual(args[0], "codex-pane")
@@ -6978,20 +7057,23 @@ class BusyLaneNotificationDeferTest(unittest.TestCase):
             )
             core._turn_entered_at = time.time()
 
-            pane_texts = {
-                "codex-pane": "openai codex\n> ",
-                "gemini-pane": "Thinking... (esc to cancel, 5m 01s)\n * Type your message",
-            }
+            advisory_snapshot = "\n".join(
+                [
+                    "ROLE: advisory",
+                    "ROLE_HARNESS: .pipeline/harness/advisory.md",
+                    "REQUEST: @.pipeline/advisory_request.md",
+                    "NEXT_CONTROL_SEQ: 19",
+                    "Thinking... (esc to cancel, 5m 01s)",
+                ]
+            )
+            pane_texts = {"codex-pane": "openai codex\n> ", "gemini-pane": advisory_snapshot}
 
             with (
                 mock.patch(
                     "watcher_core._shared_capture_pane_text",
                     side_effect=lambda target: pane_texts[target],
                 ),
-                mock.patch(
-                    "watcher_core.subprocess.run",
-                    return_value=mock.Mock(returncode=0, stderr=""),
-                ) as send_escape,
+                mock.patch("watcher_dispatch.tmux_send_escape", return_value=True) as send_escape,
                 mock.patch("watcher_dispatch.tmux_send_keys", return_value=True) as send_prompt,
             ):
                 recovered = core._recover_stale_advisory()
@@ -7009,103 +7091,6 @@ class BusyLaneNotificationDeferTest(unittest.TestCase):
             ][-1].get("payload") or {}
             self.assertEqual(recovery_payload.get("advisory_lane_busy_age_sec"), 301)
             self.assertTrue(recovery_payload.get("advisory_lane_cancelled"))
-
-    def test_inactive_advisory_lane_busy_is_cancelled(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            watch_dir = root / "work"
-            base_dir = root / ".pipeline"
-            watch_dir.mkdir(parents=True, exist_ok=True)
-            base_dir.mkdir(parents=True, exist_ok=True)
-            _write_active_profile(root)
-
-            core = watcher_core.WatcherCore(
-                {
-                    "watch_dir": str(watch_dir),
-                    "base_dir": str(base_dir),
-                    "repo_root": str(root),
-                    "dry_run": False,
-                    "gemini_pane_target": "gemini-pane",
-                }
-            )
-            core._initial_turn_checked = True
-            core._transition_turn(
-                WatcherTurnState.VERIFY_FOLLOWUP,
-                "test_setup_followup",
-                active_control_file="operator_request.md",
-                active_control_seq=42,
-            )
-
-            with (
-                mock.patch(
-                    "watcher_core._shared_capture_pane_text",
-                    return_value="⠹ Thinking... (esc to cancel, 4m 19s)\n * Type your message",
-                ),
-                mock.patch(
-                    "watcher_core.subprocess.run",
-                    return_value=mock.Mock(returncode=0, stderr=""),
-                ) as send_escape,
-            ):
-                cancelled = core._cancel_inactive_advisory_lane_if_busy()
-
-            self.assertTrue(cancelled)
-            send_escape.assert_called_once_with(
-                ["tmux", "send-keys", "-t", "gemini-pane", "Escape"],
-                check=False,
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
-            events = [
-                json.loads(line)
-                for line in core.run_events_path.read_text(encoding="utf-8").splitlines()
-                if line.strip()
-            ]
-            cancel_events = [
-                event
-                for event in events
-                if event.get("event_type") == "inactive_advisory_lane_cancelled"
-            ]
-            self.assertTrue(cancel_events)
-            payload = cancel_events[-1].get("payload") or {}
-            self.assertEqual(payload.get("turn_state"), "VERIFY_FOLLOWUP")
-            self.assertEqual(payload.get("advisory_lane_busy_age_sec"), 259)
-
-    def test_active_advisory_lane_busy_is_not_inactive_cancelled(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            watch_dir = root / "work"
-            base_dir = root / ".pipeline"
-            watch_dir.mkdir(parents=True, exist_ok=True)
-            base_dir.mkdir(parents=True, exist_ok=True)
-            _write_active_profile(root)
-
-            core = watcher_core.WatcherCore(
-                {
-                    "watch_dir": str(watch_dir),
-                    "base_dir": str(base_dir),
-                    "repo_root": str(root),
-                    "dry_run": False,
-                    "gemini_pane_target": "gemini-pane",
-                }
-            )
-            core._initial_turn_checked = True
-            core._transition_turn(
-                WatcherTurnState.ADVISORY_ACTIVE,
-                "test_setup_advisory",
-                active_control_file="advisory_request.md",
-                active_control_seq=42,
-            )
-
-            with (
-                mock.patch("watcher_core._shared_capture_pane_text") as capture,
-                mock.patch("watcher_core.subprocess.run") as send_escape,
-            ):
-                cancelled = core._cancel_inactive_advisory_lane_if_busy()
-
-            self.assertFalse(cancelled)
-            capture.assert_not_called()
-            send_escape.assert_not_called()
 
     def test_stale_advisory_recovery_skips_when_current_advice_exists(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -7151,6 +7136,114 @@ class BusyLaneNotificationDeferTest(unittest.TestCase):
 
             self.assertFalse(recovered)
             send_prompt.assert_not_called()
+
+    def test_inactive_advisory_lane_cancel_sends_escape_after_grace(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            watch_dir = root / "work"
+            base_dir = root / ".pipeline"
+            watch_dir.mkdir(parents=True, exist_ok=True)
+            base_dir.mkdir(parents=True, exist_ok=True)
+            _write_active_profile(root)
+
+            core = watcher_core.WatcherCore(
+                {
+                    "watch_dir": str(watch_dir),
+                    "base_dir": str(base_dir),
+                    "repo_root": str(root),
+                    "dry_run": True,
+                    "gemini_pane_target": "gemini-pane",
+                    "inactive_advisory_cancel_sec": 0.0,
+                }
+            )
+            core._initial_turn_checked = True
+            core._transition_turn(
+                WatcherTurnState.VERIFY_FOLLOWUP,
+                "test_setup_verify_followup",
+                active_control_file="advisory_advice.md",
+                active_control_seq=19,
+            )
+
+            advisory_snapshot = "\n".join(
+                [
+                    "ROLE: advisory",
+                    "ROLE_HARNESS: .pipeline/harness/advisory.md",
+                    "REQUEST: @.pipeline/advisory_request.md",
+                    "NEXT_CONTROL_SEQ: 19",
+                    "Thinking... (esc to cancel, 2h 4m)",
+                ]
+            )
+
+            with (
+                mock.patch("watcher_core._shared_capture_pane_text", return_value=advisory_snapshot),
+                mock.patch("watcher_core._shared_pane_text_has_busy_indicator", return_value=True),
+                mock.patch("watcher_dispatch.tmux_send_escape", return_value=True) as send_escape,
+            ):
+                cancelled = core._maybe_cancel_inactive_advisory_lane()
+
+            self.assertTrue(cancelled)
+            send_escape.assert_called_once_with("gemini-pane", dry_run=True)
+            events = [
+                json.loads(line)
+                for line in core.run_events_path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            cancel_events = [
+                event for event in events if event.get("event_type") == "advisory_lane_cancelled"
+            ]
+            self.assertTrue(cancel_events)
+            self.assertEqual(cancel_events[-1]["payload"]["reason"], "inactive_advisory_lane_busy")
+            self.assertEqual(cancel_events[-1]["payload"]["visible_next_control_seq"], 19)
+
+    def test_inactive_advisory_lane_cancel_skips_current_active_advisory(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            watch_dir = root / "work"
+            base_dir = root / ".pipeline"
+            watch_dir.mkdir(parents=True, exist_ok=True)
+            base_dir.mkdir(parents=True, exist_ok=True)
+            _write_active_profile(root)
+
+            request_path = base_dir / "advisory_request.md"
+            request_path.write_text("STATUS: request_open\nCONTROL_SEQ: 18\n", encoding="utf-8")
+
+            core = watcher_core.WatcherCore(
+                {
+                    "watch_dir": str(watch_dir),
+                    "base_dir": str(base_dir),
+                    "repo_root": str(root),
+                    "dry_run": True,
+                    "gemini_pane_target": "gemini-pane",
+                    "inactive_advisory_cancel_sec": 0.0,
+                }
+            )
+            core._initial_turn_checked = True
+            core._transition_turn(
+                WatcherTurnState.ADVISORY_ACTIVE,
+                "test_setup_advisory",
+                active_control_file="advisory_request.md",
+                active_control_seq=18,
+            )
+
+            advisory_snapshot = "\n".join(
+                [
+                    "ROLE: advisory",
+                    "ROLE_HARNESS: .pipeline/harness/advisory.md",
+                    "REQUEST: @.pipeline/advisory_request.md",
+                    "NEXT_CONTROL_SEQ: 19",
+                    "Thinking... (esc to cancel, 2m)",
+                ]
+            )
+
+            with (
+                mock.patch("watcher_core._shared_capture_pane_text", return_value=advisory_snapshot),
+                mock.patch("watcher_core._shared_pane_text_has_busy_indicator", return_value=True),
+                mock.patch("watcher_dispatch.tmux_send_escape", return_value=True) as send_escape,
+            ):
+                cancelled = core._maybe_cancel_inactive_advisory_lane()
+
+            self.assertFalse(cancelled)
+            send_escape.assert_not_called()
             self.assertEqual(core._current_turn_state, WatcherTurnState.ADVISORY_ACTIVE)
 
     def test_next_control_seq_counts_superseded_control_slots(self) -> None:
@@ -9113,6 +9206,107 @@ class CodexDispatchConfirmationTest(unittest.TestCase):
             result = watcher_dispatch._dispatch_gemini("%1", "ROLE: advisory")
 
         self.assertFalse(result)
+
+    def test_gemini_git_permission_prompt_requires_readonly_git_command(self) -> None:
+        prompt = "\n".join(
+            [
+                "? Shell git branch && git log -n 10 --oneline",
+                "| git branch && git log -n 10 --oneline",
+                "Allow execution of [git]?",
+                "1. Allow once",
+                "2. Allow for this session",
+                "3. No, suggest changes (esc)",
+            ]
+        )
+
+        self.assertTrue(watcher_dispatch.gemini_git_permission_prompt_needs_session_allow(prompt))
+
+    def test_gemini_git_permission_prompt_rejects_mutating_git_command(self) -> None:
+        prompt = "\n".join(
+            [
+                "? Shell git push origin main",
+                "| git push origin main",
+                "Allow execution of [git]?",
+                "1. Allow once",
+                "2. Allow for this session",
+                "3. No, suggest changes (esc)",
+            ]
+        )
+
+        self.assertFalse(watcher_dispatch.gemini_git_permission_prompt_needs_session_allow(prompt))
+
+    def test_answer_gemini_git_permission_prompt_selects_session_allow(self) -> None:
+        prompt = "\n".join(
+            [
+                "? Shell git branch && git log -n 10 --oneline",
+                "| git branch && git log -n 10 --oneline",
+                "Allow execution of [git]?",
+                "1. Allow once",
+                "2. Allow for this session",
+                "3. No, suggest changes (esc)",
+            ]
+        )
+
+        class _TrackingLock:
+            def __init__(self) -> None:
+                self.released = False
+
+            def acquire(self, timeout=None):
+                self.timeout = timeout
+                return True
+
+            def release(self) -> None:
+                self.released = True
+
+        tracking_lock = _TrackingLock()
+        with mock.patch("watcher_dispatch._shared_capture_pane_text", return_value=prompt), \
+             mock.patch("watcher_dispatch._dispatch_lock_for", return_value=tracking_lock), \
+             mock.patch("watcher_dispatch.subprocess.run") as run:
+            result = watcher_dispatch.maybe_answer_gemini_git_permission_prompt("%1")
+
+        self.assertTrue(result)
+        self.assertEqual(tracking_lock.timeout, watcher_dispatch._DISPATCH_LOCK_TIMEOUT_SEC)
+        self.assertTrue(tracking_lock.released)
+        run.assert_called_once_with(
+            ["tmux", "send-keys", "-t", "%1", "2", "Enter"],
+            check=True,
+            capture_output=True,
+        )
+
+    def test_watcher_poll_answers_gemini_git_permission_prompt_before_startup_grace(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            watch_dir = root / "work"
+            base_dir = root / ".pipeline"
+            watch_dir.mkdir(parents=True, exist_ok=True)
+            base_dir.mkdir(parents=True, exist_ok=True)
+            _write_active_profile(root)
+
+            core = watcher_core.WatcherCore(
+                {
+                    "watch_dir": str(watch_dir),
+                    "base_dir": str(base_dir),
+                    "repo_root": str(root),
+                    "dry_run": True,
+                    "startup_grace_sec": 999.0,
+                    "gemini_pane_target": "gemini-pane",
+                }
+            )
+
+            with mock.patch.object(core, "_refresh_control_seq_age"), \
+                 mock.patch.object(core, "_write_runtime_status"), \
+                 mock.patch.object(
+                     core,
+                     "_maybe_write_stale_control_advisory_request",
+                     side_effect=AssertionError("startup grace should not block permission prompt handling"),
+                 ), \
+                 mock.patch(
+                     "watcher_dispatch.maybe_answer_gemini_git_permission_prompt",
+                     return_value=True,
+                 ) as answer:
+                core._poll()
+
+        answer.assert_called_once_with("gemini-pane", dry_run=True)
 
 
 class VerifyPendingBackoffTest(unittest.TestCase):

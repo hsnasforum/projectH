@@ -10,6 +10,8 @@ from app.handlers.corrections import CorrectionHandlerMixin
 from core.contracts import PreferenceStatus
 from storage.correction_store import CorrectionStore
 from storage.preference_store import PreferenceStore
+from storage.sqlite.correction import SQLiteCorrectionStore
+from storage.sqlite.database import SQLiteDatabase
 
 
 class _CorrectionSummaryService(CorrectionHandlerMixin):
@@ -25,6 +27,10 @@ class _CorrectionSummaryService(CorrectionHandlerMixin):
 class CorrectionSummaryTest(unittest.TestCase):
     def _make_store(self, base_dir: str) -> CorrectionStore:
         return CorrectionStore(base_dir=str(Path(base_dir) / "corrections"))
+
+    def _make_sqlite_store(self, base_dir: str) -> SQLiteCorrectionStore:
+        db = SQLiteDatabase(str(Path(base_dir) / "test.db"))
+        return SQLiteCorrectionStore(db)
 
     def _record_confirmed_pattern(
         self,
@@ -202,6 +208,31 @@ class CorrectionSummaryTest(unittest.TestCase):
                     source_message_id=f"msg-offset-{index}",
                     original_text=f"offset original text {index}",
                     corrected_text=f"offset corrected text {index}",
+                )
+                self.assertIsNotNone(record)
+
+            full_payload = _CorrectionSummaryService(store).get_correction_list(limit=4)
+            offset_payload = _CorrectionSummaryService(store).get_correction_list(limit=1, offset=2)
+
+            self.assertIs(full_payload["ok"], True)
+            self.assertIs(offset_payload["ok"], True)
+            self.assertEqual(len(full_payload["corrections"]), 4)
+            self.assertEqual(len(offset_payload["corrections"]), 1)
+            self.assertEqual(
+                offset_payload["corrections"][0]["correction_id"],
+                full_payload["corrections"][2]["correction_id"],
+            )
+
+    def test_correction_list_respects_offset_with_sqlite_backend(self) -> None:
+        with TemporaryDirectory() as d:
+            store = self._make_sqlite_store(d)
+            for index in range(4):
+                record = store.record_correction(
+                    artifact_id=f"sqlite-art-offset-{index}",
+                    session_id=f"sqlite-s-offset-{index}",
+                    source_message_id=f"sqlite-msg-offset-{index}",
+                    original_text=f"sqlite offset original text {index}",
+                    corrected_text=f"sqlite offset corrected text {index}",
                 )
                 self.assertIsNotNone(record)
 

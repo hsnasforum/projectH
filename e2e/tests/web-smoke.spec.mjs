@@ -12587,7 +12587,7 @@ test("correction dismiss pattern button calls dismiss-pattern endpoint", async (
 });
 
 test("correction list endpoint returns recent corrections", async ({ page }) => {
-  await page.route(/\/api\/corrections\/list$/, async (route) => {
+  await page.route(/\/api\/corrections\/list(\?.*)?$/, async (route) => {
     if (route.request().method() === "GET") {
       await route.fulfill({
         status: 200,
@@ -12695,7 +12695,7 @@ test("correction list item click shows correction detail panel", async ({ page }
       await route.continue();
     }
   });
-  await page.route(/\/api\/corrections\/list$/, async (route) => {
+  await page.route(/\/api\/corrections\/list(\?.*)?$/, async (route) => {
     if (route.request().method() === "GET") {
       await route.fulfill({
         status: 200,
@@ -12805,7 +12805,7 @@ test("correction promote pattern button calls promote-pattern endpoint", async (
       await route.continue();
     }
   });
-  await page.route(/\/api\/corrections\/list$/, async (route) => {
+  await page.route(/\/api\/corrections\/list(\?.*)?$/, async (route) => {
     if (route.request().method() === "GET") {
       await route.fulfill({
         status: 200,
@@ -13050,7 +13050,30 @@ test("correction history status filter narrows list", async ({ page }) => {
       await route.fulfill({
         status: 200,
         contentType: "application/json",
-        body: JSON.stringify({ ok: true, preferences: [], audit: null }),
+        body: JSON.stringify({
+          ok: true,
+          preferences: [
+            {
+              preference_id: "pref-correction-status-anchor",
+              delta_fingerprint: "sha256:correction-status-anchor",
+              description: "교정 상태 필터 UI 표시용 활성 선호",
+              status: "active",
+              evidence_count: 1,
+              cross_session_count: 1,
+              reliability_stats: { applied_count: 1, corrected_count: 0 },
+              quality_info: { avg_similarity_score: null, is_high_quality: null },
+              is_highly_reliable: null,
+              activated_at: "2026-04-30T00:00:00Z",
+              created_at: "2026-04-30T00:00:00Z",
+              updated_at: "2026-04-30T00:00:00Z",
+            },
+          ],
+          active_count: 1,
+          candidate_count: 0,
+          paused_count: 0,
+          total_applied: 1,
+          total_corrected: 0,
+        }),
       });
     } else {
       await route.continue();
@@ -13360,7 +13383,7 @@ test("promote correction pattern with high recurrence shows highly reliable feed
       await route.continue();
     }
   });
-  await page.route(/\/api\/corrections\/list$/, async (route) => {
+  await page.route(/\/api\/corrections\/list(\?.*)?$/, async (route) => {
     if (route.request().method() === "GET") {
       await route.fulfill({
         status: 200,

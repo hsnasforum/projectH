@@ -11,6 +11,7 @@ from storage.sqlite_store import (
     SQLiteDatabase,
     SQLitePreferenceStore,
     SQLiteSessionStore,
+    SQLiteTaskLogger,
     migrate_json_to_sqlite,
 )
 
@@ -112,6 +113,22 @@ class TestSQLiteSessionStoreGlobalAuditSummary(unittest.TestCase):
             "text": "explicit correction",
         })
         self.store._save(session_id, data)
+        task_logger = SQLiteTaskLogger(self.db)
+        task_logger.log(
+            session_id=session_id,
+            action="preference_injected",
+            detail={"preference_id": "pref-A"},
+        )
+        task_logger.log(
+            session_id=session_id,
+            action="preference_injected",
+            detail={},
+        )
+        task_logger.log(
+            session_id=session_id,
+            action="preference_injected",
+            detail={"preference_id": "pref-missing"},
+        )
 
         summary = self.store.get_global_audit_summary()
         per = summary["per_preference_stats"]
@@ -121,10 +138,14 @@ class TestSQLiteSessionStoreGlobalAuditSummary(unittest.TestCase):
         self.assertEqual(summary["personalized_correction_count"], 1)
         self.assertEqual(per["pref-A"]["applied_count"], 2)
         self.assertEqual(per["pref-A"]["corrected_count"], 1)
+        self.assertEqual(per["pref-A"]["injected_count"], 1)
         self.assertEqual(per["pref-B"]["applied_count"], 1)
         self.assertEqual(per["pref-B"]["corrected_count"], 1)
+        self.assertEqual(per["pref-B"]["injected_count"], 0)
         self.assertEqual(per["fp-X"]["applied_count"], 1)
         self.assertEqual(per["fp-X"]["corrected_count"], 1)
+        self.assertEqual(per["fp-X"]["injected_count"], 0)
+        self.assertNotIn("pref-missing", per)
 
 
 class TestMigrationIntegrity(unittest.TestCase):

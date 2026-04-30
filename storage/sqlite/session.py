@@ -6,6 +6,7 @@ import json
 import threading
 from typing import Any
 
+from core.contracts import PerPreferenceStats
 from storage.sqlite.database import SQLiteDatabase, _now_iso
 
 
@@ -182,6 +183,9 @@ class SQLiteSessionStore:
                 "operator_failed_count": 0,
             }
 
+            def empty_per_preference_stats() -> PerPreferenceStats:
+                return {"applied_count": 0, "corrected_count": 0, "injected_count": 0}
+
             def count_feedback(feedback: Any) -> None:
                 if not isinstance(feedback, dict):
                     return
@@ -192,11 +196,15 @@ class SQLiteSessionStore:
                     summary["feedback_dislike_count"] += 1
 
             rows = self._db.fetchall("SELECT data FROM sessions")
+            session_ids: set[str] = set()
             for row in rows:
                 try:
                     data = json.loads(row["data"])
                 except Exception:
                     continue
+                normalized_session_id = str(data.get("session_id") or "").strip()
+                if normalized_session_id:
+                    session_ids.add(normalized_session_id)
                 summary["session_count"] += 1
                 for msg in data.get("messages", []):
                     if not isinstance(msg, dict):
@@ -213,7 +221,8 @@ class SQLiteSessionStore:
                             summary["personalized_correction_count"] += 1
                         for pref_id in msg["applied_preference_ids"]:
                             pstats = summary["per_preference_stats"].setdefault(
-                                pref_id, {"applied_count": 0, "corrected_count": 0}
+                                pref_id,
+                                empty_per_preference_stats(),
                             )
                             pstats["applied_count"] += 1
                             if is_personalized_correction:
@@ -225,7 +234,8 @@ class SQLiteSessionStore:
                         if not event_fingerprint:
                             continue
                         event_stats = summary["per_preference_stats"].setdefault(
-                            event_fingerprint, {"applied_count": 0, "corrected_count": 0}
+                            event_fingerprint,
+                            empty_per_preference_stats(),
                         )
                         event_stats["corrected_count"] += 1
                     count_feedback(msg.get("feedback"))
@@ -240,6 +250,26 @@ class SQLiteSessionStore:
                         summary["operator_rolled_back_count"] += 1
                     elif status == "failed":
                         summary["operator_failed_count"] += 1
+            if session_ids:
+                placeholders = ",".join("?" for _ in session_ids)
+                task_rows = self._db.fetchall(
+                    f"SELECT detail FROM task_log WHERE action = ? AND session_id IN ({placeholders})",
+                    ("preference_injected", *tuple(sorted(session_ids))),
+                )
+                for task_row in task_rows:
+                    try:
+                        detail = json.loads(task_row.get("detail") or "{}")
+                    except (TypeError, json.JSONDecodeError):
+                        detail = {}
+                    if not isinstance(detail, dict):
+                        continue
+                    preference_id = str(detail.get("preference_id") or "").strip()
+                    if not preference_id:
+                        continue
+                    stats = summary["per_preference_stats"].get(preference_id)
+                    if not isinstance(stats, dict):
+                        continue
+                    stats["injected_count"] = int(stats.get("injected_count") or 0) + 1
             return summary
 
     # ── Data-processing parity with SessionStore ─────────────────

@@ -329,7 +329,8 @@ class SessionStoreTest(unittest.TestCase):
 
     def test_get_global_audit_summary_per_preference_stats(self) -> None:
         with TemporaryDirectory() as base_dir:
-            store = SessionStore(base_dir=base_dir)
+            task_log_path = Path(base_dir) / "task_log.jsonl"
+            store = SessionStore(base_dir=base_dir, task_log_path=str(task_log_path))
             session_id = "per-pref-session"
             data = store.get_session(session_id)
 
@@ -356,13 +357,43 @@ class SessionStoreTest(unittest.TestCase):
                 "text": "no correction",
             })
             store._save(session_id, data)
+            task_log_path.write_text(
+                "\n".join(
+                    json.dumps(record, ensure_ascii=False)
+                    for record in [
+                        {
+                            "ts": "2026-04-30T00:00:00+00:00",
+                            "session_id": session_id,
+                            "action": "preference_injected",
+                            "detail": {"preference_id": "pref-A"},
+                        },
+                        {
+                            "ts": "2026-04-30T00:00:01+00:00",
+                            "session_id": session_id,
+                            "action": "preference_injected",
+                            "detail": {},
+                        },
+                        {
+                            "ts": "2026-04-30T00:00:02+00:00",
+                            "session_id": session_id,
+                            "action": "preference_injected",
+                            "detail": {"preference_id": "pref-missing"},
+                        },
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
 
             summary = store.get_global_audit_summary()
             per = summary["per_preference_stats"]
             self.assertEqual(per["pref-A"]["applied_count"], 2)
             self.assertEqual(per["pref-A"]["corrected_count"], 1)
+            self.assertEqual(per["pref-A"]["injected_count"], 1)
             self.assertEqual(per["pref-B"]["applied_count"], 1)
             self.assertEqual(per["pref-B"]["corrected_count"], 1)
+            self.assertEqual(per["pref-B"]["injected_count"], 0)
+            self.assertNotIn("pref-missing", per)
 
     def test_corrected_count_includes_non_grounded_brief_corrections(self) -> None:
         """applied_preference_ids + corrected_text가 있는 chat 응답도 corrected_count에 반영된다."""

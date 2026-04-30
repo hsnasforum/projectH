@@ -447,6 +447,7 @@ class CorrectionRecord(TypedDict, total=False):
 class PerPreferenceStats(TypedDict, total=False):
     applied_count: int
     corrected_count: int
+    injected_count: int
 
 
 class PreferenceRecord(TypedDict, total=False):

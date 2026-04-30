@@ -69,6 +69,9 @@ export default function ReviewQueuePanel({ items, sessionId, onReview }: Props) 
   const filteredItems = trimmedQuery
     ? items.filter((item) => item.statement.toLowerCase().includes(trimmedQuery))
     : items;
+  const itemCountLabel = filteredItems.length === items.length
+    ? `${items.length}개 항목`
+    : `${filteredItems.length} / ${items.length}개 항목 (검색 결과)`;
 
   return (
     <div className="border-t border-white/[0.06] px-3 py-2" aria-label={`${sessionId} review queue`}>
@@ -85,6 +88,9 @@ export default function ReviewQueuePanel({ items, sessionId, onReview }: Props) 
           onChange={(event) => setQ(event.target.value)}
         />
       </div>
+      <p data-testid="review-queue-item-count" className="px-2 pb-1 text-[10px] font-medium text-sidebar-muted/70">
+        {itemCountLabel}
+      </p>
       <ul className="max-h-[220px] space-y-1 overflow-y-auto pr-0.5">
         {filteredItems.length === 0 && trimmedQuery && (
           <li className="px-2 py-3 text-center text-[11px] text-sidebar-muted/60">

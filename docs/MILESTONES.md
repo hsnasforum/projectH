@@ -1667,10 +1667,22 @@ Playwright webServer는 sandbox socket 제한으로 미실행; CI 위임.
 Fix: controller/runtime 인프라 — DONE (별도 커밋 d9adefb)
 `effectiveLaneState()` 단일 truth + `describe_turn_state()` READY+closeout 정확 표시 + zombie pidfile guard.
 
+## M111 Review Queue 항목 수 헤더
+
+Axis 1: 항목 수 헤더 — DONE
+`ReviewQueuePanel`에 `data-testid="review-queue-item-count"` 헤더 추가.
+검색어 없음: `{N}개 항목`; 필터 활성: `{F} / {N}개 항목 (검색 결과)`.
+기존 `filteredItems` 파생 로직 재사용; 별도 state/API 변경 없음.
+
+Axis 2: dist rebuild — DONE
+`npx vite build`로 dist 갱신; review-queue-item-count 코드 + Tailwind CSS 클래스 포함.
+`e2e/tests/web-smoke.spec.mjs`에 `review queue item count reflects filter state` 시나리오 추가.
+Playwright webServer는 sandbox socket 제한으로 미실행; CI 위임.
+
 ## Next 3 Implementation Priorities
 
-1. **PR 머지 백로그**: PR #91–#101 + 이번 M110 PR — 모두 draft, `pr_merge_gate` operator 승인 대기.
-2. **M110 완료**: Axis 1+2+doc-sync 완료 — commit/push/PR 대기.
+1. **PR 머지 백로그**: PR #91–#103 + 이번 M111 PR — 모두 draft, `pr_merge_gate` operator 승인 대기.
+2. **M111 완료**: Axis 1+2+doc-sync 완료 — commit/push/PR 대기.
 3. **장기**: cross-session memory 강화, north star 방향 유지.
 
 ## Do Not Pull Forward

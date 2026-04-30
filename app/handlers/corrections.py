@@ -91,6 +91,21 @@ class CorrectionHandlerMixin:
             result.append(item)
         return {"ok": True, "corrections": result}
 
+    def get_correction_detail(self, correction_id: str) -> dict[str, Any]:
+        clean_id = str(correction_id or "").strip()
+        if not clean_id:
+            return {
+                "ok": False,
+                "error": {"message": "교정 이력을 찾을 수 없습니다."},
+            }
+        correction = self.correction_store.get(clean_id)
+        if not correction:
+            return {
+                "ok": False,
+                "error": {"message": "교정 이력을 찾을 수 없습니다."},
+            }
+        return {"ok": True, "correction": dict(correction)}
+
     def confirm_correction_pattern(self, payload: dict[str, Any]) -> dict[str, Any]:
         delta_fingerprint = str(payload.get("delta_fingerprint") or "").strip()
         if not delta_fingerprint:

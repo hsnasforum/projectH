@@ -12374,6 +12374,143 @@ test("correction list endpoint returns recent corrections", async ({ page }) => 
   expect(result.first_id).toBe("correction-abc001");
 });
 
+test("correction list item click shows correction detail panel", async ({ page }) => {
+  const correctionId = "correction-detail-001";
+
+  await page.route(/\/api\/preferences$/, async (route) => {
+    if (route.request().method() === "GET") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          ok: true,
+          preferences: [
+            {
+              preference_id: "pref-correction-detail-anchor",
+              delta_fingerprint: "sha256:correction-detail-anchor",
+              description: "교정 상세 패널 표시용 활성 선호",
+              status: "active",
+              evidence_count: 1,
+              cross_session_count: 1,
+              reliability_stats: { applied_count: 1, corrected_count: 0 },
+              quality_info: { avg_similarity_score: null, is_high_quality: null },
+              is_highly_reliable: null,
+              activated_at: "2026-04-29T00:00:00Z",
+              created_at: "2026-04-29T00:00:00Z",
+              updated_at: "2026-04-29T00:00:00Z",
+            },
+          ],
+          active_count: 1,
+          candidate_count: 0,
+          paused_count: 0,
+          total_applied: 1,
+          total_corrected: 0,
+        }),
+      });
+    } else {
+      await route.continue();
+    }
+  });
+  await page.route(/\/api\/preferences\/audit$/, async (route) => {
+    if (route.request().method() === "GET") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          ok: true,
+          audit: {
+            total: 1,
+            by_status: { active: 1, candidate: 0, paused: 0 },
+            conflict_pair_count: 0,
+            adopted_corrections_count: 0,
+            available_to_sync_count: 0,
+          },
+        }),
+      });
+    } else {
+      await route.continue();
+    }
+  });
+  await page.route(/\/api\/corrections\/summary$/, async (route) => {
+    if (route.request().method() === "GET") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          ok: true,
+          total: 1,
+          by_status: { recorded: 1 },
+          top_recurring_fingerprints: [],
+        }),
+      });
+    } else {
+      await route.continue();
+    }
+  });
+  await page.route(/\/api\/corrections\/list$/, async (route) => {
+    if (route.request().method() === "GET") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          ok: true,
+          corrections: [
+            {
+              correction_id: correctionId,
+              status: "recorded",
+              original_text: "원문 상세 조회 대상",
+              corrected_text: "교정 상세 조회 대상",
+              delta_fingerprint: "fp-correction-detail-001",
+              created_at: "2026-04-29T00:00:00Z",
+            },
+          ],
+        }),
+      });
+    } else {
+      await route.continue();
+    }
+  });
+  let detailRequests = 0;
+  await page.route(/\/api\/corrections\/correction-detail-001$/, async (route) => {
+    if (route.request().method() === "GET") {
+      detailRequests += 1;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          ok: true,
+          correction: {
+            correction_id: correctionId,
+            status: "recorded",
+            original_text: "원문 상세 조회 대상",
+            corrected_text: "교정 상세 조회 대상",
+            delta_fingerprint: "fp-correction-detail-001",
+            delta_summary: {
+              replacements: [{ from: "원문", to: "교정" }],
+            },
+            created_at: "2026-04-29T00:00:00Z",
+            updated_at: "2026-04-29T00:00:00Z",
+          },
+        }),
+      });
+    } else {
+      await route.continue();
+    }
+  });
+
+  await page.goto("/app-preview");
+  const item = page.getByTestId("correction-list-item").filter({ hasText: "원문 상세 조회 대상" });
+  await expect(item).toBeVisible({ timeout: 10_000 });
+  await item.click();
+
+  const detailPanel = page.getByTestId("correction-detail-panel");
+  await expect(detailPanel).toBeVisible({ timeout: 10_000 });
+  await expect(detailPanel).toContainText("원문 상세 조회 대상");
+  await expect(detailPanel).toContainText("교정 상세 조회 대상");
+  await expect(detailPanel).toContainText("교체: 원문 -> 교정");
+  expect(detailRequests).toBe(1);
+});
+
 test("correction promote pattern button calls promote-pattern endpoint", async ({ page }) => {
   await page.route(/\/api\/preferences$/, async (route) => {
     if (route.request().method() === "GET") {

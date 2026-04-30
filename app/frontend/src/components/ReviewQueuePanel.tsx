@@ -58,19 +58,40 @@ function pluralCount(label: string, count: number): string {
 }
 
 export default function ReviewQueuePanel({ items, sessionId, onReview }: Props) {
+  const [q, setQ] = useState("");
   const [editDrafts, setEditDrafts] = useState<Record<string, string | null>>({});
   const [reasonDrafts, setReasonDrafts] = useState<Record<string, string>>({});
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
 
   if (items.length === 0) return null;
 
+  const trimmedQuery = q.trim().toLowerCase();
+  const filteredItems = trimmedQuery
+    ? items.filter((item) => item.statement.toLowerCase().includes(trimmedQuery))
+    : items;
+
   return (
     <div className="border-t border-white/[0.06] px-3 py-2" aria-label={`${sessionId} review queue`}>
       <p className="px-2 pb-2 text-[11px] uppercase tracking-widest text-sidebar-muted">
         검토 대기 ({items.length})
       </p>
+      <div className="px-1 pb-2">
+        <input
+          type="text"
+          data-testid="review-queue-search-input"
+          className="w-full bg-transparent border-b border-sidebar-muted/20 px-2 py-0.5 text-[10px] text-sidebar-foreground outline-none placeholder:text-sidebar-muted/40"
+          placeholder="검토 검색..."
+          value={q}
+          onChange={(event) => setQ(event.target.value)}
+        />
+      </div>
       <ul className="max-h-[220px] space-y-1 overflow-y-auto pr-0.5">
-        {items.map((item) => {
+        {filteredItems.length === 0 && trimmedQuery && (
+          <li className="px-2 py-3 text-center text-[11px] text-sidebar-muted/60">
+            검색 결과 없음
+          </li>
+        )}
+        {filteredItems.map((item) => {
           const deltaSummaryText = summarizeDelta(item);
           const isEditing = editDrafts[item.candidate_id] !== undefined;
           const statementDraft = editDrafts[item.candidate_id] ?? item.statement;

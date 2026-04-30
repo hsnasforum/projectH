@@ -60,6 +60,7 @@ def _build_loop(
     loop = AgentLoop.__new__(AgentLoop)
     loop.preference_store = _PreferenceStore(preferences) if preferences is not None else None
     loop.session_store = _SessionStore(per_preference_stats)
+    loop.task_logger = _TaskLogger()
     return loop
 
 
@@ -181,6 +182,125 @@ class AgentLoopPreferenceTest(unittest.TestCase):
             [
                 {"description": "reliable preference", "fingerprint": "fp-reliable"},
                 {"description": "too few applications", "fingerprint": "fp-too-few"},
+            ],
+        )
+
+    def test_get_active_preferences_without_user_input_returns_all_active_preferences(self) -> None:
+        loop = _build_loop(
+            [
+                {
+                    "preference_id": "pref-one",
+                    "description": "budget summaries should be concise",
+                    "delta_fingerprint": "fp-one",
+                    "is_highly_reliable": True,
+                },
+                {
+                    "preference_id": "pref-two",
+                    "description": "meeting notes should use bullets",
+                    "delta_fingerprint": "fp-two",
+                    "is_highly_reliable": True,
+                },
+            ],
+        )
+
+        self.assertEqual(
+            loop._get_active_preferences(),
+            [
+                {"description": "budget summaries should be concise", "fingerprint": "fp-one"},
+                {"description": "meeting notes should use bullets", "fingerprint": "fp-two"},
+            ],
+        )
+
+    def test_get_active_preferences_with_user_input_returns_context_matches(self) -> None:
+        loop = _build_loop(
+            [
+                {
+                    "preference_id": "pref-budget",
+                    "description": "formal voice",
+                    "corrected_text": "budget summary format",
+                    "delta_fingerprint": "fp-budget",
+                    "is_highly_reliable": True,
+                },
+                {
+                    "preference_id": "pref-meeting",
+                    "description": "meeting notes use bullets",
+                    "delta_fingerprint": "fp-meeting",
+                    "is_highly_reliable": True,
+                },
+            ],
+        )
+
+        self.assertEqual(
+            loop._get_active_preferences(user_input="budget please", session_id="session-1"),
+            [{"description": "formal voice", "fingerprint": "fp-budget"}],
+        )
+
+    def test_get_active_preferences_with_no_context_match_falls_back_to_all(self) -> None:
+        loop = _build_loop(
+            [
+                {
+                    "preference_id": "pref-budget",
+                    "description": "budget summaries should be concise",
+                    "delta_fingerprint": "fp-budget",
+                    "is_highly_reliable": True,
+                },
+                {
+                    "preference_id": "pref-meeting",
+                    "description": "meeting notes should use bullets",
+                    "delta_fingerprint": "fp-meeting",
+                    "is_highly_reliable": True,
+                },
+            ],
+        )
+
+        self.assertEqual(
+            loop._get_active_preferences(user_input="invoice total", session_id="session-1"),
+            [
+                {"description": "budget summaries should be concise", "fingerprint": "fp-budget"},
+                {"description": "meeting notes should use bullets", "fingerprint": "fp-meeting"},
+            ],
+        )
+        self.assertEqual(
+            [entry["detail"]["reason"] for entry in loop.task_logger.entries],
+            ["fallback_all", "fallback_all"],
+        )
+
+    def test_get_active_preferences_logs_preference_injected_events(self) -> None:
+        loop = _build_loop(
+            [
+                {
+                    "preference_id": "pref-budget",
+                    "description": "budget summaries should be concise",
+                    "delta_fingerprint": "fp-budget",
+                    "is_highly_reliable": True,
+                },
+                {
+                    "preference_id": "pref-meeting",
+                    "description": "meeting notes should use bullets",
+                    "delta_fingerprint": "fp-meeting",
+                    "is_highly_reliable": True,
+                },
+            ],
+        )
+
+        result = loop._get_active_preferences(
+            user_input="budget",
+            session_id="session-1",
+        )
+
+        self.assertEqual(result, [{"description": "budget summaries should be concise", "fingerprint": "fp-budget"}])
+        self.assertEqual(
+            loop.task_logger.entries,
+            [
+                {
+                    "session_id": "session-1",
+                    "action": "preference_injected",
+                    "detail": {
+                        "preference_id": "pref-budget",
+                        "reason": "context_match",
+                        "user_input_snippet": "budget",
+                    },
+                }
             ],
         )
 

@@ -1718,10 +1718,25 @@ Axis 2: docs sync — DONE
 PRODUCT_SPEC / ACCEPTANCE_CRITERIA / ARCHITECTURE / MILESTONES /
 TASK_BACKLOG에 수동 활성화 즉시 주입 자격과 자동 활성화 분리 사실을 반영.
 
+## M115 선호 주입 컨텍스트 관련성
+
+Axis 1: `_get_active_preferences` 컨텍스트 관련성 필터 + 주입 감사 이벤트 — DONE
+`AgentLoop._get_active_preferences(user_input=..., session_id=...)`가 기존
+`is_highly_reliable_preference()` 주입 자격 필터 이후 사용자 입력과
+선호 `description` / `corrected_text`의 단순 키워드 중첩을 기준으로 관련
+선호를 우선 주입한다. 입력이 없거나 관련 선호가 없으면 기존처럼 전체
+eligible 후보를 반환하는 `fallback_all` 동작을 유지한다. 주입된 선호마다
+`preference_injected` task log 이벤트를 기록하며, 로그 실패는 주입을 막지 않는다.
+
+Axis 2: docs sync — DONE
+PRODUCT_SPEC / ACCEPTANCE_CRITERIA / ARCHITECTURE / MILESTONES /
+TASK_BACKLOG에 컨텍스트 관련성 필터, `fallback_all`, `preference_injected`
+감사 이벤트를 반영.
+
 ## Next 3 Implementation Priorities
 
 1. **PR 머지 백로그**: PR #91–#105 + 이번 M113 PR — 모두 draft, `pr_merge_gate` operator 승인 대기.
-2. **M114 완료**: Axis 1+2 docs sync 완료 — commit/push/PR 대기.
+2. **M115 완료**: Axis 1+2 docs sync 완료 — commit/push/PR 대기.
 3. **장기**: cross-session memory 강화, north star 방향 유지.
 
 ## Do Not Pull Forward

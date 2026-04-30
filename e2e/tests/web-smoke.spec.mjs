@@ -12360,6 +12360,163 @@ test("review queue item badges show age family and quality", async ({ page }) =>
   await expect(page.getByTestId("review-queue-item-quality")).toHaveCount(1);
 });
 
+test("review queue action buttons appear before context section", async ({ page }) => {
+  const sessionId = "demo-session";
+  const sessionTitle = "검토 액션 위치 테스트";
+  const baseTimestamp = "2026-04-30T00:00:00Z";
+  const statement = "review queue inline action target statement";
+  const reviewQueueItem = {
+    item_type: "durable_candidate",
+    candidate_id: "candidate-inline-action",
+    candidate_scope: "durable_candidate",
+    candidate_family: "correction_rewrite_preference",
+    statement,
+    derived_from: { record_type: "candidate_confirmation_record" },
+    derived_at: baseTimestamp,
+    promotion_basis: "explicit_confirmation",
+    promotion_eligibility: "eligible_for_review",
+    artifact_id: "artifact-inline-action",
+    source_message_id: "message-inline-action",
+    source_session_id: sessionId,
+    source_session_title: sessionTitle,
+    supporting_artifact_ids: ["artifact-inline-action"],
+    supporting_source_message_ids: ["message-inline-action"],
+    supporting_signal_refs: [],
+    supporting_confirmation_refs: [],
+    created_at: baseTimestamp,
+    updated_at: baseTimestamp,
+    quality_info: { avg_similarity_score: 0.91, is_high_quality: true },
+    delta_summary: {
+      original_length: 80,
+      corrected_length: 64,
+      length_delta: -16,
+      summary: "문장을 더 짧게 정리",
+    },
+    original_snippet: "기존 문장에는 불필요한 설명이 길게 포함되어 있습니다.",
+    corrected_snippet: "핵심 문장만 남겼습니다.",
+    context_turns: [
+      {
+        role: "user",
+        text: "context should render after action buttons",
+        message_id: "message-context-user",
+      },
+    ],
+    evidence_summary: {
+      artifact_count: 1,
+      signal_count: 1,
+      confirmation_count: 1,
+      recurring_session_count: 1,
+    },
+    is_global: false,
+  };
+
+  await page.route(/\/api\/sessions$/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        sessions: [
+          {
+            session_id: sessionId,
+            title: sessionTitle,
+            created_at: baseTimestamp,
+            updated_at: baseTimestamp,
+            message_count: 2,
+            pending_approval_count: 0,
+            last_message_preview: "review queue inline action",
+          },
+        ],
+      }),
+    });
+  });
+  await page.route(/\/api\/session\?session_id=demo-session/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        session: {
+          session_id: sessionId,
+          title: sessionTitle,
+          messages: [],
+          pending_approvals: [],
+          permissions: { web_search: "disabled" },
+          review_queue_items: [reviewQueueItem],
+        },
+      }),
+    });
+  });
+  await page.route(/\/api\/preferences(\?.*)?$/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: true,
+        preferences: [],
+        active_count: 0,
+        candidate_count: 0,
+        paused_count: 0,
+        total_applied: 0,
+        total_corrected: 0,
+        high_quality_active_count: 0,
+        highly_reliable_active_count: 0,
+        high_severity_conflict_count: 0,
+        low_reliability_active_count: 0,
+      }),
+    });
+  });
+  await page.route(/\/api\/preferences\/audit$/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: true,
+        audit: {
+          total: 0,
+          by_status: {},
+          conflict_pair_count: 0,
+          adopted_corrections_count: 0,
+          available_to_sync_count: 0,
+        },
+      }),
+    });
+  });
+  await page.route(/\/api\/corrections\/summary$/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ ok: true, total: 0, by_status: {}, top_recurring_fingerprints: [] }),
+    });
+  });
+  await page.route(/\/api\/corrections\/list(\?.*)?$/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ ok: true, corrections: [] }),
+    });
+  });
+
+  await page.goto("/app-preview");
+  await expect(page.getByTestId("review-queue-search-input")).toBeVisible({ timeout: 10_000 });
+
+  const item = page.locator("li").filter({ hasText: statement }).first();
+  const acceptButton = item.getByTestId("review-accept");
+  const contextBox = item.getByTestId("review-context-turns");
+  await expect(acceptButton).toBeVisible();
+  await expect(contextBox).toBeVisible();
+  await expect(item.getByTestId("review-defer")).toBeVisible();
+  await expect(item.getByTestId("review-reject")).toBeVisible();
+
+  const actionPrecedesContext = await item.evaluate((element) => {
+    const accept = element.querySelector('[data-testid="review-accept"]');
+    const context = element.querySelector('[data-testid="review-context-turns"]');
+    if (!accept || !context) {
+      return false;
+    }
+    return Boolean(accept.compareDocumentPosition(context) & Node.DOCUMENT_POSITION_FOLLOWING);
+  });
+  expect(actionPrecedesContext).toBe(true);
+});
+
 test("활성 교정이 있으면 동기화 버튼이 보이고 클릭 시 후보가 생성됩니다", async ({ page }) => {
   let auditRequests = 0;
   let syncRequests = 0;

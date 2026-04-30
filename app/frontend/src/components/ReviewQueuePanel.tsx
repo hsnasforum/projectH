@@ -204,65 +204,6 @@ export default function ReviewQueuePanel({ items, sessionId, onReview }: Props) 
                   )}
                 </div>
               )}
-              {contextTurns.length > 0 && (
-                <div
-                  data-testid="review-context-turns"
-                  className="mb-2 space-y-1 border-l border-white/10 pl-2 text-[11px] leading-snug"
-                >
-                  <p className="font-medium text-sidebar-muted">대화 맥락</p>
-                  {contextTurns.map((turn, index) => (
-                    <div
-                      key={turn.message_id ?? `${item.candidate_id}:context:${index}`}
-                      data-testid="review-context-turn"
-                      className="flex min-w-0 gap-1.5"
-                    >
-                      <span
-                        className={`mt-0.5 h-fit shrink-0 rounded-full border px-1.5 py-0.5 text-[10px] font-medium ${contextRoleClass(turn.role.trim())}`}
-                      >
-                        {contextRoleLabel(turn.role.trim())}
-                      </span>
-                      <p className="min-w-0 flex-1 whitespace-pre-wrap break-words text-sidebar-muted line-clamp-3">
-                        {turn.text.trim()}
-                      </p>
-                    </div>
-                  ))}
-                </div>
-              )}
-              {hasEvidenceDetail && (
-                <button
-                  data-testid="review-detail-toggle"
-                  className="mb-2 text-[11px] font-medium text-sky-300 transition-colors hover:text-sky-200 hover:underline"
-                  onClick={() =>
-                    setExpandedItems((prev) => {
-                      const next = new Set(prev);
-                      if (next.has(item.candidate_id)) {
-                        next.delete(item.candidate_id);
-                      } else {
-                        next.add(item.candidate_id);
-                      }
-                      return next;
-                    })
-                  }
-                >
-                  {isExpanded ? "접기" : "상세 보기"}
-                </button>
-              )}
-              {hasEvidenceDetail && isExpanded && (
-                <div className="mb-2 space-y-1 text-[11px] leading-snug">
-                  <div>
-                    <p className="mb-0.5 font-medium text-sidebar-muted">원문</p>
-                    <p className="whitespace-pre-wrap break-words rounded bg-red-500/10 p-1.5 text-red-200">
-                      {item.original_snippet}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="mb-0.5 font-medium text-sidebar-muted">교정</p>
-                    <p className="whitespace-pre-wrap break-words rounded bg-emerald-500/10 p-1.5 text-emerald-200">
-                      {item.corrected_snippet}
-                    </p>
-                  </div>
-                </div>
-              )}
               <label className="mb-2 block text-[11px] font-medium text-sidebar-muted">
                 사유 (선택)
                 <textarea
@@ -344,6 +285,65 @@ export default function ReviewQueuePanel({ items, sessionId, onReview }: Props) 
                   거절
                 </button>
               </div>
+              {contextTurns.length > 0 && (
+                <div
+                  data-testid="review-context-turns"
+                  className="mb-2 space-y-1 border-l border-white/10 pl-2 text-[11px] leading-snug"
+                >
+                  <p className="font-medium text-sidebar-muted">대화 맥락</p>
+                  {contextTurns.map((turn, index) => (
+                    <div
+                      key={turn.message_id ?? `${item.candidate_id}:context:${index}`}
+                      data-testid="review-context-turn"
+                      className="flex min-w-0 gap-1.5"
+                    >
+                      <span
+                        className={`mt-0.5 h-fit shrink-0 rounded-full border px-1.5 py-0.5 text-[10px] font-medium ${contextRoleClass(turn.role.trim())}`}
+                      >
+                        {contextRoleLabel(turn.role.trim())}
+                      </span>
+                      <p className="min-w-0 flex-1 whitespace-pre-wrap break-words text-sidebar-muted line-clamp-3">
+                        {turn.text.trim()}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {hasEvidenceDetail && (
+                <button
+                  data-testid="review-detail-toggle"
+                  className="mb-2 text-[11px] font-medium text-sky-300 transition-colors hover:text-sky-200 hover:underline"
+                  onClick={() =>
+                    setExpandedItems((prev) => {
+                      const next = new Set(prev);
+                      if (next.has(item.candidate_id)) {
+                        next.delete(item.candidate_id);
+                      } else {
+                        next.add(item.candidate_id);
+                      }
+                      return next;
+                    })
+                  }
+                >
+                  {isExpanded ? "접기" : "상세 보기"}
+                </button>
+              )}
+              {hasEvidenceDetail && isExpanded && (
+                <div className="mb-2 space-y-1 text-[11px] leading-snug">
+                  <div>
+                    <p className="mb-0.5 font-medium text-sidebar-muted">원문</p>
+                    <p className="whitespace-pre-wrap break-words rounded bg-red-500/10 p-1.5 text-red-200">
+                      {item.original_snippet}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="mb-0.5 font-medium text-sidebar-muted">교정</p>
+                    <p className="whitespace-pre-wrap break-words rounded bg-emerald-500/10 p-1.5 text-emerald-200">
+                      {item.corrected_snippet}
+                    </p>
+                  </div>
+                </div>
+              )}
             </li>
           );
         })}

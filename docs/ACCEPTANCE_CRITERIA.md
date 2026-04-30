@@ -457,6 +457,7 @@ These are placeholders for the next phase design target and its immediate follow
   - review queue search filter in ReviewQueuePanel: `data-testid="review-queue-search-input"` 검색 입력이 `item.statement`에 대해 대소문자 무시 클라이언트-사이드 필터를 적용한다; 검색어가 있고 결과가 없으면 `검색 결과 없음` 빈 상태를 표시한다
   - review queue item count in ReviewQueuePanel: `data-testid="review-queue-item-count"` 요소가 검색어 없을 때 `{N}개 항목`을, 검색어 있고 필터 결과가 전체보다 적을 때 `{F} / {N}개 항목 (검색 결과)`를 표시한다; items가 없을 때는 표시하지 않는다
   - review queue item badges in ReviewQueuePanel: 각 항목에 `data-testid="review-queue-item-age"` (derived_at 기준 상대 시간)와 `data-testid="review-queue-item-family"` (candidate_family 값) 배지가 항상 표시된다; `data-testid="review-queue-item-quality"` 배지는 `quality_info.is_high_quality === true`인 항목에만 `고품질` 레이블로 표시된다
+  - review queue inline actions in ReviewQueuePanel: `data-testid="review-accept"`, `"review-defer"`, `"review-reject"` 버튼이 `data-testid="review-context-turns"` 요소보다 DOM 상 앞에 위치한다 (evidence badges 직후, context turns 이전); 버튼 동작·스타일은 변경 없음
   - `PreferencePanel` should render `충돌 위험 N건` with `data-testid="high-severity-conflict-count"` only when `high_severity_conflict_count > 0`; existing conflict badge behavior per card should remain unchanged
   - `PreferencePanel` should render the conflict badge with elevated amber styling when `conflict_info.conflict_severity === "high"` and should preserve the existing normal conflict badge behavior for other conflicts
   - `POST /api/preferences/activate`, `pause`, `reject` payload에 `transition_reason`을 포함하면 해당 task log entry의 `detail`에 기록된다.

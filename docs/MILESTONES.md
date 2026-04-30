@@ -1692,10 +1692,22 @@ Axis 2: dist rebuild — DONE
 `e2e/tests/web-smoke.spec.mjs`에 `review queue item badges show age family and quality` 시나리오 추가.
 Playwright webServer는 sandbox socket 제한으로 미실행; CI 위임.
 
+## M113 Review Queue 액션 인라인 이동
+
+Axis 1: 액션 블록 JSX 재배치 — DONE
+review-reason-note textarea + review-accept/defer/reject 버튼 그룹을 카드 하단에서
+evidence badges 직후(context turns 이전)로 이동. 로직·스타일·testid 변경 없음.
+긴 context/detail 섹션이 있어도 액션 버튼에 스크롤 없이 즉시 접근 가능.
+
+Axis 2: dist rebuild — DONE
+`npx vite build`로 dist 갱신; review-accept + review-context-turns 코드 포함.
+`e2e/tests/web-smoke.spec.mjs`에 `review queue action buttons appear before context section` 시나리오 추가.
+compareDocumentPosition으로 DOM 순서 검증; Playwright webServer sandbox 제한으로 미실행; CI 위임.
+
 ## Next 3 Implementation Priorities
 
-1. **PR 머지 백로그**: PR #91–#104 + 이번 M112 PR — 모두 draft, `pr_merge_gate` operator 승인 대기.
-2. **M112 완료**: Axis 1+2+doc-sync 완료 — commit/push/PR 대기.
+1. **PR 머지 백로그**: PR #91–#105 + 이번 M113 PR — 모두 draft, `pr_merge_gate` operator 승인 대기.
+2. **M113 완료**: Axis 1+2+doc-sync 완료 — commit/push/PR 대기.
 3. **장기**: cross-session memory 강화, north star 방향 유지.
 
 ## Do Not Pull Forward

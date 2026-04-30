@@ -257,6 +257,17 @@ class PreferenceStore:
             path.unlink()
             return record
 
+    def update(self, preference_id: str, updates: dict[str, Any]) -> PreferenceRecord | None:
+        with self._lock:
+            record = read_json(self._path(preference_id))
+            if record is None:
+                return None
+            record.update(updates)
+            record["preference_id"] = preference_id
+            record["updated_at"] = utc_now_iso()
+            atomic_write(self._path(preference_id), record)
+            return dict(record)
+
     def update_description(self, preference_id: str, description: str) -> PreferenceRecord | None:
         """Update the description of an existing preference. Returns None if not found."""
         with self._lock:

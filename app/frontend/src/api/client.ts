@@ -551,3 +551,13 @@ export async function deletePreference(preferenceId: string): Promise<void> {
   });
   if (!res.ok) throw new Error("delete preference failed");
 }
+
+export async function togglePreferenceReliability(preferenceId: string): Promise<PreferenceRecord> {
+  const res = await fetch(`${BASE}/api/preferences/${encodeURIComponent(preferenceId)}/toggle-reliability`, {
+    method: "POST",
+  });
+  if (!res.ok) throw new Error("toggle preference reliability failed");
+  const data = await res.json() as { ok?: boolean; preference?: PreferenceRecord };
+  if (!data.preference) throw new Error("toggle preference reliability response missing preference");
+  return data.preference;
+}

@@ -76,11 +76,20 @@ def enrich_preference_reliability(
         _quality_info_from_existing(pref_copy.get("quality_info"))
         or _quality_info_from_score(pref_copy.get("avg_similarity_score"))
     )
-    pref_copy["is_highly_reliable"] = is_highly_reliable_preference(pref_copy)
+    explicit_reliability = pref_copy.get("is_highly_reliable")
+    pref_copy["is_highly_reliable"] = (
+        explicit_reliability
+        if isinstance(explicit_reliability, bool)
+        else is_highly_reliable_preference(pref_copy)
+    )
     return pref_copy
 
 
 def is_highly_reliable_preference(preference: Mapping[str, Any]) -> bool:
+    explicit_reliability = preference.get("is_highly_reliable")
+    if isinstance(explicit_reliability, bool):
+        return explicit_reliability
+
     quality_info = preference.get("quality_info")
     if not isinstance(quality_info, Mapping) or quality_info.get("is_high_quality") is not True:
         return False

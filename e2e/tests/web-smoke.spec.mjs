@@ -12087,6 +12087,84 @@ test("preference delete removes preference from list", async ({ page }) => {
   expect(deleteRequests).toBe(1);
 });
 
+test("preference reliability toggle updates badge", async ({ page }) => {
+  const preferenceId = "pref-toggle-reliability";
+  let isHighlyReliable = true;
+  let toggleRequests = 0;
+
+  const preferencePayload = () => ({
+    preference_id: preferenceId,
+    delta_fingerprint: "sha256:toggle-reliability",
+    description: "신뢰도 토글 smoke 테스트 선호",
+    status: "active",
+    evidence_count: 3,
+    cross_session_count: 1,
+    reliability_stats: { applied_count: 5, corrected_count: 0 },
+    quality_info: { avg_similarity_score: 0.15, is_high_quality: true },
+    is_highly_reliable: isHighlyReliable,
+    activated_at: "2026-04-30T00:00:00Z",
+    created_at: "2026-04-30T00:00:00Z",
+    updated_at: "2026-04-30T00:00:00Z",
+  });
+
+  await page.route(/\/api\/preferences$/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: true,
+        preferences: [preferencePayload()],
+        active_count: 1,
+        candidate_count: 0,
+        paused_count: 0,
+        total_applied: 5,
+        total_corrected: 0,
+        high_quality_active_count: 1,
+        highly_reliable_active_count: isHighlyReliable ? 1 : 0,
+        high_severity_conflict_count: 0,
+        low_reliability_active_count: isHighlyReliable ? 0 : 1,
+      }),
+    });
+  });
+  await page.route(/\/api\/preferences\/audit$/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: true,
+        audit: {
+          total: 1,
+          by_status: { active: 1, candidate: 0, paused: 0 },
+          conflict_pair_count: 0,
+          adopted_corrections_count: 0,
+          available_to_sync_count: 0,
+        },
+      }),
+    });
+  });
+  await page.route(new RegExp(`/api/preferences/${preferenceId}/toggle-reliability$`), async (route) => {
+    expect(route.request().method()).toBe("POST");
+    toggleRequests += 1;
+    isHighlyReliable = !isHighlyReliable;
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ ok: true, preference: preferencePayload() }),
+    });
+  });
+
+  await page.goto("/app-preview");
+  const preferenceCard = page.locator(`#pref-card-${preferenceId}`);
+  await expect(preferenceCard).toBeVisible({ timeout: 10_000 });
+  await expect(preferenceCard.locator("span", { hasText: "신뢰도 높음" })).toBeVisible();
+
+  await preferenceCard.getByTestId("toggle-reliability-btn").click();
+
+  await expect(preferenceCard.locator("span", { hasText: "신뢰도 높음" })).toBeHidden();
+  await expect(preferenceCard.getByTestId("toggle-reliability-btn")).toHaveText("신뢰 설정");
+  expect(toggleRequests).toBe(1);
+});
+
 test("corrections: GET /api/corrections/summary 응답이 ok, total, by_status, top_recurring_fingerprints를 포함합니다", async ({ page }) => {
   await page.route(/\/api\/corrections\/summary$/, async (route) => {
     expect(route.request().method()).toBe("GET");

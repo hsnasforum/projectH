@@ -14,6 +14,7 @@ import {
   pausePreference,
   rejectPreference,
   postSyncAdoptedToPreferenceCandidates,
+  togglePreferenceReliability,
   updatePreferenceDescription,
 } from "../api/client";
 
@@ -276,6 +277,23 @@ export default function PreferencePanel({
         delete next[pref.preference_id];
         return next;
       });
+      await load();
+    } catch {
+      // silent
+    }
+  }, [load]);
+
+  const handleToggleReliability = useCallback(async (pref: PreferenceRecord) => {
+    try {
+      const updated = await togglePreferenceReliability(pref.preference_id);
+      setPreferences((prev) =>
+        prev.map((item) => item.preference_id === updated.preference_id ? updated : item),
+      );
+      setCandidatePreferences((prev) =>
+        prev == null
+          ? prev
+          : prev.map((item) => item.preference_id === updated.preference_id ? updated : item),
+      );
       await load();
     } catch {
       // silent
@@ -692,6 +710,20 @@ export default function PreferencePanel({
                       신뢰도 높음
                     </span>
                   )}
+                  <button
+                    type="button"
+                    data-testid="toggle-reliability-btn"
+                    aria-pressed={isHighlyReliable}
+                    aria-label={`신뢰도 토글: ${pref.description}`}
+                    onClick={() => handleToggleReliability(pref)}
+                    className={`inline-flex items-center rounded px-1 py-0.5 text-[9px] font-semibold transition-colors ${
+                      isHighlyReliable
+                        ? "bg-emerald-500/10 text-emerald-200 hover:bg-emerald-500/20"
+                        : "bg-white/5 text-sidebar-muted hover:bg-white/10 hover:text-sidebar-text"
+                    }`}
+                  >
+                    {isHighlyReliable ? "신뢰 해제" : "신뢰 설정"}
+                  </button>
                   {pref.status === "active" && !isHighlyReliable && reliability.applied >= 3 && (
                     <span
                       data-testid="preference-low-reliability-badge"

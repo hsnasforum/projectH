@@ -248,6 +248,26 @@ class PreferenceStore:
     def reject_preference(self, preference_id: str) -> PreferenceRecord | None:
         return self._transition(preference_id, PreferenceStatus.REJECTED, "rejected_at")
 
+    def delete(self, preference_id: str) -> PreferenceRecord | None:
+        with self._lock:
+            path = self._path(preference_id)
+            record = read_json(path)
+            if record is None:
+                return None
+            path.unlink()
+            return record
+
+    def update(self, preference_id: str, updates: dict[str, Any]) -> PreferenceRecord | None:
+        with self._lock:
+            record = read_json(self._path(preference_id))
+            if record is None:
+                return None
+            record.update(updates)
+            record["preference_id"] = preference_id
+            record["updated_at"] = utc_now_iso()
+            atomic_write(self._path(preference_id), record)
+            return dict(record)
+
     def update_description(self, preference_id: str, description: str) -> PreferenceRecord | None:
         """Update the description of an existing preference. Returns None if not found."""
         with self._lock:
@@ -333,8 +353,10 @@ class PreferenceStore:
             atomic_write(self._path(preference_id), record)
             return record
 
-    def list_all(self, limit: int = 50) -> list[PreferenceRecord]:
+    def list_all(self, limit: int = 50, offset: int = 0) -> list[PreferenceRecord]:
         with self._lock:
             all_records = self._scan_all()
             all_records.sort(key=lambda d: d.get("updated_at", ""), reverse=True)
-            return all_records[:limit]
+            start = max(0, offset)
+            safe_limit = max(0, limit)
+            return all_records[start:start + safe_limit]

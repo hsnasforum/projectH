@@ -4,6 +4,53 @@ from typing import Any
 
 from app.errors import WebApiError
 from core.contracts import ContentReasonScope, ContentVerdict
+from storage.preference_utils import enrich_preference_reliability, seed_reliability_from_recurrence
+
+
+def _global_per_preference_stats(session_store: Any) -> dict[str, Any]:
+    get_summary = getattr(session_store, "get_global_audit_summary", None)
+    if not callable(get_summary):
+        return {}
+    try:
+        summary = get_summary()
+    except Exception:
+        return {}
+    if not isinstance(summary, dict):
+        return {}
+    stats = summary.get("per_preference_stats")
+    return stats if isinstance(stats, dict) else {}
+
+
+def _with_auto_activation_reliability_seed(preference: dict[str, Any]) -> dict[str, Any]:
+    try:
+        recurrence_count = int(
+            preference.get("cross_session_count")
+            or preference.get("evidence_count")
+            or 0
+        )
+    except (TypeError, ValueError):
+        return preference
+
+    seeded_stats = seed_reliability_from_recurrence(recurrence_count)
+    if not seeded_stats:
+        return preference
+
+    reliability_stats = preference.get("reliability_stats")
+    if isinstance(reliability_stats, dict):
+        current_applied = reliability_stats.get("applied_count", 0)
+        current_corrected = reliability_stats.get("corrected_count", 0)
+        if not isinstance(current_applied, int):
+            current_applied = 0
+        if not isinstance(current_corrected, int):
+            current_corrected = 0
+        seeded_stats = {
+            "applied_count": max(current_applied, seeded_stats["applied_count"]),
+            "corrected_count": current_corrected,
+        }
+
+    seeded_preference = dict(preference)
+    seeded_preference["reliability_stats"] = seeded_stats
+    return seeded_preference
 
 
 class FeedbackHandlerMixin:
@@ -133,6 +180,8 @@ class FeedbackHandlerMixin:
                 except Exception:
                     pass
 
+        auto_activated_preference_id: str | None = None
+
         # Auto-promote to preference candidate if cross-session recurrence detected
         if artifact_id:
             try:
@@ -140,18 +189,50 @@ class FeedbackHandlerMixin:
                 for c in corrections:
                     fp = c.get("delta_fingerprint")
                     if fp:
-                        self.preference_store.promote_from_corrections(fp, self.correction_store)
+                        existing_preference = None
+                        find_by_fingerprint = getattr(self.preference_store, "find_by_fingerprint", None)
+                        if callable(find_by_fingerprint):
+                            existing_preference = find_by_fingerprint(fp)
+                        previous_status = (
+                            existing_preference.get("status")
+                            if isinstance(existing_preference, dict)
+                            else None
+                        )
+                        promoted_preference = self.preference_store.promote_from_corrections(
+                            fp,
+                            self.correction_store,
+                        )
+                        if (
+                            auto_activated_preference_id is None
+                            and previous_status != "active"
+                            and isinstance(promoted_preference, dict)
+                            and promoted_preference.get("status") == "active"
+                        ):
+                            enriched_preference = enrich_preference_reliability(
+                                _with_auto_activation_reliability_seed(promoted_preference),
+                                _global_per_preference_stats(self.session_store),
+                            )
+                            preference_id = str(enriched_preference.get("preference_id") or "").strip()
+                            if (
+                                preference_id
+                                and enriched_preference.get("is_highly_reliable") is True
+                            ):
+                                auto_activated_preference_id = preference_id
             except Exception:
                 pass
 
-        return {
+        response: dict[str, Any] = {
             "ok": True,
             "message_id": message_id,
             "artifact_id": artifact_id or None,
             "corrected_text": serialized_corrected_text,
             "corrected_outcome": corrected_outcome,
+            "auto_activated": auto_activated_preference_id is not None,
             "session": self._serialize_session(self.session_store.get_session(session_id)),
         }
+        if auto_activated_preference_id is not None:
+            response["preference_id"] = auto_activated_preference_id
+        return response
 
     def submit_content_verdict(self, payload: dict[str, Any]) -> dict[str, Any]:
         session_id = self._normalize_session_id(payload.get("session_id"))

@@ -101,6 +101,10 @@ If a prompt already names exact source paths, docs, or tests, read those first
 and avoid widening into historical planning folders. `docs/superpowers/**`,
 `docs/recycle/**`, and `plandoc/**` are not current truth unless the user,
 latest `/work`, latest `/verify`, or active control explicitly cites them.
+For large planning docs such as `docs/TASK_BACKLOG.md`, `docs/MILESTONES.md`,
+or `docs/NEXT_STEPS.md`, prefer targeted `rg` / section reads over full-file
+`cat`; if that evidence is insufficient, record the missing exact evidence
+instead of widening the search by default.
 
 ## Repository Map
 
@@ -128,6 +132,9 @@ Automation target:
   recovery choices
 - route ordinary ambiguity through implement / verify-handoff / advisory owner
   discussion using `/work`, `/verify`, current docs, and runtime evidence
+- if stale advisory recovery repeats in the same chain, verify/handoff should
+  converge to implement or a real operator boundary instead of reopening
+  advisory
 - make repeated failures produce recursive improvement: incident family,
   focused replay, owner boundary, shared helper, or runtime surface
 - treat recursive learning as repo-local operational memory, not model-weight
@@ -191,6 +198,8 @@ Verify/handoff owner:
 - write one exact `.pipeline/implement_handoff.md` when a slice is clear
 - write `.pipeline/advisory_request.md` only for next-slice ambiguity,
   overlapping candidates, or low-confidence tie-breaks
+- do not write another `.pipeline/advisory_request.md` when an advisory
+  recovery prompt says `ADVISORY_FOLLOWUP_ALLOWED: false`
 - write `.pipeline/operator_request.md` only for real operator-only decisions,
   approval/truth-sync blockers, immediate safety stops, or unresolved
   post-advisory ambiguity

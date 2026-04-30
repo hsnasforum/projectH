@@ -30,6 +30,9 @@ Playwright smoke coverage입니다. 이 목록은 제품 방향을 넓히기 위
     `docs/MILESTONES.md`, `docs/TASK_BACKLOG.md`
 - `work/README.md`, `verify/README.md`, `.pipeline/README.md` 같은 정적 guide는
   매 prompt에 기본 포함하지 말고, 해당 정책이 필요한 경우에만 읽습니다.
+- `docs/TASK_BACKLOG.md`, `docs/MILESTONES.md`, `docs/NEXT_STEPS.md`처럼 큰
+  계획 문서는 전체 `cat` 대신 targeted search나 필요한 section만 읽습니다.
+  그래도 근거가 부족하면 더 넓히지 말고 필요한 exact evidence를 남깁니다.
 
 ## 2. 범위를 넓히지 않습니다
 
@@ -100,6 +103,9 @@ Verify/handoff owner:
 - `/verify`를 남기거나 갱신한 뒤 다음 control을 씁니다.
 - exact slice가 정해지면 `.pipeline/implement_handoff.md`를 씁니다.
 - next-slice ambiguity면 `.pipeline/advisory_request.md`를 먼저 엽니다.
+- advisory recovery prompt에 `ADVISORY_FOLLOWUP_ALLOWED: false`가 있으면
+  새 `.pipeline/advisory_request.md`를 다시 열지 말고 implement 또는 실제
+  operator boundary로 수렴합니다.
 - real operator-only decision이나 safety/truth/approval/publication blocker일
   때만 `.pipeline/operator_request.md`를 씁니다.
 - active implement-owner session의 context exhaustion, rollover,

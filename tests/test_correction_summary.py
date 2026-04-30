@@ -10,6 +10,8 @@ from app.handlers.corrections import CorrectionHandlerMixin
 from core.contracts import PreferenceStatus
 from storage.correction_store import CorrectionStore
 from storage.preference_store import PreferenceStore
+from storage.sqlite.correction import SQLiteCorrectionStore
+from storage.sqlite.database import SQLiteDatabase
 
 
 class _CorrectionSummaryService(CorrectionHandlerMixin):
@@ -25,6 +27,10 @@ class _CorrectionSummaryService(CorrectionHandlerMixin):
 class CorrectionSummaryTest(unittest.TestCase):
     def _make_store(self, base_dir: str) -> CorrectionStore:
         return CorrectionStore(base_dir=str(Path(base_dir) / "corrections"))
+
+    def _make_sqlite_store(self, base_dir: str) -> SQLiteCorrectionStore:
+        db = SQLiteDatabase(str(Path(base_dir) / "test.db"))
+        return SQLiteCorrectionStore(db)
 
     def _record_confirmed_pattern(
         self,
@@ -116,6 +122,131 @@ class CorrectionSummaryTest(unittest.TestCase):
             self.assertIs(payload["ok"], True)
             self.assertEqual(len(payload["corrections"]), 1)
             self.assertEqual(payload["corrections"][0]["correction_id"], record["correction_id"])
+
+    def test_correction_list_filters_by_status(self) -> None:
+        with TemporaryDirectory() as d:
+            store = self._make_store(d)
+            recorded = store.record_correction(
+                artifact_id="art1",
+                session_id="s1",
+                source_message_id="msg1",
+                original_text="original recorded text",
+                corrected_text="corrected recorded text",
+            )
+            confirmed = store.record_correction(
+                artifact_id="art2",
+                session_id="s2",
+                source_message_id="msg2",
+                original_text="Please include every detail in the response.",
+                corrected_text="Please keep the response brief.",
+            )
+            self.assertIsNotNone(recorded)
+            self.assertIsNotNone(confirmed)
+            confirmed_records = store.confirm_by_fingerprint(confirmed["delta_fingerprint"])
+            self.assertEqual(len(confirmed_records), 1)
+
+            payload = _CorrectionSummaryService(store).get_correction_list(status="confirmed")
+
+            self.assertIs(payload["ok"], True)
+            self.assertEqual(len(payload["corrections"]), 1)
+            self.assertEqual(payload["corrections"][0]["correction_id"], confirmed["correction_id"])
+            self.assertEqual(payload["corrections"][0]["status"], "confirmed")
+            self.assertNotEqual(payload["corrections"][0]["correction_id"], recorded["correction_id"])
+
+    def test_correction_list_searches_by_query(self) -> None:
+        with TemporaryDirectory() as d:
+            store = self._make_store(d)
+            first = store.record_correction(
+                artifact_id="art1",
+                session_id="s1",
+                source_message_id="msg1",
+                original_text="include the needle detail in the answer",
+                corrected_text="include the important detail in the answer",
+            )
+            second = store.record_correction(
+                artifact_id="art2",
+                session_id="s2",
+                source_message_id="msg2",
+                original_text="write a long paragraph",
+                corrected_text="write a concise summary",
+            )
+            self.assertIsNotNone(first)
+            self.assertIsNotNone(second)
+
+            payload = _CorrectionSummaryService(store).get_correction_list(query="needle")
+
+            self.assertIs(payload["ok"], True)
+            self.assertEqual(len(payload["corrections"]), 1)
+            self.assertEqual(payload["corrections"][0]["correction_id"], first["correction_id"])
+            self.assertNotEqual(payload["corrections"][0]["correction_id"], second["correction_id"])
+
+    def test_correction_list_respects_limit(self) -> None:
+        with TemporaryDirectory() as d:
+            store = self._make_store(d)
+            for index in range(3):
+                record = store.record_correction(
+                    artifact_id=f"art-limit-{index}",
+                    session_id=f"s-limit-{index}",
+                    source_message_id=f"msg-limit-{index}",
+                    original_text=f"limit original text {index}",
+                    corrected_text=f"limit corrected text {index}",
+                )
+                self.assertIsNotNone(record)
+
+            payload = _CorrectionSummaryService(store).get_correction_list(limit=2)
+
+            self.assertIs(payload["ok"], True)
+            self.assertEqual(len(payload["corrections"]), 2)
+
+    def test_correction_list_respects_offset(self) -> None:
+        with TemporaryDirectory() as d:
+            store = self._make_store(d)
+            for index in range(4):
+                record = store.record_correction(
+                    artifact_id=f"art-offset-{index}",
+                    session_id=f"s-offset-{index}",
+                    source_message_id=f"msg-offset-{index}",
+                    original_text=f"offset original text {index}",
+                    corrected_text=f"offset corrected text {index}",
+                )
+                self.assertIsNotNone(record)
+
+            full_payload = _CorrectionSummaryService(store).get_correction_list(limit=4)
+            offset_payload = _CorrectionSummaryService(store).get_correction_list(limit=1, offset=2)
+
+            self.assertIs(full_payload["ok"], True)
+            self.assertIs(offset_payload["ok"], True)
+            self.assertEqual(len(full_payload["corrections"]), 4)
+            self.assertEqual(len(offset_payload["corrections"]), 1)
+            self.assertEqual(
+                offset_payload["corrections"][0]["correction_id"],
+                full_payload["corrections"][2]["correction_id"],
+            )
+
+    def test_correction_list_respects_offset_with_sqlite_backend(self) -> None:
+        with TemporaryDirectory() as d:
+            store = self._make_sqlite_store(d)
+            for index in range(4):
+                record = store.record_correction(
+                    artifact_id=f"sqlite-art-offset-{index}",
+                    session_id=f"sqlite-s-offset-{index}",
+                    source_message_id=f"sqlite-msg-offset-{index}",
+                    original_text=f"sqlite offset original text {index}",
+                    corrected_text=f"sqlite offset corrected text {index}",
+                )
+                self.assertIsNotNone(record)
+
+            full_payload = _CorrectionSummaryService(store).get_correction_list(limit=4)
+            offset_payload = _CorrectionSummaryService(store).get_correction_list(limit=1, offset=2)
+
+            self.assertIs(full_payload["ok"], True)
+            self.assertIs(offset_payload["ok"], True)
+            self.assertEqual(len(full_payload["corrections"]), 4)
+            self.assertEqual(len(offset_payload["corrections"]), 1)
+            self.assertEqual(
+                offset_payload["corrections"][0]["correction_id"],
+                full_payload["corrections"][2]["correction_id"],
+            )
 
     def test_promote_pattern_seeds_reliability_from_recurrence(self) -> None:
         with TemporaryDirectory() as d:

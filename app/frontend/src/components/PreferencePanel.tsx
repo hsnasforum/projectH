@@ -1,17 +1,21 @@
-import { useState, useEffect, useCallback } from "react";
-import type { CorrectionListResponse, CorrectionSummary, PreferenceAudit, PreferenceRecord } from "../api/client";
+import { useState, useEffect, useCallback, useRef } from "react";
+import type { CorrectionDetailRecord, CorrectionListResponse, CorrectionSummary, PreferenceAudit, PreferenceRecord } from "../api/client";
 import {
   confirmCorrectionPattern,
   dismissCorrectionPattern,
+  editPreferenceText,
   promoteCorrectionPattern,
+  fetchCorrectionDetail,
   fetchCorrectionList,
   fetchCorrectionSummary,
   fetchPreferenceAudit,
   fetchPreferences,
   activatePreference,
+  deletePreference,
   pausePreference,
   rejectPreference,
   postSyncAdoptedToPreferenceCandidates,
+  togglePreferenceReliability,
   updatePreferenceDescription,
 } from "../api/client";
 
@@ -28,13 +32,36 @@ const STATUS_COLORS: Record<string, string> = {
 };
 
 type PreferenceStatusFilter = "all" | "candidate" | "active" | "paused";
+type CorrectionStatusFilter = "all" | "recorded" | "confirmed" | "promoted" | "active" | "stopped";
 type PreferenceReliabilityTotals = {
   applied: number;
   corrected: number;
 };
+type PreferenceStatusCounts = {
+  total: number;
+  active: number;
+  candidate: number;
+  paused: number;
+};
+
+const CORRECTION_STATUS_OPTIONS: Array<{ value: CorrectionStatusFilter; label: string }> = [
+  { value: "all", label: "전체" },
+  { value: "recorded", label: "RECORDED" },
+  { value: "confirmed", label: "CONFIRMED" },
+  { value: "promoted", label: "PROMOTED" },
+  { value: "active", label: "ACTIVE" },
+  { value: "stopped", label: "STOPPED" },
+];
+
+const CORRECTION_LIST_PAGE_SIZE = 5;
+const PREFERENCE_LIST_PAGE_SIZE = 20;
 
 interface PanelProps {
   lastAppliedFingerprints?: string[];
+  autoActivatedPreferenceNotice?: {
+    id: string;
+    preferenceId: string;
+  } | null;
 }
 
 function preferenceReliabilityCounts(pref: PreferenceRecord) {
@@ -65,21 +92,78 @@ function isActiveLowReliabilityPreference(pref: PreferenceRecord) {
   );
 }
 
-export default function PreferencePanel({ lastAppliedFingerprints = [] }: PanelProps) {
+function preferenceMatchesSearch(pref: PreferenceRecord, query: string) {
+  const normalizedQuery = query.trim().toLowerCase();
+  if (!normalizedQuery) return true;
+  return [
+    pref.description,
+    pref.corrected_text,
+    pref.corrected_snippet,
+    pref.original_snippet,
+    pref.status,
+  ].some((value) => (value ?? "").toLowerCase().includes(normalizedQuery));
+}
+
+function buildCorrectionListParams(
+  query: string,
+  status: CorrectionStatusFilter,
+  limit: number,
+  offset = 0,
+) {
+  const trimmedQuery = query.trim();
+  const params: { query?: string; status?: string; limit?: number; offset?: number } = {};
+  if (trimmedQuery) params.query = trimmedQuery;
+  if (status !== "all") params.status = status;
+  if (limit > 0) params.limit = limit;
+  if (offset > 0) params.offset = offset;
+  return Object.keys(params).length ? params : undefined;
+}
+
+function formatCorrectionReason(correction: CorrectionDetailRecord) {
+  const summary = correction.delta_summary;
+  if (!summary) return "교정 이유 정보가 없습니다.";
+  if (summary.replacements?.length) {
+    return `교체: ${summary.replacements.map((item) => `${item.from} -> ${item.to}`).join(", ")}`;
+  }
+  if (summary.additions?.length) {
+    return `추가: ${summary.additions.join(", ")}`;
+  }
+  if (summary.removals?.length) {
+    return `제거: ${summary.removals.join(", ")}`;
+  }
+  return "교정 이유 정보가 없습니다.";
+}
+
+export default function PreferencePanel({
+  lastAppliedFingerprints = [],
+  autoActivatedPreferenceNotice = null,
+}: PanelProps) {
   const [preferences, setPreferences] = useState<PreferenceRecord[]>([]);
   const [audit, setAudit] = useState<PreferenceAudit | null>(null);
   const [correctionSummary, setCorrectionSummary] = useState<CorrectionSummary | null>(null);
   const [correctionList, setCorrectionList] = useState<CorrectionListResponse | null>(null);
   const [correctionQuery, setCorrectionQuery] = useState("");
+  const [correctionStatusFilter, setCorrectionStatusFilter] = useState<CorrectionStatusFilter>("all");
+  const [correctionListHasMore, setCorrectionListHasMore] = useState(false);
   const [loading, setLoading] = useState(false);
   const [expanded, setExpanded] = useState(true);
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
   const [editDescriptions, setEditDescriptions] = useState<Record<string, string | null>>({});
+  const [editPreferenceTexts, setEditPreferenceTexts] = useState<Record<string, string | null>>({});
   const [candidatePreferences, setCandidatePreferences] = useState<PreferenceRecord[] | null>(null);
   const [fadingOut, setFadingOut] = useState<Set<string>>(new Set());
   const [syncingAdopted, setSyncingAdopted] = useState(false);
   const [syncStatus, setSyncStatus] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<PreferenceStatusFilter>("all");
+  const [preferenceSearchQuery, setPreferenceSearchQuery] = useState("");
+  const [preferenceListHasMore, setPreferenceListHasMore] = useState(false);
+  const [preferenceListLoadedCount, setPreferenceListLoadedCount] = useState(0);
+  const [preferenceStatusCounts, setPreferenceStatusCounts] = useState<PreferenceStatusCounts>({
+    total: 0,
+    active: 0,
+    candidate: 0,
+    paused: 0,
+  });
   const [reliabilityTotals, setReliabilityTotals] = useState<PreferenceReliabilityTotals>({
     applied: 0,
     corrected: 0,
@@ -93,22 +177,47 @@ export default function PreferencePanel({ lastAppliedFingerprints = [] }: PanelP
     activated: number;
     isHighlyReliable?: boolean;
   } | null>(null);
+  const [selectedCorrectionId, setSelectedCorrectionId] = useState<string | null>(null);
+  const [selectedCorrectionDetail, setSelectedCorrectionDetail] = useState<CorrectionDetailRecord | null>(null);
+  const [correctionDetailMessage, setCorrectionDetailMessage] = useState<string | null>(null);
+  const [visibleAutoActivatedNotice, setVisibleAutoActivatedNotice] = useState<{
+    id: string;
+    preferenceId: string;
+  } | null>(null);
+  const correctionSearchMounted = useRef(false);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
       const [data, auditData, summary, list] = await Promise.all([
-        fetchPreferences(),
+        fetchPreferences({ limit: PREFERENCE_LIST_PAGE_SIZE }),
         fetchPreferenceAudit(),
         fetchCorrectionSummary().catch(() => null),
         fetchCorrectionList(
-          correctionQuery ? { query: correctionQuery } : undefined,
+          buildCorrectionListParams(correctionQuery, correctionStatusFilter, CORRECTION_LIST_PAGE_SIZE),
         ).catch(() => null),
       ]);
       // Filter out rejected items entirely
-      const visible = (data.preferences ?? []).filter((p) => p.status !== "rejected");
+      const rawPreferences = data.preferences ?? [];
+      const visible = rawPreferences.filter((p) => p.status !== "rejected");
       setPreferences(visible);
+      setPreferenceListLoadedCount(rawPreferences.length);
+      setPreferenceListHasMore(rawPreferences.length >= PREFERENCE_LIST_PAGE_SIZE);
       setCandidatePreferences(data.candidate_preferences ?? null);
+      setPreferenceStatusCounts({
+        total: typeof data.total_count === "number" && Number.isFinite(data.total_count)
+          ? data.total_count
+          : visible.length,
+        active: typeof data.active_count === "number" && Number.isFinite(data.active_count)
+          ? data.active_count
+          : visible.filter((pref) => pref.status === "active").length,
+        candidate: typeof data.candidate_count === "number" && Number.isFinite(data.candidate_count)
+          ? data.candidate_count
+          : visible.filter((pref) => pref.status === "candidate").length,
+        paused: typeof data.paused_count === "number" && Number.isFinite(data.paused_count)
+          ? data.paused_count
+          : visible.filter((pref) => pref.status === "paused").length,
+      });
       setReliabilityTotals({
         applied: typeof data.total_applied === "number" && Number.isFinite(data.total_applied)
           ? data.total_applied
@@ -151,14 +260,122 @@ export default function PreferencePanel({ lastAppliedFingerprints = [] }: PanelP
       setAudit(auditData);
       setCorrectionSummary(summary);
       setCorrectionList(list);
+      setCorrectionListHasMore((list?.corrections.length ?? 0) >= CORRECTION_LIST_PAGE_SIZE);
     } catch {
       // silent
     } finally {
       setLoading(false);
     }
-  }, [correctionQuery]);
+  }, [correctionQuery, correctionStatusFilter]);
 
   useEffect(() => { load(); }, []);
+
+  useEffect(() => {
+    if (!autoActivatedPreferenceNotice) return;
+    setVisibleAutoActivatedNotice(autoActivatedPreferenceNotice);
+    setExpanded(true);
+    setStatusFilter("active");
+    load();
+    const timer = window.setTimeout(() => {
+      setVisibleAutoActivatedNotice((current) =>
+        current?.id === autoActivatedPreferenceNotice.id ? null : current,
+      );
+    }, 6000);
+    return () => window.clearTimeout(timer);
+  }, [autoActivatedPreferenceNotice, load]);
+
+  useEffect(() => {
+    if (!correctionSearchMounted.current) {
+      correctionSearchMounted.current = true;
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      setSelectedCorrectionId(null);
+      setSelectedCorrectionDetail(null);
+      setCorrectionDetailMessage(null);
+      fetchCorrectionList(
+        buildCorrectionListParams(correctionQuery, correctionStatusFilter, CORRECTION_LIST_PAGE_SIZE),
+      )
+        .then((list) => {
+          setCorrectionList(list);
+          setCorrectionListHasMore(list.corrections.length >= CORRECTION_LIST_PAGE_SIZE);
+        })
+        .catch(() => {
+          setCorrectionList(null);
+          setCorrectionListHasMore(false);
+        });
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [correctionQuery, correctionStatusFilter]);
+
+  const handleCorrectionStatusFilterChange = useCallback((nextStatus: CorrectionStatusFilter) => {
+    setCorrectionStatusFilter(nextStatus);
+    setSelectedCorrectionId(null);
+    setSelectedCorrectionDetail(null);
+    setCorrectionDetailMessage(null);
+  }, []);
+
+  const handleCorrectionShowMore = useCallback(async () => {
+    const offset = correctionList?.corrections.length ?? 0;
+    try {
+      const nextList = await fetchCorrectionList(
+        buildCorrectionListParams(
+          correctionQuery,
+          correctionStatusFilter,
+          CORRECTION_LIST_PAGE_SIZE,
+          offset,
+        ),
+      );
+      setCorrectionList((current) => {
+        if (!current) return nextList;
+        return {
+          ...nextList,
+          corrections: [...current.corrections, ...nextList.corrections],
+        };
+      });
+      setCorrectionListHasMore(nextList.corrections.length >= CORRECTION_LIST_PAGE_SIZE);
+    } catch {
+      setCorrectionListHasMore(false);
+    }
+  }, [correctionList?.corrections.length, correctionQuery, correctionStatusFilter]);
+
+  const handlePreferenceShowMore = useCallback(async () => {
+    const offset = preferenceListLoadedCount;
+    try {
+      const nextData = await fetchPreferences({
+        limit: PREFERENCE_LIST_PAGE_SIZE,
+        offset,
+      });
+      const rawPreferences = nextData.preferences ?? [];
+      const visible = rawPreferences.filter((pref) => pref.status !== "rejected");
+      setPreferences((current) => {
+        const seen = new Set(current.map((pref) => pref.preference_id));
+        return [
+          ...current,
+          ...visible.filter((pref) => !seen.has(pref.preference_id)),
+        ];
+      });
+      setPreferenceListLoadedCount(offset + rawPreferences.length);
+      setPreferenceListHasMore(rawPreferences.length >= PREFERENCE_LIST_PAGE_SIZE);
+      setCandidatePreferences(nextData.candidate_preferences ?? null);
+      setPreferenceStatusCounts((current) => ({
+        total: typeof nextData.total_count === "number" && Number.isFinite(nextData.total_count)
+          ? nextData.total_count
+          : current.total,
+        active: typeof nextData.active_count === "number" && Number.isFinite(nextData.active_count)
+          ? nextData.active_count
+          : current.active,
+        candidate: typeof nextData.candidate_count === "number" && Number.isFinite(nextData.candidate_count)
+          ? nextData.candidate_count
+          : current.candidate,
+        paused: typeof nextData.paused_count === "number" && Number.isFinite(nextData.paused_count)
+          ? nextData.paused_count
+          : current.paused,
+      }));
+    } catch {
+      setPreferenceListHasMore(false);
+    }
+  }, [preferenceListLoadedCount]);
 
   const handleAction = useCallback(async (
     pref: PreferenceRecord,
@@ -214,6 +431,76 @@ export default function PreferencePanel({ lastAppliedFingerprints = [] }: PanelP
     }
   }, [editDescriptions, load]);
 
+  const handleDeletePreference = useCallback(async (pref: PreferenceRecord) => {
+    try {
+      await deletePreference(pref.preference_id);
+      setPreferences((prev) => prev.filter((item) => item.preference_id !== pref.preference_id));
+      setCandidatePreferences((prev) =>
+        prev == null ? prev : prev.filter((item) => item.preference_id !== pref.preference_id),
+      );
+      setExpandedItems((prev) => {
+        const next = new Set(prev);
+        next.delete(pref.preference_id);
+        return next;
+      });
+      setEditDescriptions((prev) => {
+        const next = { ...prev };
+        delete next[pref.preference_id];
+        return next;
+      });
+      setEditPreferenceTexts((prev) => {
+        const next = { ...prev };
+        delete next[pref.preference_id];
+        return next;
+      });
+      await load();
+    } catch {
+      // silent
+    }
+  }, [load]);
+
+  const handleToggleReliability = useCallback(async (pref: PreferenceRecord) => {
+    try {
+      const updated = await togglePreferenceReliability(pref.preference_id);
+      setPreferences((prev) =>
+        prev.map((item) => item.preference_id === updated.preference_id ? updated : item),
+      );
+      setCandidatePreferences((prev) =>
+        prev == null
+          ? prev
+          : prev.map((item) => item.preference_id === updated.preference_id ? updated : item),
+      );
+      await load();
+    } catch {
+      // silent
+    }
+  }, [load]);
+
+  const handlePreferenceTextSave = useCallback(async (pref: PreferenceRecord) => {
+    const draft = editPreferenceTexts[pref.preference_id];
+    const correctedText = draft?.trim();
+    if (!correctedText) return;
+    try {
+      const updated = await editPreferenceText(pref.preference_id, correctedText);
+      setPreferences((prev) =>
+        prev.map((item) => item.preference_id === updated.preference_id ? updated : item),
+      );
+      setCandidatePreferences((prev) =>
+        prev == null
+          ? prev
+          : prev.map((item) => item.preference_id === updated.preference_id ? updated : item),
+      );
+      setEditPreferenceTexts((prev) => {
+        const next = { ...prev };
+        delete next[pref.preference_id];
+        return next;
+      });
+      await load();
+    } catch {
+      // silent
+    }
+  }, [editPreferenceTexts, load]);
+
   const handleSyncAdopted = useCallback(async () => {
     setSyncingAdopted(true);
     setSyncStatus(null);
@@ -229,19 +516,43 @@ export default function PreferencePanel({ lastAppliedFingerprints = [] }: PanelP
     }
   }, [load]);
 
+  const handleCorrectionDetail = useCallback(async (correctionId: string) => {
+    const cleanId = correctionId.trim();
+    if (!cleanId) return;
+    setSelectedCorrectionId(cleanId);
+    setSelectedCorrectionDetail(null);
+    setCorrectionDetailMessage("교정 상세를 불러오는 중...");
+    try {
+      const detail = await fetchCorrectionDetail(cleanId);
+      if (detail.ok && detail.correction) {
+        setSelectedCorrectionDetail(detail.correction);
+        setCorrectionDetailMessage(null);
+        return;
+      }
+      setCorrectionDetailMessage(detail.error?.message ?? "교정 상세를 불러오지 못했습니다.");
+    } catch {
+      setCorrectionDetailMessage("교정 상세를 불러오지 못했습니다.");
+    }
+  }, []);
+
   // Visible count for header
-  const activeCount = preferences.filter((p) => p.status === "active").length;
-  const candidateCount = candidatePreferences != null
+  const activeCount = preferenceStatusCounts.active;
+  const loadedCandidateCount = candidatePreferences != null
     ? candidatePreferences.length
     : preferences.filter((p) => p.status === "candidate").length;
-  const pausedCount = preferences.filter((p) => p.status === "paused").length;
-  const filteredPreferences = statusFilter === "all"
+  const candidateCount = preferenceStatusCounts.total > 0 || preferenceStatusCounts.candidate > 0
+    ? preferenceStatusCounts.candidate
+    : loadedCandidateCount;
+  const pausedCount = preferenceStatusCounts.paused;
+  const statusFilteredPreferences = statusFilter === "all"
     ? preferences
-    : statusFilter === "candidate" && candidatePreferences != null
-    ? candidatePreferences
     : preferences.filter((p) => p.status === statusFilter);
+  const filteredPreferences = statusFilteredPreferences.filter((pref) =>
+    preferenceMatchesSearch(pref, preferenceSearchQuery),
+  );
+  const hasPreferenceSearch = Boolean(preferenceSearchQuery.trim());
   const statusTabs: Array<{ key: PreferenceStatusFilter; label: string; count: number }> = [
-    { key: "all", label: "전체", count: preferences.length },
+    { key: "all", label: "전체", count: preferenceStatusCounts.total },
     { key: "candidate", label: "후보", count: candidateCount },
     { key: "active", label: "활성", count: activeCount },
     { key: "paused", label: "일시중지", count: pausedCount },
@@ -259,7 +570,7 @@ export default function PreferencePanel({ lastAppliedFingerprints = [] }: PanelP
     );
   }
 
-  if (preferences.length === 0 && !canSyncAdoptedCorrections) {
+  if (preferences.length === 0 && !canSyncAdoptedCorrections && !visibleAutoActivatedNotice) {
     return (
       <div className="text-[11px] text-sidebar-muted/60 px-2 py-2 text-center">
         아직 학습된 선호가 없습니다
@@ -269,6 +580,27 @@ export default function PreferencePanel({ lastAppliedFingerprints = [] }: PanelP
 
   return (
     <div>
+      {visibleAutoActivatedNotice && (
+        <div
+          data-testid="preference-auto-activated-notice"
+          className="mx-1 mb-1 rounded-md border border-emerald-400/20 bg-emerald-500/10 px-2 py-1.5 text-[10px] leading-snug text-emerald-100"
+        >
+          <div className="flex items-center justify-between gap-2">
+            <span className="font-medium">선호도로 자동 저장됨</span>
+            <a
+              data-testid="preference-auto-activated-link"
+              href={`#pref-card-${visibleAutoActivatedNotice.preferenceId}`}
+              className="shrink-0 font-medium text-emerald-200 hover:text-white hover:underline"
+              onClick={() => {
+                setExpanded(true);
+                setStatusFilter("active");
+              }}
+            >
+              선호에서 보기
+            </a>
+          </div>
+        </div>
+      )}
       {/* Header with toggle + counts */}
       <button
         onClick={() => setExpanded(!expanded)}
@@ -389,22 +721,55 @@ export default function PreferencePanel({ lastAppliedFingerprints = [] }: PanelP
                 )}
                 {correctionList && (
                   <div className="px-2 mt-1">
-                    <input
-                      type="text"
-                      data-testid="correction-search-input"
-                      className="w-full text-[10px] bg-transparent border-b border-sidebar-muted/20 text-sidebar-foreground placeholder:text-sidebar-muted/40 px-2 py-0.5 mb-0.5 outline-none"
-                      placeholder="교정 검색..."
-                      value={correctionQuery}
-                      onChange={(e) => setCorrectionQuery(e.target.value)}
-                      onKeyDown={(e) => { if (e.key === "Enter") load(); }}
-                    />
+                    <div className="mb-1 flex items-center gap-1">
+                      <input
+                        type="text"
+                        data-testid="correction-search-input"
+                        className="min-w-0 flex-1 text-[10px] bg-transparent border-b border-sidebar-muted/20 text-sidebar-foreground placeholder:text-sidebar-muted/40 px-2 py-0.5 outline-none"
+                        placeholder="교정 검색..."
+                        value={correctionQuery}
+                        onChange={(e) => setCorrectionQuery(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === "Enter") load(); }}
+                      />
+                      <select
+                        data-testid="correction-status-filter"
+                        className="h-6 max-w-[90px] shrink-0 rounded border border-sidebar-muted/20 bg-sidebar px-1 text-[10px] text-sidebar-foreground outline-none"
+                        value={correctionStatusFilter}
+                        onChange={(event) =>
+                          handleCorrectionStatusFilterChange(event.target.value as CorrectionStatusFilter)
+                        }
+                      >
+                        {CORRECTION_STATUS_OPTIONS.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
                     <p className="text-[10px] text-sidebar-muted/60 mb-0.5">최근 교정</p>
-                    {correctionList.corrections.slice(0, 3).map((c) => (
+                    {correctionList.corrections.map((c) => (
                       <div
                         key={c.correction_id}
                         data-testid="correction-list-item"
-                        className="text-[10px] text-sidebar-muted/50 truncate"
+                        role="button"
+                        tabIndex={0}
+                        aria-pressed={selectedCorrectionId === c.correction_id}
+                        className={`cursor-pointer rounded px-1 py-0.5 text-[10px] truncate transition-colors ${
+                          selectedCorrectionId === c.correction_id
+                            ? "bg-sky-500/15 text-sky-200"
+                            : "text-sidebar-muted/50 hover:bg-white/5 hover:text-sidebar-text"
+                        }`}
                         title={c.original_text}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          handleCorrectionDetail(c.correction_id);
+                        }}
+                        onKeyDown={(event) => {
+                          if (event.key !== "Enter" && event.key !== " ") return;
+                          event.preventDefault();
+                          event.stopPropagation();
+                          handleCorrectionDetail(c.correction_id);
+                        }}
                       >
                         {c.has_active_preference && (
                           <span
@@ -417,6 +782,59 @@ export default function PreferencePanel({ lastAppliedFingerprints = [] }: PanelP
                         [{c.status}] {(c.original_text ?? "").slice(0, 35)}
                       </div>
                     ))}
+                    {correctionListHasMore && (
+                      <button
+                        type="button"
+                        data-testid="correction-show-more-btn"
+                        className="mt-1 w-full rounded bg-white/5 px-2 py-1 text-[10px] text-sidebar-muted/70 hover:bg-white/10 hover:text-sidebar-text"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          handleCorrectionShowMore();
+                        }}
+                      >
+                        더 보기
+                      </button>
+                    )}
+                    {(selectedCorrectionId || correctionDetailMessage || selectedCorrectionDetail) && (
+                      <div
+                        data-testid="correction-detail-panel"
+                        className="mt-1 space-y-1 rounded border border-sidebar-muted/20 bg-sidebar-hover/60 p-2 text-[10px] leading-snug text-sidebar-muted/70"
+                        onClick={(event) => event.stopPropagation()}
+                      >
+                        {correctionDetailMessage ? (
+                          <p>{correctionDetailMessage}</p>
+                        ) : selectedCorrectionDetail ? (
+                          <>
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="min-w-0 truncate font-medium text-sidebar-text">
+                                교정 상세
+                              </span>
+                              <span className="shrink-0 text-[9px] text-sidebar-muted/60">
+                                {selectedCorrectionDetail.status}
+                              </span>
+                            </div>
+                            <div>
+                              <p className="mb-0.5 font-medium text-sidebar-muted">원문</p>
+                              <p className="whitespace-pre-wrap break-words rounded bg-red-500/10 p-1.5 text-red-200">
+                                {selectedCorrectionDetail.original_text || "(내용 없음)"}
+                              </p>
+                            </div>
+                            <div>
+                              <p className="mb-0.5 font-medium text-sidebar-muted">교정 결과</p>
+                              <p className="whitespace-pre-wrap break-words rounded bg-emerald-500/10 p-1.5 text-emerald-200">
+                                {selectedCorrectionDetail.corrected_text || "(내용 없음)"}
+                              </p>
+                            </div>
+                            <div>
+                              <p className="mb-0.5 font-medium text-sidebar-muted">교정 이유</p>
+                              <p className="whitespace-pre-wrap break-words rounded bg-white/5 p-1.5 text-sidebar-muted">
+                                {formatCorrectionReason(selectedCorrectionDetail)}
+                              </p>
+                            </div>
+                          </>
+                        ) : null}
+                      </div>
+                    )}
                   </div>
                 )}
               </>
@@ -462,6 +880,16 @@ export default function PreferencePanel({ lastAppliedFingerprints = [] }: PanelP
               )}
             </div>
           )}
+          <div className="px-1">
+            <input
+              type="text"
+              data-testid="preference-search-input"
+              className="w-full text-[10px] bg-transparent border-b border-sidebar-muted/20 text-sidebar-foreground placeholder:text-sidebar-muted/40 px-2 py-0.5 outline-none"
+              placeholder="선호 검색..."
+              value={preferenceSearchQuery}
+              onChange={(event) => setPreferenceSearchQuery(event.target.value)}
+            />
+          </div>
           <div className="flex items-center gap-1 overflow-x-auto px-1 pb-0.5">
             {statusTabs.map((tab) => {
               const selected = statusFilter === tab.key;
@@ -485,7 +913,7 @@ export default function PreferencePanel({ lastAppliedFingerprints = [] }: PanelP
           </div>
           {filteredPreferences.length === 0 && (
             <div className="px-2 py-2 text-center text-[11px] text-sidebar-muted/60">
-              해당 상태 선호가 없습니다
+              {hasPreferenceSearch ? "검색 결과가 없습니다" : "해당 상태 선호가 없습니다"}
             </div>
           )}
           {filteredPreferences.map((pref) => {
@@ -493,10 +921,13 @@ export default function PreferencePanel({ lastAppliedFingerprints = [] }: PanelP
             const isHighQuality = pref.quality_info?.is_high_quality === true;
             const isHighlyReliable = pref.is_highly_reliable === true;
             const isHighSeverityConflict = pref.conflict_info?.conflict_severity === "high";
-            const hasEvidenceDetail = Boolean(pref.original_snippet && pref.corrected_snippet);
+            const currentCorrectedText = pref.corrected_text ?? pref.corrected_snippet ?? "";
+            const hasEvidenceDetail = Boolean(pref.original_snippet && currentCorrectedText);
             const isDetailExpanded = expandedItems.has(pref.preference_id);
             const isDescriptionEditing = editDescriptions[pref.preference_id] !== undefined;
             const descriptionDraft = editDescriptions[pref.preference_id] ?? pref.description;
+            const isPreferenceTextEditing = editPreferenceTexts[pref.preference_id] !== undefined;
+            const preferenceTextDraft = editPreferenceTexts[pref.preference_id] ?? currentCorrectedText;
             const reviewReasonNote = pref.review_reason_note?.trim();
             const sourceSessionTitle = pref.source_session_title?.trim();
             const lastTransitionReason = pref.last_transition_reason?.trim();
@@ -527,6 +958,20 @@ export default function PreferencePanel({ lastAppliedFingerprints = [] }: PanelP
                       신뢰도 높음
                     </span>
                   )}
+                  <button
+                    type="button"
+                    data-testid="toggle-reliability-btn"
+                    aria-pressed={isHighlyReliable}
+                    aria-label={`신뢰도 토글: ${pref.description}`}
+                    onClick={() => handleToggleReliability(pref)}
+                    className={`inline-flex items-center rounded px-1 py-0.5 text-[9px] font-semibold transition-colors ${
+                      isHighlyReliable
+                        ? "bg-emerald-500/10 text-emerald-200 hover:bg-emerald-500/20"
+                        : "bg-white/5 text-sidebar-muted hover:bg-white/10 hover:text-sidebar-text"
+                    }`}
+                  >
+                    {isHighlyReliable ? "신뢰 해제" : "신뢰 설정"}
+                  </button>
                   {pref.status === "active" && !isHighlyReliable && reliability.applied >= 3 && (
                     <span
                       data-testid="preference-low-reliability-badge"
@@ -691,8 +1136,48 @@ export default function PreferencePanel({ lastAppliedFingerprints = [] }: PanelP
                     <div>
                       <p className="mb-0.5 font-medium text-sidebar-muted">교정</p>
                       <p className="whitespace-pre-wrap break-words rounded bg-emerald-500/10 p-1.5 text-emerald-200">
-                        {pref.corrected_snippet}
+                        {currentCorrectedText}
                       </p>
+                    </div>
+                  </div>
+                )}
+
+                {isPreferenceTextEditing && (
+                  <div className="mb-2 space-y-1">
+                    <textarea
+                      data-testid="preference-text-textarea"
+                      className="min-h-[72px] w-full resize-none rounded border border-white/10 bg-sidebar px-2 py-1.5 text-[12px] leading-snug text-sidebar-text outline-none focus:border-sky-300/60"
+                      rows={3}
+                      value={preferenceTextDraft}
+                      onChange={(event) =>
+                        setEditPreferenceTexts((prev) => ({
+                          ...prev,
+                          [pref.preference_id]: event.target.value,
+                        }))
+                      }
+                    />
+                    <div className="flex gap-1.5">
+                      <button
+                        data-testid="save-preference-text-btn"
+                        className="rounded bg-sky-500/15 px-2 py-1 text-[11px] font-medium text-sky-300 transition-colors hover:bg-sky-500/25 disabled:cursor-not-allowed disabled:opacity-40"
+                        disabled={!preferenceTextDraft.trim()}
+                        onClick={() => handlePreferenceTextSave(pref)}
+                      >
+                        저장
+                      </button>
+                      <button
+                        data-testid="cancel-preference-text-btn"
+                        className="rounded bg-white/5 px-2 py-1 text-[11px] font-medium text-sidebar-muted transition-colors hover:bg-white/10 hover:text-sidebar-text"
+                        onClick={() =>
+                          setEditPreferenceTexts((prev) => {
+                            const next = { ...prev };
+                            delete next[pref.preference_id];
+                            return next;
+                          })
+                        }
+                      >
+                        취소
+                      </button>
                     </div>
                   </div>
                 )}
@@ -739,10 +1224,45 @@ export default function PreferencePanel({ lastAppliedFingerprints = [] }: PanelP
                       </button>
                     </>
                   )}
+                  {!isPreferenceTextEditing && (
+                    <button
+                      data-testid="edit-preference-btn"
+                      onClick={() =>
+                        setEditPreferenceTexts((prev) => ({
+                          ...prev,
+                          [pref.preference_id]: currentCorrectedText,
+                        }))
+                      }
+                      className="text-[10px] px-1.5 py-0.5 rounded text-sky-300 hover:bg-sky-500/10 hover:text-sky-200 transition-colors"
+                    >
+                      내용 편집
+                    </button>
+                  )}
+                  <button
+                    data-testid="delete-preference-btn"
+                    aria-label={`선호 삭제: ${pref.description}`}
+                    onClick={() => handleDeletePreference(pref)}
+                    className="ml-auto text-[10px] px-1.5 py-0.5 rounded text-red-300/70 hover:bg-red-500/10 hover:text-red-200 transition-colors"
+                  >
+                    삭제
+                  </button>
                 </div>
               </div>
             );
           })}
+          {preferenceListHasMore && (
+            <button
+              type="button"
+              data-testid="preference-show-more-btn"
+              className="w-full rounded bg-white/5 px-2 py-1 text-[10px] text-sidebar-muted/70 hover:bg-white/10 hover:text-sidebar-text"
+              onClick={(event) => {
+                event.stopPropagation();
+                handlePreferenceShowMore();
+              }}
+            >
+              더 보기
+            </button>
+          )}
         </div>
       )}
     </div>

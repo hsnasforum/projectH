@@ -1495,10 +1495,168 @@ Axis 2: dist rebuild + E2E — DONE
 dist 재빌드 (314K, Apr 29 17:51). `pref-navigate-to-card` 1건 dist 반영.
 preference E2E 5 passed.
 
+## M97 자동 활성화 알림 UX
+
+Axis 1: correction-submit auto activation notice — DONE
+`app/handlers/feedback.py`가 반복 교정으로 highly reliable preference가 자동 활성화될 때
+`auto_activated: true`와 `preference_id`를 응답에 포함한다.
+`App.tsx` → `Sidebar.tsx` → `PreferencePanel.tsx`로 이벤트를 전달하고,
+`PreferencePanel`은 `선호도로 자동 저장됨` inline notice와
+`선호에서 보기` 링크(`href="#pref-card-{preference_id}"`)를 표시한다.
+`e2e/tests/web-smoke.spec.mjs`에 preference auto activation notice 시나리오 추가.
+py_compile / tsc / diff-check PASS. Playwright webServer는 현재 sandbox socket 제한으로 미실행.
+
+## M98 교정 이력 상세 조회
+
+Axis 1: correction history detail — DONE
+`app/handlers/corrections.py`에 `get_correction_detail(correction_id)` 추가.
+`app/web.py`는 `/api/corrections/summary`, `/api/corrections/list` 뒤에
+`GET /api/corrections/<correction_id>` 라우팅을 등록한다.
+`app/frontend/src/api/client.ts`는 `CorrectionDetailRecord` /
+`CorrectionDetailResponse` / `fetchCorrectionDetail()`을 제공한다.
+`PreferencePanel.tsx`의 최근 교정 항목 클릭/Enter/Space가 상세 조회를 호출하고,
+`data-testid="correction-detail-panel"` 패널에 원문, 교정 결과, delta summary 기반
+교정 이유를 표시한다. `e2e/tests/web-smoke.spec.mjs`에
+`correction list item click shows correction detail panel` 시나리오 추가.
+py_compile / tsc / correction_summary unittest / diff-check PASS. Playwright webServer는
+현재 sandbox socket 제한으로 미실행.
+
+Axis 2: dist rebuild — DONE
+`npx vite build`로 `app/static/dist/assets/index.js`와 관련 `index.css` 갱신.
+`correction-detail-panel` testid가 dist JS에 1건 포함됨을 확인.
+
+## M99 advisory-loop-recovery-guard (watcher runtime)
+
+watcher runtime 개선; product UI 변경 없음.
+- `DEFAULT_ADVISORY_RECOVERY_SEC = 300.0` 상수 추출 (5분 기본 stale recovery)
+- `_get_next_control_seq()` superseded control slot까지 스캔 (단조 증가 보장)
+- `DEFAULT_ADVISORY_PROMPT`에 대형 planning docs broad-read 금지 + `INSUFFICIENT_CONTEXT` 지침
+- root memory 4종(AGENTS/CLAUDE/GEMINI/PROJECT_CUSTOM_INSTRUCTIONS) + harness/advisory + pipeline README 동기화
+- 신규 regression test 3개
+commit: 9331c5b, branch: fix/m99-advisory-loop-recovery-guard,
+PR #92 (draft, base: feat/m98-axis1-correction-history)
+
+## M102 preference delete
+
+Axis 1: preference delete — DONE
+`app/handlers/preferences.py`에 `delete_preference(preference_id)` 추가.
+`app/web.py`에 `DELETE /api/preferences/<preference_id>` same-origin 라우트 등록.
+`storage/preference_store.py`와 `storage/sqlite/preference.py`에 `delete(preference_id)` 추가.
+`app/frontend/src/api/client.ts`에 `deletePreference(preferenceId)` 추가.
+`PreferencePanel.tsx`의 각 preference 카드에 `data-testid="delete-preference-btn"` 삭제 버튼 추가.
+ACTIVE 선호 삭제 시 pause 후 제거; `preference_deleted` task log 기록.
+unit test 2개 (delete 성공, 404).
+
+Axis 2: dist rebuild — DONE
+`npx vite build`로 `app/static/dist/assets/index.js`와 `index.css` 갱신.
+`delete-preference-btn` testid가 dist JS에 1건 포함됨 확인.
+`e2e/tests/web-smoke.spec.mjs`에 `preference delete removes preference from list` 시나리오 추가.
+Playwright webServer는 현재 sandbox socket 제한으로 미실행; CI 위임.
+
+## M103 preference reliability toggle
+
+Axis 1: reliability toggle — DONE
+`toggle_preference_reliability()` handler + `POST /api/preferences/<id>/toggle-reliability` route.
+JSON/SQLite preference store에 최소 `update()` 추가.
+`storage/preference_utils.py`에서 저장된 `is_highly_reliable` 값을 projection에서 우선 존중.
+`app/frontend/src/api/client.ts`에 `togglePreferenceReliability()` 추가.
+`PreferencePanel.tsx`에 `data-testid="toggle-reliability-btn"` 토글 버튼 추가.
+신규 unittest 2개 (flip flag, 404).
+
+Axis 2: dist rebuild — DONE
+`npx vite build`로 dist 갱신; `toggle-reliability-btn` testid가 dist JS에 1건 포함됨.
+`e2e/tests/web-smoke.spec.mjs`에 `preference reliability toggle updates badge` 시나리오 추가.
+Playwright webServer는 sandbox socket 제한으로 미실행; CI 위임.
+
+## M104 preference text edit
+
+Axis 1: corrected_text edit — DONE
+`edit_preference_text()` handler + `PATCH /api/preferences/<id>` route (body: corrected_text).
+공백 텍스트 400, unknown id 404. `preference_text_edited` task log.
+`editPreferenceText()` TypeScript function + `edit-preference-btn` / `save-preference-text-btn` UI.
+저장 버튼은 빈 입력 시 비활성화. M103의 `preference_store.update()` 재사용.
+신규 unittest 3개 (update, 404, 400).
+
+Axis 2: dist rebuild — DONE
+`npx vite build`로 dist 갱신; `edit-preference-btn`/`save-preference-text-btn` testid 포함.
+`e2e/tests/web-smoke.spec.mjs`에 `preference text edit updates corrected text` 시나리오 추가.
+Playwright webServer는 sandbox socket 제한으로 미실행; CI 위임.
+
+## M105 correction history status filter
+
+Axis 1: status filter — DONE
+`PreferencePanel.tsx`에 `data-testid="correction-status-filter"` 드롭다운 추가.
+상태 변경 시 `fetchCorrectionList({ status })` 재호출; "전체" 선택 시 파라미터 생략.
+기존 backend `GET /api/corrections/list?status=` API 재사용 — 백엔드 수정 없음.
+신규 unittest 1개 (`test_correction_list_filters_by_status`).
+
+Axis 2: dist rebuild — DONE
+`npx vite build`로 dist 갱신; `correction-status-filter` testid 포함.
+`e2e/tests/web-smoke.spec.mjs`에 `correction history status filter narrows list` 시나리오 추가.
+Playwright webServer는 sandbox socket 제한으로 미실행; CI 위임.
+
+## M106 correction search expansion
+
+Axis 1: search + limit expansion — DONE
+`get_correction_list()` hardcoded limit=5 제거 (기본값 20). limit/query/status 파라미터 정상화.
+`GET /api/corrections/list`에 limit 쿼리 파라미터 추가.
+`fetchCorrectionList()` limit? 파라미터 추가. PreferencePanel에
+`data-testid="correction-search-input"` 검색 입력 + debounce 재조회 +
+`data-testid="correction-show-more-btn"` 더 보기 버튼 추가.
+신규 unittest 2개 (query 검색, limit 제한).
+
+Axis 2: dist rebuild — DONE
+`npx vite build`로 dist 갱신; correction-search-input/correction-show-more-btn testid 포함.
+`e2e/tests/web-smoke.spec.mjs`에 `correction history search filters by query` 시나리오 추가.
+Playwright webServer는 sandbox socket 제한으로 미실행; CI 위임.
+
+## M107 correction history pagination
+
+Axis 1: offset pagination — DONE
+`storage/correction_store.py` `list_filtered()` offset 파라미터 + `records[offset:offset+limit]` slice.
+`get_correction_list()` `offset=0` 기본값 추가, `GET /api/corrections/list?offset=N` 수용.
+`fetchCorrectionList()` `offset?` 파라미터 + URL query. PreferencePanel `correction-show-more-btn`
+클릭 시 현재 목록 길이를 offset으로 다음 batch append; `correctionListHasMore` 상태 추가.
+신규 unittest 1개 (offset 동작).
+
+Axis 2: dist rebuild — DONE
+`npx vite build`로 dist 갱신; offset/correctionListHasMore 코드 3건 포함 확인.
+`e2e/tests/web-smoke.spec.mjs`에 `correction history show more appends next page` 시나리오 추가.
+Playwright webServer는 sandbox socket 제한으로 미실행; CI 위임.
+
+## M108 preference search visibility parity
+
+Axis 1: preference search — DONE (client-side filtering)
+`PreferencePanel`에 `data-testid="preference-search-input"` 검색 입력 추가.
+기존 상태 탭 필터 위에 텍스트 필터 레이어: description/corrected_text/original_snippet/status 검색.
+빈 검색어 = 전체; 미매칭 = "검색 결과가 없습니다". API/Python 변경 없음.
+
+Axis 2: dist rebuild — DONE
+`npx vite build`로 dist 갱신; `preference-search-input` testid 포함.
+`e2e/tests/web-smoke.spec.mjs`에 `preference search filters preference list` 시나리오 추가.
+시나리오는 API mock + DOM 필터 동작 확인 + API 재호출 없음 확인.
+Playwright webServer는 sandbox socket 제한으로 미실행; CI 위임.
+
+## M109 preference list pagination
+
+Axis 1: limit/offset pagination — DONE (M107 correction pagination과 대칭)
+`storage/preference_store.py` + `storage/sqlite/preference.py` `list_all()` limit/offset 파라미터.
+`list_preferences_payload(limit=20, offset=0)` page batch + 전체 집계 분리.
+`GET /api/preferences?limit=N&offset=N` 파라미터 파싱.
+`fetchPreferences({ limit, offset })` API 추가.
+`PreferencePanel` `preference-show-more-btn` + append + `preferenceListHasMore` 상태.
+M108 `preference-search-input` 필터 preserve.
+신규 unittest 1개 (offset 동작).
+
+Axis 2: dist rebuild — DONE
+`npx vite build`로 dist 갱신; preference-show-more-btn/preferenceListHasMore 코드 포함.
+`e2e/tests/web-smoke.spec.mjs`에 `preference show more appends next page` 시나리오 추가.
+Playwright webServer는 sandbox socket 제한으로 미실행; CI 위임.
+
 ## Next 3 Implementation Priorities
 
-1. **PR 머지 백로그**: operator 승인 대기 — PR #71-#86 스택.
-2. **M97 방향**: M96 완료; 다음 기능 축은 main 머지 후 fresh advisory 결정.
+1. **PR 머지 백로그**: PR #91–#100 + 이번 M109 PR — 모두 draft, `pr_merge_gate` operator 승인 대기.
+2. **M109 완료**: Axis 1+2+doc-sync 완료 — commit/push/PR 대기.
 3. **장기**: cross-session memory 강화, north star 방향 유지.
 
 ## Do Not Pull Forward

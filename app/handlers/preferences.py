@@ -108,6 +108,34 @@ def _preference_exists_for_fingerprint(preference_store: Any, fingerprint: str) 
     )
 
 
+def _list_preferences(
+    preference_store: Any,
+    *,
+    limit: int | None = None,
+    offset: int = 0,
+) -> list[dict[str, Any]]:
+    list_all = getattr(preference_store, "list_all", None)
+    if not callable(list_all):
+        return []
+
+    safe_offset = max(0, offset)
+    if limit is None:
+        try:
+            return list_all()
+        except TypeError:
+            return []
+
+    safe_limit = max(0, limit)
+    try:
+        return list_all(limit=safe_limit, offset=safe_offset)
+    except TypeError:
+        try:
+            records = list_all(limit=safe_limit + safe_offset)
+        except TypeError:
+            records = list_all()
+        return records[safe_offset:safe_offset + safe_limit]
+
+
 def _is_highly_reliable_preference(preference: dict[str, Any]) -> bool:
     return is_highly_reliable_preference(preference)
 
@@ -115,16 +143,16 @@ def _is_highly_reliable_preference(preference: dict[str, Any]) -> bool:
 class PreferenceHandlerMixin:
     """Preference management methods extracted from WebAppService."""
 
-    def list_preferences_payload(self) -> dict[str, Any]:
-        all_prefs = self.preference_store.list_all()
+    def list_preferences_payload(self, limit: int = 20, offset: int = 0) -> dict[str, Any]:
+        page_prefs = _list_preferences(self.preference_store, limit=limit, offset=offset)
+        all_prefs = _list_preferences(self.preference_store, limit=1000, offset=0)
         get_summary = getattr(self.session_store, "get_global_audit_summary", None)
         summary = get_summary() if callable(get_summary) else {}
         per_pref_stats = summary.get("per_preference_stats", {}) if isinstance(summary, dict) else {}
         if not isinstance(per_pref_stats, dict):
             per_pref_stats = {}
 
-        enriched = []
-        for pref in all_prefs:
+        def enrich_preference(pref: dict[str, Any]) -> dict[str, Any]:
             pref_copy = enrich_preference_reliability(pref, per_pref_stats)
             source_ref = _preference_review_source_ref(pref_copy)
             if source_ref is not None:
@@ -134,10 +162,13 @@ class PreferenceHandlerMixin:
                     pref_copy["review_reason_note"] = review_reason_note
                 if source_session_title:
                     pref_copy["source_session_title"] = source_session_title
-            enriched.append(pref_copy)
+            return pref_copy
+
+        enriched = [enrich_preference(pref) for pref in page_prefs]
+        all_enriched = [enrich_preference(pref) for pref in all_prefs]
 
         active_preferences = [
-            p for p in enriched
+            p for p in all_enriched
             if p.get("status") == "active" and str(p.get("description") or "").strip()
         ]
         conflict_map: dict[str, list[str]] = {}
@@ -153,9 +184,10 @@ class PreferenceHandlerMixin:
 
         highly_reliable_by_pref_id = {
             str(pref_copy.get("preference_id", "")): pref_copy.get("is_highly_reliable") is True
-            for pref_copy in enriched
+            for pref_copy in all_enriched
         }
-        for pref_copy in enriched:
+
+        def apply_conflict_info(pref_copy: dict[str, Any]) -> None:
             pref_id = str(pref_copy.get("preference_id", ""))
             conflicting = conflict_map.get(pref_id, [])
             has_conflict = len(conflicting) > 0
@@ -173,6 +205,15 @@ class PreferenceHandlerMixin:
                 "conflicting_preference_ids": conflicting,
                 "conflict_severity": conflict_severity,
             }
+
+        for pref_copy in all_enriched:
+            apply_conflict_info(pref_copy)
+        for pref_copy in enriched:
+            apply_conflict_info(pref_copy)
+        visible_for_counts = [
+            pref_copy for pref_copy in all_enriched
+            if pref_copy.get("status") != "rejected"
+        ]
 
         transition_actions = {"preference_activated", "preference_paused", "preference_rejected"}
         try:
@@ -210,7 +251,7 @@ class PreferenceHandlerMixin:
         highly_reliable_active_count = 0
         high_severity_conflict_count = 0
         low_reliability_active_count = 0
-        for pref_copy in enriched:
+        for pref_copy in all_enriched:
             if pref_copy.get("status") != "active":
                 continue
             quality_info = pref_copy.get("quality_info")
@@ -242,9 +283,10 @@ class PreferenceHandlerMixin:
             "ok": True,
             "preferences": enriched,
             "candidate_preferences": candidate_preferences,
-            "active_count": sum(1 for p in enriched if p.get("status") == "active"),
-            "candidate_count": sum(1 for p in enriched if p.get("status") == "candidate"),
-            "paused_count": sum(1 for p in enriched if p.get("status") == "paused"),
+            "total_count": len(visible_for_counts),
+            "active_count": sum(1 for p in visible_for_counts if p.get("status") == "active"),
+            "candidate_count": sum(1 for p in visible_for_counts if p.get("status") == "candidate"),
+            "paused_count": sum(1 for p in visible_for_counts if p.get("status") == "paused"),
             "total_applied": total_applied,
             "total_corrected": total_corrected,
             "high_quality_active_count": high_quality_active_count,
@@ -364,6 +406,114 @@ class PreferenceHandlerMixin:
             detail["transition_reason"] = transition_reason
         self.task_logger.log(session_id="system", action="preference_rejected", detail=detail)
         return {"ok": True, "preference": result}
+
+    def delete_preference(self, preference_id: str) -> dict[str, Any]:
+        preference_id = self._normalize_optional_text(preference_id)
+        if not preference_id:
+            raise WebApiError(400, "삭제할 선호 ID가 필요합니다.")
+
+        existing = self.preference_store.get(preference_id)
+        if existing is None:
+            raise WebApiError(404, "해당 선호를 찾을 수 없습니다.")
+
+        previous_status = str(existing.get("status") or "")
+        was_active = previous_status == "active"
+        if was_active:
+            self.preference_store.pause_preference(preference_id)
+
+        deleted = self.preference_store.delete(preference_id)
+        if deleted is None:
+            raise WebApiError(404, "해당 선호를 찾을 수 없습니다.")
+
+        self.task_logger.log(
+            session_id="system",
+            action="preference_deleted",
+            detail={
+                "preference_id": preference_id,
+                "previous_status": previous_status,
+                "stop_applied": was_active,
+            },
+        )
+        return {
+            "ok": True,
+            "deleted_preference_id": preference_id,
+            "previous_status": previous_status,
+            "stop_applied": was_active,
+        }
+
+    def toggle_preference_reliability(self, preference_id: str) -> dict[str, Any]:
+        preference_id = self._normalize_optional_text(preference_id)
+        if not preference_id:
+            raise WebApiError(400, "신뢰도를 전환할 선호 ID가 필요합니다.")
+
+        existing = self.preference_store.get(preference_id)
+        if existing is None:
+            raise WebApiError(404, "해당 선호를 찾을 수 없습니다.")
+
+        get_summary = getattr(self.session_store, "get_global_audit_summary", None)
+        summary = get_summary() if callable(get_summary) else {}
+        per_pref_stats = summary.get("per_preference_stats", {}) if isinstance(summary, dict) else {}
+        if not isinstance(per_pref_stats, dict):
+            per_pref_stats = {}
+
+        current = enrich_preference_reliability(existing, per_pref_stats)
+        previous_reliability = current.get("is_highly_reliable") is True
+        next_reliability = not previous_reliability
+
+        update_preference = getattr(self.preference_store, "update", None)
+        if not callable(update_preference):
+            raise WebApiError(500, "선호 저장소가 신뢰도 갱신을 지원하지 않습니다.")
+        updated = update_preference(preference_id, {"is_highly_reliable": next_reliability})
+        if updated is None:
+            raise WebApiError(404, "해당 선호를 찾을 수 없습니다.")
+
+        enriched = enrich_preference_reliability(updated, per_pref_stats)
+        self.task_logger.log(
+            session_id="system",
+            action="preference_reliability_toggled",
+            detail={
+                "preference_id": preference_id,
+                "previous_is_highly_reliable": previous_reliability,
+                "is_highly_reliable": next_reliability,
+            },
+        )
+        return {"ok": True, "preference": enriched}
+
+    def edit_preference_text(self, preference_id: str, corrected_text: str) -> dict[str, Any]:
+        preference_id = self._normalize_optional_text(preference_id)
+        if not preference_id:
+            raise WebApiError(400, "편집할 선호 ID가 필요합니다.")
+        normalized_corrected_text = self._normalize_optional_text(corrected_text)
+        if not normalized_corrected_text:
+            raise WebApiError(400, "새 교정 텍스트가 필요합니다.")
+
+        existing = self.preference_store.get(preference_id)
+        if existing is None:
+            raise WebApiError(404, "해당 선호를 찾을 수 없습니다.")
+
+        update_preference = getattr(self.preference_store, "update", None)
+        if not callable(update_preference):
+            raise WebApiError(500, "선호 저장소가 텍스트 편집을 지원하지 않습니다.")
+        updated = update_preference(
+            preference_id,
+            {"corrected_text": normalized_corrected_text},
+        )
+        if updated is None:
+            raise WebApiError(404, "해당 선호를 찾을 수 없습니다.")
+
+        previous_corrected_text = (
+            _as_nonempty_text(existing.get("corrected_text"))
+            or _as_nonempty_text(existing.get("corrected_snippet"))
+        )
+        self.task_logger.log(
+            session_id="system",
+            action="preference_text_edited",
+            detail={
+                "preference_id": preference_id,
+                "previous_corrected_text": previous_corrected_text,
+            },
+        )
+        return {"ok": True, "preference": updated}
 
     def update_preference_description(self, payload: dict[str, Any]) -> dict[str, Any]:
         preference_id = self._normalize_optional_text(payload.get("preference_id"))

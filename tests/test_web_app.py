@@ -6274,6 +6274,40 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertEqual(payload["active_count"], 1)
             self.assertEqual(payload["paused_count"], 1)
 
+    def test_preference_list_respects_limit_and_offset(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                preferences_dir=str(tmp_path / "preferences"),
+                model_provider="mock",
+            )
+            service = WebAppService(settings=settings)
+            for index in range(4):
+                service.preference_store.record_reviewed_candidate_preference(
+                    delta_fingerprint=f"pref-pagination-{index}",
+                    candidate_family="correction_rewrite",
+                    description=f"pagination preference {index}",
+                    source_refs={
+                        "session_id": f"pref-pagination-session-{index}",
+                        "candidate_id": f"pref-pagination-candidate-{index}",
+                    },
+                )
+
+            full_payload = service.list_preferences_payload(limit=4)
+            offset_payload = service.list_preferences_payload(limit=1, offset=2)
+
+            self.assertIs(full_payload["ok"], True)
+            self.assertIs(offset_payload["ok"], True)
+            self.assertEqual(len(full_payload["preferences"]), 4)
+            self.assertEqual(len(offset_payload["preferences"]), 1)
+            self.assertEqual(
+                offset_payload["preferences"][0]["preference_id"],
+                full_payload["preferences"][2]["preference_id"],
+            )
+            self.assertEqual(offset_payload["total_count"], 4)
+
     def test_activate_preference_logs_transition_reason(self) -> None:
         with TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
@@ -6376,6 +6410,220 @@ class WebAppServiceTest(unittest.TestCase):
                 record.get("detail", {}).get("transition_reason") == "테스트 이유"
                 for record in rejected
             ))
+
+    def test_delete_preference_removes_from_store(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                preferences_dir=str(tmp_path / "preferences"),
+                model_provider="mock",
+            )
+            service = WebAppService(settings=settings)
+            preference = service.preference_store.record_reviewed_candidate_preference(
+                delta_fingerprint="pref-delete-active",
+                candidate_family="correction_rewrite",
+                description="삭제할 활성 선호",
+                source_refs={"session_id": "pref-delete", "candidate_id": "delete"},
+            )
+            service.preference_store.activate_preference(preference["preference_id"])
+
+            response = service.delete_preference(preference["preference_id"])
+
+            self.assertTrue(response["ok"])
+            self.assertEqual(response["deleted_preference_id"], preference["preference_id"])
+            self.assertEqual(response["previous_status"], "active")
+            self.assertTrue(response["stop_applied"])
+            self.assertIsNone(service.preference_store.get(preference["preference_id"]))
+            records = service.task_logger.iter_session_records("system")
+            deleted = [
+                record for record in records
+                if record.get("action") == "preference_deleted"
+                and record.get("detail", {}).get("preference_id") == preference["preference_id"]
+            ]
+            self.assertTrue(deleted)
+            self.assertTrue(deleted[-1].get("detail", {}).get("stop_applied"))
+
+    def test_delete_preference_returns_404_for_unknown_id(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                preferences_dir=str(tmp_path / "preferences"),
+                model_provider="mock",
+            )
+            service = WebAppService(settings=settings)
+
+            with self.assertRaises(WebApiError) as ctx:
+                service.delete_preference("missing-preference")
+
+            self.assertEqual(ctx.exception.status_code, 404)
+
+    def test_toggle_preference_reliability_flips_flag(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            for storage_backend in ("json", "sqlite"):
+                with self.subTest(storage_backend=storage_backend):
+                    base = tmp_path / storage_backend
+                    if storage_backend == "sqlite":
+                        settings = AppSettings(
+                            storage_backend="sqlite",
+                            sqlite_db_path=str(base / "test.db"),
+                            sessions_dir=str(base / "sessions"),
+                            task_log_path=str(base / "task_log.jsonl"),
+                            corrections_dir=str(base / "corrections"),
+                            notes_dir=str(base / "notes"),
+                            web_search_history_dir=str(base / "web-search"),
+                            model_provider="mock",
+                        )
+                    else:
+                        settings = AppSettings(
+                            sessions_dir=str(base / "sessions"),
+                            task_log_path=str(base / "task_log.jsonl"),
+                            preferences_dir=str(base / "preferences"),
+                            model_provider="mock",
+                        )
+                    service = WebAppService(settings=settings)
+                    preference = service.preference_store.record_reviewed_candidate_preference(
+                        delta_fingerprint=f"pref-toggle-reliability-{storage_backend}",
+                        candidate_family="correction_rewrite",
+                        description="신뢰도 전환 선호",
+                        source_refs={
+                            "session_id": "pref-toggle",
+                            "candidate_id": f"toggle-{storage_backend}",
+                        },
+                        avg_similarity_score=0.15,
+                        status="active",
+                        initial_reliability_stats={"applied_count": 3, "corrected_count": 0},
+                    )
+                    initial_payload = service.list_preferences_payload()
+                    initial = [
+                        pref for pref in initial_payload["preferences"]
+                        if pref.get("preference_id") == preference["preference_id"]
+                    ][0]
+                    self.assertIs(initial["is_highly_reliable"], True)
+
+                    disabled = service.toggle_preference_reliability(preference["preference_id"])
+
+                    self.assertTrue(disabled["ok"])
+                    self.assertIs(disabled["preference"]["is_highly_reliable"], False)
+                    stored = service.preference_store.get(preference["preference_id"])
+                    self.assertIsNotNone(stored)
+                    self.assertIs(stored["is_highly_reliable"], False)
+                    after_disable_payload = service.list_preferences_payload()
+                    after_disable = [
+                        pref for pref in after_disable_payload["preferences"]
+                        if pref.get("preference_id") == preference["preference_id"]
+                    ][0]
+                    self.assertIs(after_disable["is_highly_reliable"], False)
+
+                    enabled = service.toggle_preference_reliability(preference["preference_id"])
+
+                    self.assertTrue(enabled["ok"])
+                    self.assertIs(enabled["preference"]["is_highly_reliable"], True)
+                    records = service.task_logger.iter_session_records("system")
+                    toggled = [
+                        record for record in records
+                        if record.get("action") == "preference_reliability_toggled"
+                        and record.get("detail", {}).get("preference_id") == preference["preference_id"]
+                    ]
+                    self.assertEqual(len(toggled), 2)
+
+    def test_toggle_preference_reliability_returns_404_for_unknown_id(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                preferences_dir=str(tmp_path / "preferences"),
+                model_provider="mock",
+            )
+            service = WebAppService(settings=settings)
+
+            with self.assertRaises(WebApiError) as ctx:
+                service.toggle_preference_reliability("missing-preference")
+
+            self.assertEqual(ctx.exception.status_code, 404)
+
+    def test_edit_preference_text_updates_corrected_text(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                preferences_dir=str(tmp_path / "preferences"),
+                model_provider="mock",
+            )
+            service = WebAppService(settings=settings)
+            preference = service.preference_store.record_reviewed_candidate_preference(
+                delta_fingerprint="pref-edit-text",
+                candidate_family="correction_rewrite",
+                description="내용 편집 선호",
+                source_refs={"session_id": "pref-edit", "candidate_id": "edit"},
+                corrected_snippet="이전 교정 텍스트",
+            )
+
+            response = service.edit_preference_text(
+                preference["preference_id"],
+                "새 교정 텍스트",
+            )
+
+            self.assertTrue(response["ok"])
+            self.assertEqual(response["preference"]["corrected_text"], "새 교정 텍스트")
+            stored = service.preference_store.get(preference["preference_id"])
+            self.assertIsNotNone(stored)
+            self.assertEqual(stored["corrected_text"], "새 교정 텍스트")
+            records = service.task_logger.iter_session_records("system")
+            edited = [
+                record for record in records
+                if record.get("action") == "preference_text_edited"
+                and record.get("detail", {}).get("preference_id") == preference["preference_id"]
+            ]
+            self.assertTrue(edited)
+            self.assertEqual(
+                edited[-1].get("detail", {}).get("previous_corrected_text"),
+                "이전 교정 텍스트",
+            )
+
+    def test_edit_preference_text_returns_404_for_unknown_id(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                preferences_dir=str(tmp_path / "preferences"),
+                model_provider="mock",
+            )
+            service = WebAppService(settings=settings)
+
+            with self.assertRaises(WebApiError) as ctx:
+                service.edit_preference_text("missing-preference", "새 교정 텍스트")
+
+            self.assertEqual(ctx.exception.status_code, 404)
+
+    def test_edit_preference_text_rejects_empty_text(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                preferences_dir=str(tmp_path / "preferences"),
+                model_provider="mock",
+            )
+            service = WebAppService(settings=settings)
+            preference = service.preference_store.record_reviewed_candidate_preference(
+                delta_fingerprint="pref-edit-empty",
+                candidate_family="correction_rewrite",
+                description="빈 텍스트 거부 선호",
+                source_refs={"session_id": "pref-edit", "candidate_id": "empty"},
+            )
+
+            with self.assertRaises(WebApiError) as ctx:
+                service.edit_preference_text(preference["preference_id"], "   ")
+
+            self.assertEqual(ctx.exception.status_code, 400)
 
     def test_list_preferences_payload_includes_last_transition_reason(self) -> None:
         with TemporaryDirectory() as tmp_dir:

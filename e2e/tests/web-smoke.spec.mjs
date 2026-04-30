@@ -12165,6 +12165,95 @@ test("preference reliability toggle updates badge", async ({ page }) => {
   expect(toggleRequests).toBe(1);
 });
 
+test("preference text edit updates corrected text", async ({ page }) => {
+  const preferenceId = "pref-edit-text";
+  const originalCorrectedText = "기존 교정 텍스트";
+  const updatedCorrectedText = "새 교정 텍스트";
+  let correctedText = originalCorrectedText;
+  let patchRequests = 0;
+
+  const preferencePayload = () => ({
+    preference_id: preferenceId,
+    delta_fingerprint: "sha256:edit-text",
+    description: "내용 편집 smoke 테스트 선호",
+    status: "active",
+    evidence_count: 2,
+    cross_session_count: 1,
+    reliability_stats: { applied_count: 2, corrected_count: 0 },
+    quality_info: { avg_similarity_score: 0.15, is_high_quality: true },
+    is_highly_reliable: false,
+    original_snippet: "원본 텍스트",
+    corrected_text: correctedText,
+    corrected_snippet: originalCorrectedText,
+    activated_at: "2026-04-30T00:00:00Z",
+    created_at: "2026-04-30T00:00:00Z",
+    updated_at: "2026-04-30T00:00:00Z",
+  });
+
+  await page.route(/\/api\/preferences$/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: true,
+        preferences: [preferencePayload()],
+        active_count: 1,
+        candidate_count: 0,
+        paused_count: 0,
+        total_applied: 2,
+        total_corrected: 0,
+        high_quality_active_count: 1,
+        highly_reliable_active_count: 0,
+        high_severity_conflict_count: 0,
+        low_reliability_active_count: 0,
+      }),
+    });
+  });
+  await page.route(/\/api\/preferences\/audit$/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: true,
+        audit: {
+          total: 1,
+          by_status: { active: 1, candidate: 0, paused: 0 },
+          conflict_pair_count: 0,
+          adopted_corrections_count: 0,
+          available_to_sync_count: 0,
+        },
+      }),
+    });
+  });
+  await page.route(new RegExp(`/api/preferences/${preferenceId}$`), async (route) => {
+    expect(route.request().method()).toBe("PATCH");
+    const body = JSON.parse(route.request().postData() ?? "{}");
+    expect(body.corrected_text).toBe(updatedCorrectedText);
+    patchRequests += 1;
+    correctedText = body.corrected_text;
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ ok: true, preference: preferencePayload() }),
+    });
+  });
+
+  await page.goto("/app-preview");
+  const preferenceCard = page.locator(`#pref-card-${preferenceId}`);
+  await expect(preferenceCard).toBeVisible({ timeout: 10_000 });
+  await preferenceCard.getByTestId("pref-detail-toggle").click();
+  await expect(preferenceCard.getByText(originalCorrectedText)).toBeVisible();
+
+  await preferenceCard.getByTestId("edit-preference-btn").click();
+  const textarea = preferenceCard.getByTestId("preference-text-textarea");
+  await expect(textarea).toHaveValue(originalCorrectedText);
+  await textarea.fill(updatedCorrectedText);
+  await preferenceCard.getByTestId("save-preference-text-btn").click();
+
+  await expect(preferenceCard.getByText(updatedCorrectedText)).toBeVisible();
+  expect(patchRequests).toBe(1);
+});
+
 test("corrections: GET /api/corrections/summary 응답이 ok, total, by_status, top_recurring_fingerprints를 포함합니다", async ({ page }) => {
   await page.route(/\/api\/corrections\/summary$/, async (route) => {
     expect(route.request().method()).toBe("GET");

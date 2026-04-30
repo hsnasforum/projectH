@@ -437,6 +437,42 @@ class PreferenceHandlerMixin:
         )
         return {"ok": True, "preference": enriched}
 
+    def edit_preference_text(self, preference_id: str, corrected_text: str) -> dict[str, Any]:
+        preference_id = self._normalize_optional_text(preference_id)
+        if not preference_id:
+            raise WebApiError(400, "편집할 선호 ID가 필요합니다.")
+        normalized_corrected_text = self._normalize_optional_text(corrected_text)
+        if not normalized_corrected_text:
+            raise WebApiError(400, "새 교정 텍스트가 필요합니다.")
+
+        existing = self.preference_store.get(preference_id)
+        if existing is None:
+            raise WebApiError(404, "해당 선호를 찾을 수 없습니다.")
+
+        update_preference = getattr(self.preference_store, "update", None)
+        if not callable(update_preference):
+            raise WebApiError(500, "선호 저장소가 텍스트 편집을 지원하지 않습니다.")
+        updated = update_preference(
+            preference_id,
+            {"corrected_text": normalized_corrected_text},
+        )
+        if updated is None:
+            raise WebApiError(404, "해당 선호를 찾을 수 없습니다.")
+
+        previous_corrected_text = (
+            _as_nonempty_text(existing.get("corrected_text"))
+            or _as_nonempty_text(existing.get("corrected_snippet"))
+        )
+        self.task_logger.log(
+            session_id="system",
+            action="preference_text_edited",
+            detail={
+                "preference_id": preference_id,
+                "previous_corrected_text": previous_corrected_text,
+            },
+        )
+        return {"ok": True, "preference": updated}
+
     def update_preference_description(self, payload: dict[str, Any]) -> dict[str, Any]:
         preference_id = self._normalize_optional_text(payload.get("preference_id"))
         description = self._normalize_optional_text(payload.get("description"))

@@ -3,6 +3,7 @@ import type { CorrectionDetailRecord, CorrectionListResponse, CorrectionSummary,
 import {
   confirmCorrectionPattern,
   dismissCorrectionPattern,
+  editPreferenceText,
   promoteCorrectionPattern,
   fetchCorrectionDetail,
   fetchCorrectionList,
@@ -100,6 +101,7 @@ export default function PreferencePanel({
   const [expanded, setExpanded] = useState(true);
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
   const [editDescriptions, setEditDescriptions] = useState<Record<string, string | null>>({});
+  const [editPreferenceTexts, setEditPreferenceTexts] = useState<Record<string, string | null>>({});
   const [candidatePreferences, setCandidatePreferences] = useState<PreferenceRecord[] | null>(null);
   const [fadingOut, setFadingOut] = useState<Set<string>>(new Set());
   const [syncingAdopted, setSyncingAdopted] = useState(false);
@@ -277,6 +279,11 @@ export default function PreferencePanel({
         delete next[pref.preference_id];
         return next;
       });
+      setEditPreferenceTexts((prev) => {
+        const next = { ...prev };
+        delete next[pref.preference_id];
+        return next;
+      });
       await load();
     } catch {
       // silent
@@ -299,6 +306,31 @@ export default function PreferencePanel({
       // silent
     }
   }, [load]);
+
+  const handlePreferenceTextSave = useCallback(async (pref: PreferenceRecord) => {
+    const draft = editPreferenceTexts[pref.preference_id];
+    const correctedText = draft?.trim();
+    if (!correctedText) return;
+    try {
+      const updated = await editPreferenceText(pref.preference_id, correctedText);
+      setPreferences((prev) =>
+        prev.map((item) => item.preference_id === updated.preference_id ? updated : item),
+      );
+      setCandidatePreferences((prev) =>
+        prev == null
+          ? prev
+          : prev.map((item) => item.preference_id === updated.preference_id ? updated : item),
+      );
+      setEditPreferenceTexts((prev) => {
+        const next = { ...prev };
+        delete next[pref.preference_id];
+        return next;
+      });
+      await load();
+    } catch {
+      // silent
+    }
+  }, [editPreferenceTexts, load]);
 
   const handleSyncAdopted = useCallback(async () => {
     setSyncingAdopted(true);
@@ -676,10 +708,13 @@ export default function PreferencePanel({
             const isHighQuality = pref.quality_info?.is_high_quality === true;
             const isHighlyReliable = pref.is_highly_reliable === true;
             const isHighSeverityConflict = pref.conflict_info?.conflict_severity === "high";
-            const hasEvidenceDetail = Boolean(pref.original_snippet && pref.corrected_snippet);
+            const currentCorrectedText = pref.corrected_text ?? pref.corrected_snippet ?? "";
+            const hasEvidenceDetail = Boolean(pref.original_snippet && currentCorrectedText);
             const isDetailExpanded = expandedItems.has(pref.preference_id);
             const isDescriptionEditing = editDescriptions[pref.preference_id] !== undefined;
             const descriptionDraft = editDescriptions[pref.preference_id] ?? pref.description;
+            const isPreferenceTextEditing = editPreferenceTexts[pref.preference_id] !== undefined;
+            const preferenceTextDraft = editPreferenceTexts[pref.preference_id] ?? currentCorrectedText;
             const reviewReasonNote = pref.review_reason_note?.trim();
             const sourceSessionTitle = pref.source_session_title?.trim();
             const lastTransitionReason = pref.last_transition_reason?.trim();
@@ -888,8 +923,48 @@ export default function PreferencePanel({
                     <div>
                       <p className="mb-0.5 font-medium text-sidebar-muted">교정</p>
                       <p className="whitespace-pre-wrap break-words rounded bg-emerald-500/10 p-1.5 text-emerald-200">
-                        {pref.corrected_snippet}
+                        {currentCorrectedText}
                       </p>
+                    </div>
+                  </div>
+                )}
+
+                {isPreferenceTextEditing && (
+                  <div className="mb-2 space-y-1">
+                    <textarea
+                      data-testid="preference-text-textarea"
+                      className="min-h-[72px] w-full resize-none rounded border border-white/10 bg-sidebar px-2 py-1.5 text-[12px] leading-snug text-sidebar-text outline-none focus:border-sky-300/60"
+                      rows={3}
+                      value={preferenceTextDraft}
+                      onChange={(event) =>
+                        setEditPreferenceTexts((prev) => ({
+                          ...prev,
+                          [pref.preference_id]: event.target.value,
+                        }))
+                      }
+                    />
+                    <div className="flex gap-1.5">
+                      <button
+                        data-testid="save-preference-text-btn"
+                        className="rounded bg-sky-500/15 px-2 py-1 text-[11px] font-medium text-sky-300 transition-colors hover:bg-sky-500/25 disabled:cursor-not-allowed disabled:opacity-40"
+                        disabled={!preferenceTextDraft.trim()}
+                        onClick={() => handlePreferenceTextSave(pref)}
+                      >
+                        저장
+                      </button>
+                      <button
+                        data-testid="cancel-preference-text-btn"
+                        className="rounded bg-white/5 px-2 py-1 text-[11px] font-medium text-sidebar-muted transition-colors hover:bg-white/10 hover:text-sidebar-text"
+                        onClick={() =>
+                          setEditPreferenceTexts((prev) => {
+                            const next = { ...prev };
+                            delete next[pref.preference_id];
+                            return next;
+                          })
+                        }
+                      >
+                        취소
+                      </button>
                     </div>
                   </div>
                 )}
@@ -935,6 +1010,20 @@ export default function PreferencePanel({
                         거부
                       </button>
                     </>
+                  )}
+                  {!isPreferenceTextEditing && (
+                    <button
+                      data-testid="edit-preference-btn"
+                      onClick={() =>
+                        setEditPreferenceTexts((prev) => ({
+                          ...prev,
+                          [pref.preference_id]: currentCorrectedText,
+                        }))
+                      }
+                      className="text-[10px] px-1.5 py-0.5 rounded text-sky-300 hover:bg-sky-500/10 hover:text-sky-200 transition-colors"
+                    >
+                      내용 편집
+                    </button>
                   )}
                   <button
                     data-testid="delete-preference-btn"

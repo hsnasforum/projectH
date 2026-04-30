@@ -239,9 +239,10 @@ class AgentLoop:
                     p for p in enriched_prefs
                     if is_highly_reliable_preference(p)
                 ]
+            user_terms = self._preference_context_terms(user_input) if user_input else set()
             selected_prefs, injection_reason = self._select_context_relevant_preferences(
                 enriched_prefs,
-                user_input=user_input,
+                user_terms,
             )
             selected_prefs = selected_prefs[:budget]
             self._log_preference_injections(
@@ -259,24 +260,30 @@ class AgentLoop:
 
     @staticmethod
     def _preference_context_terms(text: str | None) -> set[str]:
+        stop_words = {
+            "the", "a", "an", "is", "are", "was", "were", "be", "been",
+            "have", "has", "had", "do", "does", "did", "will", "would",
+            "can", "could", "should", "may", "might", "of", "in", "on",
+            "at", "to", "for", "with", "by", "from", "as", "or", "and",
+            "but", "not", "this", "that", "it", "its",
+            "이", "가", "을", "를", "은", "는", "에", "의", "로", "와", "과",
+        }
         return {
             token
             for token in str(text or "").lower().split()
-            if len(token) >= 2
+            if len(token) >= 2 and token not in stop_words
         }
 
     def _select_context_relevant_preferences(
         self,
         preferences: list[dict[str, Any]],
-        *,
-        user_input: str | None,
+        user_terms: set[str],
     ) -> tuple[list[dict[str, Any]], str]:
-        user_terms = self._preference_context_terms(user_input)
         if not user_terms:
             return preferences, "fallback_all"
 
-        matched = []
-        for preference in preferences:
+        scored_preferences: list[tuple[int, int, dict[str, Any]]] = []
+        for index, preference in enumerate(preferences):
             preference_terms = self._preference_context_terms(
                 " ".join(
                     [
@@ -285,10 +292,18 @@ class AgentLoop:
                     ]
                 )
             )
-            if user_terms & preference_terms:
-                matched.append(preference)
-        if matched:
-            return matched, "context_match"
+            score = len(user_terms & preference_terms)
+            if score > 0:
+                scored_preferences.append((score, index, preference))
+        if scored_preferences:
+            scored_preferences.sort(
+                key=lambda item: (
+                    -item[0],
+                    item[2].get("is_highly_reliable") is not True,
+                    item[1],
+                )
+            )
+            return [preference for _, _, preference in scored_preferences], "context_match"
         return preferences, "fallback_all"
 
     def _log_preference_injections(

@@ -1733,10 +1733,24 @@ PRODUCT_SPEC / ACCEPTANCE_CRITERIA / ARCHITECTURE / MILESTONES /
 TASK_BACKLOG에 컨텍스트 관련성 필터, `fallback_all`, `preference_injected`
 감사 이벤트를 반영.
 
+## M116 선호 주입 관련성 품질 개선
+
+Axis 1: stop-word 필터 + overlap 점수 정렬 + is_highly_reliable 동점 우선순위 — DONE
+`_preference_context_terms(text)` helper가 소문자 변환, 공백 분리, 길이 2자 이상 필터,
+최소 stop-word 집합(영어 기능어 + 한국어 조사) 제거를 수행한다.
+`_select_context_relevant_preferences(preferences, user_terms)` helper가 선호별
+overlap 점수를 계산해 내림차순 정렬하고, 동점 시 `is_highly_reliable == True`
+선호를 먼저 배치한다. stop-word 단독 입력 또는 관련 선호 없음 시 `fallback_all`
+동작을 유지한다.
+
+Axis 2: docs sync (inline bundle) — DONE
+PRODUCT_SPEC / ACCEPTANCE_CRITERIA / ARCHITECTURE / MILESTONES /
+TASK_BACKLOG에 stop-word 필터, overlap 점수 정렬, is_highly_reliable 동점 우선순위를 반영.
+
 ## Next 3 Implementation Priorities
 
-1. **PR 머지 백로그**: PR #91–#105 + 이번 M113 PR — 모두 draft, `pr_merge_gate` operator 승인 대기.
-2. **M115 완료**: Axis 1+2 docs sync 완료 — commit/push/PR 대기.
+1. **PR 머지 백로그**: PR #91–#110 — 모두 draft, `pr_merge_gate` operator 승인 대기.
+2. **M116 완료**: Axis 1+2 docs sync 완료 — commit/push/PR 대기.
 3. **장기**: cross-session memory 강화, north star 방향 유지.
 
 ## Do Not Pull Forward

@@ -162,7 +162,10 @@ def main() -> int:
         if not args.skip_preflight and needs_model:
             runtime_status = preflight_model(model)
 
-        session_store = SessionStore(base_dir=settings.sessions_dir)
+        session_store = SessionStore(
+            base_dir=settings.sessions_dir,
+            task_log_path=settings.task_log_path,
+        )
         task_logger = TaskLogger(path=settings.task_log_path)
         tools = {
             "read_file": FileReaderTool(),

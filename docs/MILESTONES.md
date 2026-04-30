@@ -1747,10 +1747,23 @@ Axis 2: docs sync (inline bundle) — DONE
 PRODUCT_SPEC / ACCEPTANCE_CRITERIA / ARCHITECTURE / MILESTONES /
 TASK_BACKLOG에 stop-word 필터, overlap 점수 정렬, is_highly_reliable 동점 우선순위를 반영.
 
+## M117 주입 피드백 루프
+
+Axis 1: `injected_count` 전역 감사 요약 — DONE
+`PerPreferenceStats`에 `injected_count` 필드 추가.
+`SessionStore.get_global_audit_summary()` 및 `SQLiteSessionStore.get_global_audit_summary()`가
+`preference_injected` task log 이벤트를 스캔해 `preference_id` 기준으로 `injected_count`를
+누적한다. `preference_id`가 없거나 기존 stats에 없는 이벤트는 무시한다.
+`app/main.py` / `app/web.py` wiring에 `task_log_path` 연결 추가.
+
+Axis 2: docs sync (inline bundle) — DONE
+PRODUCT_SPEC / ACCEPTANCE_CRITERIA / ARCHITECTURE / MILESTONES /
+TASK_BACKLOG에 `injected_count` 필드, 스캔 동작, `PerPreferenceStats` 갱신을 반영.
+
 ## Next 3 Implementation Priorities
 
-1. **PR 머지 백로그**: PR #91–#110 — 모두 draft, `pr_merge_gate` operator 승인 대기.
-2. **M116 완료**: Axis 1+2 docs sync 완료 — commit/push/PR 대기.
+1. **PR 머지 백로그**: PR #91–#111 — 모두 draft, `pr_merge_gate` operator 승인 대기.
+2. **M117 완료**: Axis 1+2 docs sync 완료 — commit/push/PR 대기.
 3. **장기**: cross-session memory 강화, north star 방향 유지.
 
 ## Do Not Pull Forward

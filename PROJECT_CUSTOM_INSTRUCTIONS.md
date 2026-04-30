@@ -103,6 +103,9 @@ Verify/handoff owner:
 - `/verify`를 남기거나 갱신한 뒤 다음 control을 씁니다.
 - exact slice가 정해지면 `.pipeline/implement_handoff.md`를 씁니다.
 - next-slice ambiguity면 `.pipeline/advisory_request.md`를 먼저 엽니다.
+- advisory recovery prompt에 `ADVISORY_FOLLOWUP_ALLOWED: false`가 있으면
+  새 `.pipeline/advisory_request.md`를 다시 열지 말고 implement 또는 실제
+  operator boundary로 수렴합니다.
 - real operator-only decision이나 safety/truth/approval/publication blocker일
   때만 `.pipeline/operator_request.md`를 씁니다.
 - active implement-owner session의 context exhaustion, rollover,

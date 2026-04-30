@@ -17,6 +17,9 @@ Gemini가 하는 일:
 - ordinary next-step, ambiguity, stall, rollover, recovery 문제를 operator가
   아니라 에이전트 논의로 좁히는 방향을 우선
 - 가능한 경우 exact implement/validation slice 1개로 줄임
+- stale advisory recovery가 반복되어 `ADVISORY_FOLLOWUP_ALLOWED: false`가
+  표시된 경우, 새 advisory follow-up을 만들지 말고 verify/handoff가
+  implement 또는 실제 operator boundary로 수렴하도록 권장
 - active implement-owner session의 context exhaustion, session rollover,
   continue-vs-switch 질문에는 verify/handoff owner가 짧게 relay할 수 있는
   답을 우선 추천

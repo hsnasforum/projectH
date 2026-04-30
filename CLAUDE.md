@@ -89,6 +89,9 @@ not current execution truth.
 - Do not call the user for ordinary next-step, ambiguity, stall, rollover, or
   recovery choices.
 - Route ordinary ambiguity through verify/handoff and advisory first.
+- If stale advisory recovery repeats and the prompt says
+  `ADVISORY_FOLLOWUP_ALLOWED: false`, converge to implement or a real operator
+  boundary instead of reopening advisory.
 - Keep real-risk actions as explicit operator boundaries: destructive writes,
   credentials/auth, approval-record repair, truth-sync blockers, publication,
   and merge execution.

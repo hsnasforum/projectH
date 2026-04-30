@@ -1525,10 +1525,23 @@ Axis 2: dist rebuild — DONE
 `npx vite build`로 `app/static/dist/assets/index.js`와 관련 `index.css` 갱신.
 `correction-detail-panel` testid가 dist JS에 1건 포함됨을 확인.
 
+## M99 advisory-loop-recovery-guard (watcher runtime)
+
+watcher runtime 개선; product UI 변경 없음.
+- `DEFAULT_ADVISORY_RECOVERY_SEC = 300.0` 상수 추출 (5분 기본 stale recovery)
+- `_get_next_control_seq()` superseded control slot까지 스캔 (단조 증가 보장)
+- `DEFAULT_ADVISORY_PROMPT`에 대형 planning docs broad-read 금지 + `INSUFFICIENT_CONTEXT` 지침
+- root memory 4종(AGENTS/CLAUDE/GEMINI/PROJECT_CUSTOM_INSTRUCTIONS) + harness/advisory + pipeline README 동기화
+- 신규 regression test 3개
+commit: 9331c5b, branch: fix/m99-advisory-loop-recovery-guard,
+PR #92 (draft, base: feat/m98-axis1-correction-history)
+
 ## Next 3 Implementation Priorities
 
-1. **PR 머지 백로그**: operator 승인 대기 — PR #71-#86 스택.
-2. **M98 후속**: 교정 이력 상세 조회 source + dist 반영은 완료; Playwright browser verification은 CI에서 수행.
+1. **PR 머지 백로그**: PR #91 (M98, feat/m98-axis1-correction-history → feat/m96-bundle)
+   + PR #92 (M99, fix/m99-advisory-loop-recovery-guard → feat/m98-axis1-correction-history) —
+   모두 draft, `pr_merge_gate` operator 승인 대기.
+2. **M100 방향**: advisory 결정 대기 중 (Gemini 미응답); 로컬 doc-sync 선행 실행.
 3. **장기**: cross-session memory 강화, north star 방향 유지.
 
 ## Do Not Pull Forward

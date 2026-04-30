@@ -12925,6 +12925,102 @@ test("correction list search endpoint filters by query parameter", async ({ page
   expect(withQuery.matches).toBe(true);
 });
 
+test("correction history status filter narrows list", async ({ page }) => {
+  await page.route(/\/api\/preferences$/, async (route) => {
+    if (route.request().method() === "GET") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ ok: true, preferences: [], audit: null }),
+      });
+    } else {
+      await route.continue();
+    }
+  });
+  await page.route(/\/api\/preferences\/audit$/, async (route) => {
+    if (route.request().method() === "GET") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ ok: true, audit: null }),
+      });
+    } else {
+      await route.continue();
+    }
+  });
+  await page.route(/\/api\/corrections\/summary$/, async (route) => {
+    if (route.request().method() === "GET") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ ok: true, total: 2, by_status: { recorded: 1, confirmed: 1 }, top_recurring_fingerprints: [] }),
+      });
+    } else {
+      await route.continue();
+    }
+  });
+
+  let confirmedStatusRequests = 0;
+  await page.route(/\/api\/corrections\/list(\?.*)?$/, async (route) => {
+    if (route.request().method() !== "GET") {
+      await route.continue();
+      return;
+    }
+    const url = new URL(route.request().url());
+    const status = url.searchParams.get("status");
+    if (status === "confirmed") confirmedStatusRequests += 1;
+    const corrections = status === "confirmed"
+      ? [
+          {
+            correction_id: "correction-status-confirmed-001",
+            status: "confirmed",
+            original_text: "confirmed status target",
+            corrected_text: "confirmed status corrected",
+            delta_fingerprint: "fp-status-confirmed-001",
+            created_at: "2026-04-30T10:00:00Z",
+          },
+        ]
+      : [
+          {
+            correction_id: "correction-status-recorded-001",
+            status: "recorded",
+            original_text: "recorded status source",
+            corrected_text: "recorded status corrected",
+            delta_fingerprint: "fp-status-recorded-001",
+            created_at: "2026-04-30T09:00:00Z",
+          },
+          {
+            correction_id: "correction-status-confirmed-001",
+            status: "confirmed",
+            original_text: "confirmed status target",
+            corrected_text: "confirmed status corrected",
+            delta_fingerprint: "fp-status-confirmed-001",
+            created_at: "2026-04-30T10:00:00Z",
+          },
+        ];
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ ok: true, corrections }),
+    });
+  });
+
+  await page.goto("/app-preview");
+  await expect(page.getByTestId("correction-list-item")).toHaveCount(2, { timeout: 10_000 });
+
+  const statusRequest = page.waitForRequest((request) => {
+    if (!request.url().includes("/api/corrections/list")) return false;
+    return new URL(request.url()).searchParams.get("status") === "confirmed";
+  });
+  await page.getByTestId("correction-status-filter").selectOption("confirmed");
+  await statusRequest;
+
+  await expect(page.getByTestId("correction-list-item")).toHaveCount(1, { timeout: 10_000 });
+  await expect(page.getByTestId("correction-list-item")).toContainText("[confirmed] confirmed status target");
+  await expect(page.getByTestId("correction-list-item")).not.toContainText("recorded status source");
+  expect(confirmedStatusRequests).toBe(1);
+});
+
 test("correction promote pattern returns activated_count in response", async ({ page }) => {
   await page.route(/\/api\/corrections\/promote-pattern$/, async (route) => {
     if (route.request().method() === "POST") {

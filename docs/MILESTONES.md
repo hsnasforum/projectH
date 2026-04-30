@@ -1653,10 +1653,24 @@ Axis 2: dist rebuild — DONE
 `e2e/tests/web-smoke.spec.mjs`에 `preference show more appends next page` 시나리오 추가.
 Playwright webServer는 sandbox socket 제한으로 미실행; CI 위임.
 
+## M110 Review Queue 검색 필터
+
+Axis 1: 클라이언트 사이드 텍스트 검색 필터 — DONE
+`ReviewQueuePanel`에 `q` 검색 상태 + `filteredItems` 파생 로직 + `data-testid="review-queue-search-input"` 입력 + `검색 결과 없음` 빈 상태 추가.
+기존 `items` payload 대상 클라이언트 필터; 별도 API 변경 없음.
+
+Axis 2: dist rebuild — DONE
+`npx vite build`로 dist 갱신; review-queue-search-input 코드 포함.
+`e2e/tests/web-smoke.spec.mjs`에 `review queue search filter narrows list` 시나리오 추가.
+Playwright webServer는 sandbox socket 제한으로 미실행; CI 위임.
+
+Fix: controller/runtime 인프라 — DONE (별도 커밋 d9adefb)
+`effectiveLaneState()` 단일 truth + `describe_turn_state()` READY+closeout 정확 표시 + zombie pidfile guard.
+
 ## Next 3 Implementation Priorities
 
-1. **PR 머지 백로그**: PR #91–#100 + 이번 M109 PR — 모두 draft, `pr_merge_gate` operator 승인 대기.
-2. **M109 완료**: Axis 1+2+doc-sync 완료 — commit/push/PR 대기.
+1. **PR 머지 백로그**: PR #91–#101 + 이번 M110 PR — 모두 draft, `pr_merge_gate` operator 승인 대기.
+2. **M110 완료**: Axis 1+2+doc-sync 완료 — commit/push/PR 대기.
 3. **장기**: cross-session memory 강화, north star 방향 유지.
 
 ## Do Not Pull Forward

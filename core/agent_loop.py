@@ -170,21 +170,28 @@ class AgentLoop:
             pass
         return _NoOpContext(self.model)
 
-    def _routed_preferences(self, task: str = "respond", **kwargs: Any) -> list[dict[str, str]] | None:
+    def _routed_preferences(
+        self,
+        task: str = "respond",
+        *,
+        user_input: str | None = None,
+        session_id: str | None = None,
+        **kwargs: Any,
+    ) -> list[dict[str, str]] | None:
         """Get active preferences with budget based on routing tier."""
         if self._model_router is None:
-            return self._get_active_preferences(10)
+            return self._get_active_preferences(10, user_input=user_input, session_id=session_id)
         try:
             from model_adapter.router import route, RoutingHint, ModelConfig, PREFERENCE_BUDGET
             config = self._model_router
             if not isinstance(config, ModelConfig):
-                return self._get_active_preferences(10)
+                return self._get_active_preferences(10, user_input=user_input, session_id=session_id)
             hint = RoutingHint(task=task, **kwargs)
             tier = route(hint)
             budget = PREFERENCE_BUDGET.get(tier, 10)
-            return self._get_active_preferences(budget)
+            return self._get_active_preferences(budget, user_input=user_input, session_id=session_id)
         except Exception:
-            return self._get_active_preferences(10)
+            return self._get_active_preferences(10, user_input=user_input, session_id=session_id)
 
     def _maybe_review_response(
         self,
@@ -208,7 +215,12 @@ class AgentLoop:
             return draft
 
     def _get_active_preferences(
-        self, budget: int = 10, *, highly_reliable_only: bool = True
+        self,
+        budget: int = 10,
+        *,
+        highly_reliable_only: bool = True,
+        user_input: str | None = None,
+        session_id: str | None = None,
     ) -> list[dict[str, str]] | None:
         if not self.preference_store:
             return None
@@ -227,12 +239,91 @@ class AgentLoop:
                     p for p in enriched_prefs
                     if is_highly_reliable_preference(p)
                 ]
+            selected_prefs, injection_reason = self._select_context_relevant_preferences(
+                enriched_prefs,
+                user_input=user_input,
+            )
+            selected_prefs = selected_prefs[:budget]
+            self._log_preference_injections(
+                session_id=session_id,
+                preferences=selected_prefs,
+                reason=injection_reason,
+                user_input=user_input,
+            )
             return [
                 {"description": str(p.get("description", "")), "fingerprint": preference_fingerprint(p)}
-                for p in enriched_prefs[:budget]
+                for p in selected_prefs
             ]
         except Exception:
             return None
+
+    @staticmethod
+    def _preference_context_terms(text: str | None) -> set[str]:
+        return {
+            token
+            for token in str(text or "").lower().split()
+            if len(token) >= 2
+        }
+
+    def _select_context_relevant_preferences(
+        self,
+        preferences: list[dict[str, Any]],
+        *,
+        user_input: str | None,
+    ) -> tuple[list[dict[str, Any]], str]:
+        user_terms = self._preference_context_terms(user_input)
+        if not user_terms:
+            return preferences, "fallback_all"
+
+        matched = []
+        for preference in preferences:
+            preference_terms = self._preference_context_terms(
+                " ".join(
+                    [
+                        str(preference.get("description") or ""),
+                        str(preference.get("corrected_text") or ""),
+                    ]
+                )
+            )
+            if user_terms & preference_terms:
+                matched.append(preference)
+        if matched:
+            return matched, "context_match"
+        return preferences, "fallback_all"
+
+    def _log_preference_injections(
+        self,
+        *,
+        session_id: str | None,
+        preferences: list[dict[str, Any]],
+        reason: str,
+        user_input: str | None,
+    ) -> None:
+        normalized_session_id = str(session_id or "").strip()
+        if not normalized_session_id or not preferences:
+            return
+        log = getattr(getattr(self, "task_logger", None), "log", None)
+        if not callable(log):
+            return
+        snippet = str(user_input or "")[:50]
+        for preference in preferences:
+            preference_id = str(
+                preference.get("preference_id")
+                or preference_fingerprint(preference)
+                or ""
+            )
+            try:
+                log(
+                    session_id=normalized_session_id,
+                    action="preference_injected",
+                    detail={
+                        "preference_id": preference_id,
+                        "reason": reason,
+                        "user_input_snippet": snippet,
+                    },
+                )
+            except Exception:
+                continue
 
     def _get_preference_reliability_stats(self) -> dict[str, Any]:
         get_summary = getattr(self.session_store, "get_global_audit_summary", None)
@@ -1482,8 +1573,14 @@ class AgentLoop:
         phase_event_callback: Callable[[dict[str, Any]], None] | None = None,
         cancel_requested: Callable[[], bool] | None = None,
         chunk_threshold: int = 4200,
+        user_input: str | None = None,
+        session_id: str | None = None,
     ) -> tuple[str, list[dict[str, Any]]]:
-        _summary_prefs = self._routed_preferences(task="summarize")
+        _summary_prefs = self._routed_preferences(
+            task="summarize",
+            user_input=user_input,
+            session_id=session_id,
+        )
         if len(text) <= chunk_threshold:
             short_summary_prompt = self._build_short_summary_prompt(
                 source_label=source_label,
@@ -7178,7 +7275,13 @@ class AgentLoop:
                     ),
                     evidence_items=selected_evidence,
                     active_preferences=(
-                        _ctx_prefs := (None if _is_web else self._routed_preferences(**_routing_kwargs))
+                        _ctx_prefs := (
+                            None if _is_web else self._routed_preferences(
+                                **_routing_kwargs,
+                                user_input=request.user_text,
+                                session_id=request.session_id,
+                            )
+                        )
                     ),
                 ),
                 stream_event_callback=stream_event_callback,
@@ -7274,6 +7377,8 @@ class AgentLoop:
         stream_event_callback: Callable[[dict[str, Any]], None] | None = None,
         phase_event_callback: Callable[[dict[str, Any]], None] | None = None,
         cancel_requested: Callable[[], bool] | None = None,
+        user_input: str | None = None,
+        session_id: str | None = None,
     ) -> tuple[str, str, list[dict[str, Any]]]:
         source_lines: list[str] = []
         combined_sections = [f"Search query: {search_query}", "", "Selected sources:"]
@@ -7316,6 +7421,8 @@ class AgentLoop:
             stream_event_callback=stream_event_callback,
             phase_event_callback=phase_event_callback,
             cancel_requested=cancel_requested,
+            user_input=user_input or search_query,
+            session_id=session_id,
         )
         note_body = "\n".join(
             [
@@ -8472,6 +8579,8 @@ class AgentLoop:
             stream_event_callback=stream_event_callback,
             phase_event_callback=phase_event_callback,
             cancel_requested=cancel_requested,
+            user_input=request.user_text,
+            session_id=request.session_id,
         )
         self._raise_if_cancelled(cancel_requested)
         new_active_context = self._build_search_active_context(
@@ -8689,6 +8798,8 @@ class AgentLoop:
             stream_event_callback=stream_event_callback,
             phase_event_callback=phase_event_callback,
             cancel_requested=cancel_requested,
+            user_input=request.user_text,
+            session_id=request.session_id,
         )
         self._raise_if_cancelled(cancel_requested)
         title = f"{Path(read_result.resolved_path).name} 요약"
@@ -8873,6 +8984,8 @@ class AgentLoop:
             stream_event_callback=stream_event_callback,
             phase_event_callback=phase_event_callback,
             cancel_requested=cancel_requested,
+            user_input=request.user_text,
+            session_id=request.session_id,
         )
         self._raise_if_cancelled(cancel_requested)
         title = f"{Path(read_result.resolved_path).name} 요약"
@@ -9067,7 +9180,11 @@ class AgentLoop:
             detail="일반 질문에 대한 응답을 생성하는 중입니다.",
             note="선택된 문맥이 없으면 일반 대화 응답으로 처리합니다.",
         )
-        _prefs = self._routed_preferences(task="respond")
+        _prefs = self._routed_preferences(
+            task="respond",
+            user_input=request.user_text,
+            session_id=request.session_id,
+        )
         with self._routed_model(task="respond"):
             return AgentResponse(
                 text=self._collect_model_stream(

@@ -437,6 +437,9 @@ These are placeholders for the next phase design target and its immediate follow
   - `/api/preferences` should include `high_quality_active_count`, counting only active preferences where `quality_info.is_high_quality == True`; no active high-quality preferences should yield zero
   - `/api/preferences` should include per-preference `is_highly_reliable`; a stored explicit value should be honored first, and otherwise it should be `true` only when `quality_info.is_high_quality == True`, `reliability_stats.applied_count >= 3`, and `reliability_stats.corrected_count / reliability_stats.applied_count < 0.15`
   - immediately after a user manually activates a reviewed-candidate preference through `activate_preference()`, the stored record should carry `is_highly_reliable == True` and the preference should be recognized as an eligible same-session injection candidate without waiting for runtime reliability stats; statistics-based auto-activation should remain separate
+  - `_get_active_preferences(user_input=...)` should return only eligible ACTIVE preferences whose `description` or `corrected_text` shares at least one simple word with `user_input` when such preferences exist
+  - `_get_active_preferences(user_input=...)` should return the full eligible ACTIVE preference set when `user_input` is absent or when no preference matches the input words (`fallback_all`)
+  - each injected preference should append a `preference_injected` task-log event containing `reason`, `preference_id`, and `user_input_snippet`
   - `/api/preferences` should include `highly_reliable_active_count`, counting only active preferences where `is_highly_reliable == True`; no active highly reliable preferences should yield zero
   - each enriched `conflict_info` should include `conflict_severity`; it should be `"high"` when either the preference or any conflicting preference is `is_highly_reliable=True`, `"normal"` for other active conflicts, and `"none"` when there is no conflict
   - existing `has_conflict` / `conflicting_preference_ids` behavior should remain unchanged when `conflict_severity` is added
@@ -465,6 +468,7 @@ These are placeholders for the next phase design target and its immediate follow
   - `transition_reason` 미포함 시 task log detail에 `transition_reason` 키가 없다.
   - `transition_reason`이 기록된 preference의 `GET /api/preferences` 응답에 `last_transition_reason` 필드가 포함된다.
   - `transition_reason`이 없는 preference의 payload에는 `last_transition_reason` 키가 없다.
+  - `preference_injected` task log 기록 실패는 응답 선호 주입을 실패시키지 않는다.
 
 ### Acceptance Placeholder For Memory
 - The current implementation should keep the first source-message-anchored `session_local_memory_signal` projection stable before any review queue or durable-candidate surface is attempted.

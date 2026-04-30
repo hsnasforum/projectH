@@ -14553,6 +14553,142 @@ test("reviewed-memory loop: preference-low-reliability-badge가 신뢰도 저하
   await expect(lowReliabilityBadge).toContainText("신뢰도 저하");
 });
 
+test("preference search filters preference list", async ({ page }) => {
+  let preferenceRequests = 0;
+  await page.route(/\/api\/preferences$/, async (route) => {
+    if (route.request().method() === "GET") {
+      preferenceRequests += 1;
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: true,
+        preferences: [
+          {
+            preference_id: "pref-search-description",
+            delta_fingerprint: "sha256:pref-search-description",
+            description: "description-only search target preference",
+            status: "active",
+            evidence_count: 3,
+            cross_session_count: 1,
+            reliability_stats: { applied_count: 4, corrected_count: 0 },
+            quality_info: { avg_similarity_score: 0.91, is_high_quality: true },
+            is_highly_reliable: true,
+            conflict_info: null,
+            corrected_text: "ordinary corrected text",
+            activated_at: "2026-04-30T00:00:00Z",
+            created_at: "2026-04-30T00:00:00Z",
+            updated_at: "2026-04-30T00:00:00Z",
+          },
+          {
+            preference_id: "pref-search-corrected",
+            delta_fingerprint: "sha256:pref-search-corrected",
+            description: "plain visible preference",
+            status: "active",
+            evidence_count: 2,
+            cross_session_count: 1,
+            reliability_stats: { applied_count: 2, corrected_count: 0 },
+            quality_info: { avg_similarity_score: 0.89, is_high_quality: true },
+            is_highly_reliable: false,
+            conflict_info: null,
+            corrected_text: "corrected-only search target text",
+            activated_at: "2026-04-30T00:00:00Z",
+            created_at: "2026-04-30T00:00:00Z",
+            updated_at: "2026-04-30T00:00:00Z",
+          },
+          {
+            preference_id: "pref-search-other",
+            delta_fingerprint: "sha256:pref-search-other",
+            description: "unmatched preference entry",
+            status: "candidate",
+            evidence_count: 1,
+            cross_session_count: 1,
+            reliability_stats: { applied_count: 0, corrected_count: 0 },
+            quality_info: { avg_similarity_score: 0.8, is_high_quality: false },
+            is_highly_reliable: false,
+            conflict_info: null,
+            corrected_text: "unrelated corrected text",
+            activated_at: null,
+            created_at: "2026-04-30T00:00:00Z",
+            updated_at: "2026-04-30T00:00:00Z",
+          },
+        ],
+        active_count: 2,
+        candidate_count: 1,
+        paused_count: 0,
+        total_applied: 6,
+        total_corrected: 0,
+        high_quality_active_count: 2,
+        highly_reliable_active_count: 1,
+        high_severity_conflict_count: 0,
+        low_reliability_active_count: 0,
+      }),
+    });
+  });
+  await page.route(/\/api\/preferences\/audit$/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: true,
+        audit: {
+          total: 3,
+          by_status: { active: 2, candidate: 1, paused: 0 },
+          conflict_pair_count: 0,
+          adopted_corrections_count: 0,
+          available_to_sync_count: 0,
+        },
+      }),
+    });
+  });
+  await page.route(/\/api\/corrections\/summary$/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ ok: true, total: 0, by_status: {}, top_recurring_fingerprints: [] }),
+    });
+  });
+  await page.route(/\/api\/corrections\/list(\?.*)?$/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ ok: true, corrections: [] }),
+    });
+  });
+
+  await page.goto("/app-preview");
+  const searchInput = page.getByTestId("preference-search-input");
+  const descriptionMatch = page.locator("#pref-card-pref-search-description");
+  const correctedTextMatch = page.locator("#pref-card-pref-search-corrected");
+  const otherPreference = page.locator("#pref-card-pref-search-other");
+
+  await expect(searchInput).toBeVisible({ timeout: 10_000 });
+  await expect(descriptionMatch).toBeVisible();
+  await expect(correctedTextMatch).toBeVisible();
+  await expect(otherPreference).toBeVisible();
+  const requestsAfterLoad = preferenceRequests;
+
+  await searchInput.fill("description-only search target");
+  await expect(descriptionMatch).toBeVisible();
+  await expect(correctedTextMatch).toBeHidden();
+  await expect(otherPreference).toBeHidden();
+  expect(preferenceRequests).toBe(requestsAfterLoad);
+
+  await searchInput.fill("corrected-only search target");
+  await expect(descriptionMatch).toBeHidden();
+  await expect(correctedTextMatch).toBeVisible();
+  await expect(otherPreference).toBeHidden();
+  expect(preferenceRequests).toBe(requestsAfterLoad);
+
+  await searchInput.fill("missing preference token");
+  await expect(descriptionMatch).toBeHidden();
+  await expect(correctedTextMatch).toBeHidden();
+  await expect(otherPreference).toBeHidden();
+  await expect(page.getByText("검색 결과가 없습니다")).toBeVisible();
+  expect(preferenceRequests).toBe(requestsAfterLoad);
+});
+
 test("PreferencePanel 헤더에 신뢰도 높음 N개가 표시됩니다 (M47 highly_reliable_active_count)", async ({ page }) => {
   await page.route(/\/api\/preferences$/, async (route) => {
     await route.fulfill({

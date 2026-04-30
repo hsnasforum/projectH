@@ -85,6 +85,18 @@ function isActiveLowReliabilityPreference(pref: PreferenceRecord) {
   );
 }
 
+function preferenceMatchesSearch(pref: PreferenceRecord, query: string) {
+  const normalizedQuery = query.trim().toLowerCase();
+  if (!normalizedQuery) return true;
+  return [
+    pref.description,
+    pref.corrected_text,
+    pref.corrected_snippet,
+    pref.original_snippet,
+    pref.status,
+  ].some((value) => (value ?? "").toLowerCase().includes(normalizedQuery));
+}
+
 function buildCorrectionListParams(
   query: string,
   status: CorrectionStatusFilter,
@@ -136,6 +148,7 @@ export default function PreferencePanel({
   const [syncingAdopted, setSyncingAdopted] = useState(false);
   const [syncStatus, setSyncStatus] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<PreferenceStatusFilter>("all");
+  const [preferenceSearchQuery, setPreferenceSearchQuery] = useState("");
   const [reliabilityTotals, setReliabilityTotals] = useState<PreferenceReliabilityTotals>({
     applied: 0,
     corrected: 0,
@@ -458,11 +471,15 @@ export default function PreferencePanel({
     ? candidatePreferences.length
     : preferences.filter((p) => p.status === "candidate").length;
   const pausedCount = preferences.filter((p) => p.status === "paused").length;
-  const filteredPreferences = statusFilter === "all"
+  const statusFilteredPreferences = statusFilter === "all"
     ? preferences
     : statusFilter === "candidate" && candidatePreferences != null
     ? candidatePreferences
     : preferences.filter((p) => p.status === statusFilter);
+  const filteredPreferences = statusFilteredPreferences.filter((pref) =>
+    preferenceMatchesSearch(pref, preferenceSearchQuery),
+  );
+  const hasPreferenceSearch = Boolean(preferenceSearchQuery.trim());
   const statusTabs: Array<{ key: PreferenceStatusFilter; label: string; count: number }> = [
     { key: "all", label: "전체", count: preferences.length },
     { key: "candidate", label: "후보", count: candidateCount },
@@ -792,6 +809,16 @@ export default function PreferencePanel({
               )}
             </div>
           )}
+          <div className="px-1">
+            <input
+              type="text"
+              data-testid="preference-search-input"
+              className="w-full text-[10px] bg-transparent border-b border-sidebar-muted/20 text-sidebar-foreground placeholder:text-sidebar-muted/40 px-2 py-0.5 outline-none"
+              placeholder="선호 검색..."
+              value={preferenceSearchQuery}
+              onChange={(event) => setPreferenceSearchQuery(event.target.value)}
+            />
+          </div>
           <div className="flex items-center gap-1 overflow-x-auto px-1 pb-0.5">
             {statusTabs.map((tab) => {
               const selected = statusFilter === tab.key;
@@ -815,7 +842,7 @@ export default function PreferencePanel({
           </div>
           {filteredPreferences.length === 0 && (
             <div className="px-2 py-2 text-center text-[11px] text-sidebar-muted/60">
-              해당 상태 선호가 없습니다
+              {hasPreferenceSearch ? "검색 결과가 없습니다" : "해당 상태 선호가 없습니다"}
             </div>
           )}
           {filteredPreferences.map((pref) => {

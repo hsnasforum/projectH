@@ -454,6 +454,7 @@ These are placeholders for the next phase design target and its immediate follow
   - correction history pagination in PreferencePanel: `data-testid="correction-show-more-btn"` 클릭이 현재 목록 길이를 offset으로 `fetchCorrectionList({ offset, limit })` 호출을 트리거하고 다음 페이지 항목을 기존 목록에 append한다; 다음 배치가 limit보다 작으면 버튼이 숨겨진다
   - preference search in PreferencePanel: `data-testid="preference-search-input"` 입력이 클라이언트-사이드에서 preference 목록을 description/corrected_text/original_snippet/status 기준으로 필터링한다; 빈 검색어는 전체 목록을 표시하며, 미매칭 시 "검색 결과가 없습니다"를 표시한다; 검색 중 API 재호출 없음
   - preference list pagination in PreferencePanel: `data-testid="preference-show-more-btn"` 클릭이 현재 preference 목록 길이를 offset으로 `fetchPreferences({ offset, limit })` 호출을 트리거하고 다음 페이지 항목을 기존 목록에 append한다; 다음 배치가 limit보다 작으면 버튼이 숨겨진다; `preference-search-input` 필터는 로드된 preference 위에서 계속 동작한다
+  - review queue search filter in ReviewQueuePanel: `data-testid="review-queue-search-input"` 검색 입력이 `item.statement`에 대해 대소문자 무시 클라이언트-사이드 필터를 적용한다; 검색어가 있고 결과가 없으면 `검색 결과 없음` 빈 상태를 표시한다
   - `PreferencePanel` should render `충돌 위험 N건` with `data-testid="high-severity-conflict-count"` only when `high_severity_conflict_count > 0`; existing conflict badge behavior per card should remain unchanged
   - `PreferencePanel` should render the conflict badge with elevated amber styling when `conflict_info.conflict_severity === "high"` and should preserve the existing normal conflict badge behavior for other conflicts
   - `POST /api/preferences/activate`, `pause`, `reject` payload에 `transition_reason`을 포함하면 해당 task log entry의 `detail`에 기록된다.

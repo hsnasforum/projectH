@@ -240,7 +240,12 @@ class PreferenceStore:
             return record
 
     def activate_preference(self, preference_id: str) -> PreferenceRecord | None:
-        return self._transition(preference_id, PreferenceStatus.ACTIVE, "activated_at")
+        record = self._transition(preference_id, PreferenceStatus.ACTIVE, "activated_at")
+        if record is None:
+            return None
+        record["is_highly_reliable"] = True
+        atomic_write(self._path(preference_id), record)
+        return record
 
     def pause_preference(self, preference_id: str) -> PreferenceRecord | None:
         return self._transition(preference_id, PreferenceStatus.PAUSED, "paused_at")

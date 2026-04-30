@@ -40,6 +40,28 @@ They may justify larger coherent local bundles when tests and evidence support
 the scope, but they do not change product scope, branding, API assumptions, or
 approval/operator boundaries.
 
+## Prompt Operating Principles
+
+For GPT-5.5-era prompts and agent rules, prefer outcome-first contracts over
+process-heavy stacks:
+- state the user-visible outcome, success criteria, constraints, output shape,
+  and stop rules before adding process detail
+- keep personality and collaboration style short and subordinate to concrete
+  goals, tool rules, evidence requirements, and safety boundaries
+- reserve `must`, `never`, `always`, and `only` for true invariants such as
+  safety, approval, required records, validation honesty, and irreversible
+  actions; use decision rules for judgment calls
+- gather only enough context to act correctly; stop when exact files,
+  contracts, checks, or source evidence are clear, and run one focused extra
+  read/search batch only if validation fails, signals conflict, or a material
+  unknown remains
+- for long-running or tool-heavy work, use concise `commentary` progress
+  updates and keep final answers separate; if replaying Responses assistant
+  items, preserve `phase` values exactly (`commentary` and `final_answer`)
+- validate the relevant change before handoff; if validation cannot run, say
+  why and name the next best check, and preserve requested artifact structure,
+  length, and genre when editing prose or docs
+
 ## Product Priorities
 
 1. Local-first behavior

@@ -1704,10 +1704,24 @@ Axis 2: dist rebuild — DONE
 `e2e/tests/web-smoke.spec.mjs`에 `review queue action buttons appear before context section` 시나리오 추가.
 compareDocumentPosition으로 DOM 순서 검증; Playwright webServer sandbox 제한으로 미실행; CI 위임.
 
+## M114 사용자 활성화 선호 주입 신뢰도 보정
+
+Axis 1: `activate_preference` 명시 신뢰도 저장 — DONE
+JSON/SQLite preference store의 user-triggered `activate_preference()`가
+ACTIVE 전환 시 레코드에 `is_highly_reliable = True`를 저장한다.
+이로써 리뷰 큐/선호 패널에서 사용자가 명시적으로 활성화한 선호는
+runtime `applied_count` 또는 `quality_info.is_high_quality` 통계가 아직 없어도
+`AgentLoop._get_active_preferences()` 주입 필터를 즉시 통과한다.
+자동 활성화(`_auto_activate_candidate_if_ready`)는 기존 통계 기반 경로로 유지.
+
+Axis 2: docs sync — DONE
+PRODUCT_SPEC / ACCEPTANCE_CRITERIA / ARCHITECTURE / MILESTONES /
+TASK_BACKLOG에 수동 활성화 즉시 주입 자격과 자동 활성화 분리 사실을 반영.
+
 ## Next 3 Implementation Priorities
 
 1. **PR 머지 백로그**: PR #91–#105 + 이번 M113 PR — 모두 draft, `pr_merge_gate` operator 승인 대기.
-2. **M113 완료**: Axis 1+2+doc-sync 완료 — commit/push/PR 대기.
+2. **M114 완료**: Axis 1+2 docs sync 완료 — commit/push/PR 대기.
 3. **장기**: cross-session memory 강화, north star 방향 유지.
 
 ## Do Not Pull Forward

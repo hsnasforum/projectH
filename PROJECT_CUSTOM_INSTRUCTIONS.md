@@ -44,6 +44,19 @@ Playwright smoke coverage입니다. 이 목록은 제품 방향을 넓히기 위
   문서-first MVP 범위, 교체 가능한 런타임, 승인/operator 경계를 바꾸지
   않습니다.
 
+## 2.5. Prompt를 outcome-first로 유지합니다
+
+- prompt와 agent rule은 사용자-visible 목표, 성공 기준, 제약, 출력 형태,
+  stop rule을 먼저 두고 절차는 필요한 만큼만 둡니다.
+- context gathering은 관련 파일이나 근거가 불명확할 때만 넓게 시작하고,
+  exact path, contract, check, source evidence가 잡히면 멈춥니다. 검증 실패,
+  신호 충돌, material unknown이 있을 때만 focused batch를 한 번 더 돕니다.
+- `must`, `never`, `always`, `only` 같은 강한 표현은 approval, 기록, 검증
+  정직성, irreversible action처럼 진짜 불변식에만 씁니다.
+- long-running/tool-heavy 작업은 중간 진행 업데이트와 final answer를
+  분리하고, Responses-style replay에서는 `commentary`와 `final_answer`
+  phase 값을 보존합니다.
+
 ## 3. 로컬 우선과 승인 안전을 유지합니다
 
 - 기본 동작은 로컬 파일과 로컬 저장을 우선합니다.

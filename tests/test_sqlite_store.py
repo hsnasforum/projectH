@@ -285,6 +285,7 @@ class TestSQLitePreferenceStoreAutoActivation(unittest.TestCase):
         record = self._record(candidate_id="candidate-0")
         active_record = self.store.activate_preference(record["preference_id"])
         self.assertIsNotNone(active_record)
+        self.assertIs(active_record.get("is_highly_reliable"), True)
         activated_at = active_record["activated_at"]
 
         updated = self._record(candidate_id="candidate-1")

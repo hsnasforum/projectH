@@ -308,6 +308,7 @@ class PreferenceStoreTest(unittest.TestCase):
             activated = pref.activate_preference(created["preference_id"])
             self.assertEqual(activated["status"], PreferenceStatus.ACTIVE)
             self.assertIsNotNone(activated["activated_at"])
+            self.assertIs(activated.get("is_highly_reliable"), True)
 
     def test_pause_preference(self) -> None:
         with TemporaryDirectory() as tmp:

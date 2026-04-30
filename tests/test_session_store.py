@@ -393,7 +393,9 @@ class SessionStoreTest(unittest.TestCase):
             self.assertEqual(per["pref-B"]["applied_count"], 1)
             self.assertEqual(per["pref-B"]["corrected_count"], 1)
             self.assertEqual(per["pref-B"]["injected_count"], 0)
-            self.assertNotIn("pref-missing", per)
+            self.assertEqual(per["pref-missing"]["applied_count"], 0)
+            self.assertEqual(per["pref-missing"]["corrected_count"], 0)
+            self.assertEqual(per["pref-missing"]["injected_count"], 1)
 
     def test_corrected_count_includes_non_grounded_brief_corrections(self) -> None:
         """applied_preference_ids + corrected_text가 있는 chat 응답도 corrected_count에 반영된다."""

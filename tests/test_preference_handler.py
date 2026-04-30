@@ -346,6 +346,7 @@ class PreferenceHandlerTest(unittest.TestCase):
                         "applied_count": 2,
                         "corrected_count": 1,
                         "injected_count": 4,
+                        "injection_correction_count": 1,
                     },
                 },
             },
@@ -355,11 +356,15 @@ class PreferenceHandlerTest(unittest.TestCase):
         by_id = {pref["preference_id"]: pref for pref in payload["preferences"]}
 
         self.assertEqual(by_id["pref-injected"]["injected_count"], 4)
+        self.assertEqual(by_id["pref-injected"]["injection_correction_count"], 1)
+        self.assertEqual(by_id["pref-injected"]["injection_correction_rate"], 0.25)
         self.assertEqual(
             by_id["pref-injected"]["reliability_stats"],
             {"applied_count": 2, "corrected_count": 1},
         )
         self.assertEqual(by_id["pref-default"]["injected_count"], 0)
+        self.assertEqual(by_id["pref-default"]["injection_correction_count"], 0)
+        self.assertEqual(by_id["pref-default"]["injection_correction_rate"], 0.0)
 
     def test_list_preferences_payload_counts_highly_reliable_active_preferences(self) -> None:
         mixed_service = _PreferenceService(

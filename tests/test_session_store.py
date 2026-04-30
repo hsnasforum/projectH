@@ -357,6 +357,14 @@ class SessionStoreTest(unittest.TestCase):
                 "text": "no correction",
             })
             store._save(session_id, data)
+            task_log_correction_session_id = "task-log-correction-session"
+            task_log_data = store.get_session(task_log_correction_session_id)
+            task_log_data["messages"].append({
+                "message_id": "msg-task-log",
+                "role": "assistant",
+                "text": "task log correction session",
+            })
+            store._save(task_log_correction_session_id, task_log_data)
             task_log_path.write_text(
                 "\n".join(
                     json.dumps(record, ensure_ascii=False)
@@ -379,6 +387,18 @@ class SessionStoreTest(unittest.TestCase):
                             "action": "preference_injected",
                             "detail": {"preference_id": "pref-missing"},
                         },
+                        {
+                            "ts": "2026-04-30T00:00:03+00:00",
+                            "session_id": task_log_correction_session_id,
+                            "action": "preference_injected",
+                            "detail": {"preference_id": "pref-task-log"},
+                        },
+                        {
+                            "ts": "2026-04-30T00:00:04+00:00",
+                            "session_id": task_log_correction_session_id,
+                            "action": "correction_submitted",
+                            "detail": {"message_id": "msg-task-log"},
+                        },
                     ]
                 )
                 + "\n",
@@ -390,12 +410,19 @@ class SessionStoreTest(unittest.TestCase):
             self.assertEqual(per["pref-A"]["applied_count"], 2)
             self.assertEqual(per["pref-A"]["corrected_count"], 1)
             self.assertEqual(per["pref-A"]["injected_count"], 1)
+            self.assertEqual(per["pref-A"]["injection_correction_count"], 1)
             self.assertEqual(per["pref-B"]["applied_count"], 1)
             self.assertEqual(per["pref-B"]["corrected_count"], 1)
             self.assertEqual(per["pref-B"]["injected_count"], 0)
+            self.assertEqual(per["pref-B"]["injection_correction_count"], 0)
             self.assertEqual(per["pref-missing"]["applied_count"], 0)
             self.assertEqual(per["pref-missing"]["corrected_count"], 0)
             self.assertEqual(per["pref-missing"]["injected_count"], 1)
+            self.assertEqual(per["pref-missing"]["injection_correction_count"], 1)
+            self.assertEqual(per["pref-task-log"]["applied_count"], 0)
+            self.assertEqual(per["pref-task-log"]["corrected_count"], 0)
+            self.assertEqual(per["pref-task-log"]["injected_count"], 1)
+            self.assertEqual(per["pref-task-log"]["injection_correction_count"], 1)
 
     def test_corrected_count_includes_non_grounded_brief_corrections(self) -> None:
         """applied_preference_ids + corrected_text가 있는 chat 응답도 corrected_count에 반영된다."""

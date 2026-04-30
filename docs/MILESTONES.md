@@ -1778,6 +1778,17 @@ Axis 2: frontend badge + dist/E2E — DONE
 `preference injected count badge appears for injected preferences` 시나리오 추가.
 격리 Playwright 시나리오 1개 통과.
 
+## M119 injection correction feedback loop
+
+Axis 1: injection-correction audit projection — DONE
+JSON/SQLite `get_global_audit_summary()`가 `PerPreferenceStats`에
+`injection_correction_count`를 추가한다. 같은 세션에 `preference_injected`
+이벤트와 교정 이벤트가 함께 있으면 해당 세션에서 주입된 선호별로 1회 누적한다.
+`list_preferences_payload()`는 top-level `injection_correction_count`와
+`injection_correction_rate`를 노출하되 `reliability_stats` 구조와
+`is_highly_reliable_preference()` boolean 계산은 변경하지 않는다.
+신규/갱신 unittest는 JSON store, SQLite store, preference handler 응답 필드를 고정한다.
+
 ## Next 3 Implementation Priorities
 
 1. **PR 머지 백로그**: PR #91–#111 — 모두 draft, `pr_merge_gate` operator 승인 대기.

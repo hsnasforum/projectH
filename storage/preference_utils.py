@@ -37,6 +37,13 @@ def _normalized_injected_count(stats: Any) -> int:
     return injected_count if isinstance(injected_count, int) else 0
 
 
+def _normalized_injection_correction_count(stats: Any) -> int:
+    if not isinstance(stats, Mapping):
+        return 0
+    count = stats.get("injection_correction_count", 0)
+    return count if isinstance(count, int) else 0
+
+
 def _quality_info_from_existing(existing_quality_info: Any) -> dict[str, float | bool | None] | None:
     if not isinstance(existing_quality_info, Mapping):
         return None
@@ -79,7 +86,15 @@ def enrich_preference_reliability(
     if stats is None:
         stats = pref_copy.get("reliability_stats")
     pref_copy["reliability_stats"] = _normalized_reliability_stats(stats)
-    pref_copy["injected_count"] = _normalized_injected_count(stats)
+    injected_count = _normalized_injected_count(stats)
+    injection_correction_count = _normalized_injection_correction_count(stats)
+    pref_copy["injected_count"] = injected_count
+    pref_copy["injection_correction_count"] = injection_correction_count
+    pref_copy["injection_correction_rate"] = (
+        round(injection_correction_count / injected_count, 3)
+        if injected_count > 0
+        else 0.0
+    )
     pref_copy["quality_info"] = (
         _quality_info_from_existing(pref_copy.get("quality_info"))
         or _quality_info_from_score(pref_copy.get("avg_similarity_score"))

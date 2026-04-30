@@ -411,6 +411,18 @@ class ControllerServerLaunchGateTests(unittest.TestCase):
         self.assertNotIn("/api/restart", server_source)
         self.assertNotIn("/api/runtime/attach", server_source)
 
+    def test_cozy_agent_state_uses_lane_state_as_runtime_truth(self) -> None:
+        controller_dir = Path(__file__).resolve().parents[1] / "controller"
+        cozy_js = (controller_dir / "js" / "cozy.js").read_text(encoding="utf-8")
+        start = cozy_js.index("function effectiveLaneState")
+        end = cozy_js.index("\n}\n\nfunction zoneKeyForRole", start)
+        helper = cozy_js[start:end]
+
+        self.assertIn("Lane state is the runtime truth", helper)
+        self.assertIn("return rawState || 'off';", helper)
+        self.assertNotIn("activeWorkLaneName", helper)
+        self.assertNotIn("? 'working'", helper)
+
     def test_runtime_capture_tail_requires_lane(self) -> None:
         data, status = controller_server.runtime_capture_tail(lane=None)
         self.assertEqual(int(status), 400)

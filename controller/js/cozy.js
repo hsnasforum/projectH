@@ -435,10 +435,11 @@ function activeWorkLaneName(data = runtimeStateStore.data) {
   return role ? currentRoleOwners(data)[role] || '' : '';
 }
 
-function effectiveLaneState(agentName, lane, data = runtimeStateStore.data) {
+function effectiveLaneState(_agentName, lane) {
   const rawState = String((lane || {}).state || 'off').toLowerCase();
-  if (rawState !== 'ready' && rawState !== 'idle') return rawState;
-  return agentName === activeWorkLaneName(data) ? 'working' : rawState;
+  // Lane state is the runtime truth. turn_state can stay active while a lane is
+  // idle/ready after a closeout, so it must not upgrade visible state to working.
+  return rawState || 'off';
 }
 
 function zoneKeyForRole(role) {

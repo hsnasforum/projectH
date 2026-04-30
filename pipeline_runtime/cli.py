@@ -109,13 +109,29 @@ def _supervisor_pid_path(project_root: Path) -> Path:
     return project_root / ".pipeline" / "supervisor.pid"
 
 
-def _supervisor_running(project_root: Path) -> int | None:
+def _pid_is_zombie(pid: int, *, proc_root: Path | None = None) -> bool:
+    root = proc_root or Path("/proc")
+    stat_path = root / str(pid) / "stat"
+    try:
+        text = stat_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    close_paren = text.rfind(")")
+    if close_paren < 0:
+        return False
+    fields = text[close_paren + 1 :].strip().split()
+    return bool(fields and fields[0] == "Z")
+
+
+def _supervisor_running(project_root: Path, *, proc_root: Path | None = None) -> int | None:
     path = _supervisor_pid_path(project_root)
     if not path.exists():
         return None
     try:
         pid = int(path.read_text(encoding="utf-8").strip())
         os.kill(pid, 0)
+        if _pid_is_zombie(pid, proc_root=proc_root):
+            return None
         return pid
     except (OSError, ValueError):
         return None
@@ -689,7 +705,7 @@ def _reconcile_supervisors(
     proc_root: Path | None = None,
 ) -> int | None:
     pid_path = _supervisor_pid_path(project_root)
-    pidfile_pid = _supervisor_running(project_root)
+    pidfile_pid = _supervisor_running(project_root, proc_root=proc_root)
     live_pids = _list_supervisor_pids(project_root, session_name, proc_root=proc_root)
     if not live_pids:
         try:

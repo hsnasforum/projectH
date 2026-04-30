@@ -733,6 +733,38 @@ class SupervisorCliTest(unittest.TestCase):
             pids = runtime_cli._list_supervisor_pids(project_root, "aip-projectH", proc_root=proc_root)
             self.assertEqual(pids, [101])
 
+    def test_supervisor_running_ignores_zombie_pidfile_process(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            project_root = root / "project"
+            pid_path = project_root / ".pipeline" / "supervisor.pid"
+            proc_dir = root / "proc" / "4242"
+            pid_path.parent.mkdir(parents=True, exist_ok=True)
+            proc_dir.mkdir(parents=True, exist_ok=True)
+            pid_path.write_text("4242", encoding="utf-8")
+            (proc_dir / "stat").write_text("4242 (python3) Z 1 2 3\n", encoding="utf-8")
+
+            with patch.object(runtime_cli.os, "kill", return_value=None):
+                pid = runtime_cli._supervisor_running(project_root, proc_root=root / "proc")
+
+            self.assertIsNone(pid)
+
+    def test_supervisor_running_keeps_non_zombie_pidfile_process(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            project_root = root / "project"
+            pid_path = project_root / ".pipeline" / "supervisor.pid"
+            proc_dir = root / "proc" / "4242"
+            pid_path.parent.mkdir(parents=True, exist_ok=True)
+            proc_dir.mkdir(parents=True, exist_ok=True)
+            pid_path.write_text("4242", encoding="utf-8")
+            (proc_dir / "stat").write_text("4242 (python3) S 1 2 3\n", encoding="utf-8")
+
+            with patch.object(runtime_cli.os, "kill", return_value=None):
+                pid = runtime_cli._supervisor_running(project_root, proc_root=root / "proc")
+
+            self.assertEqual(pid, 4242)
+
     def test_reconcile_supervisors_rewrites_pidfile_for_single_live_daemon(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             project_root = Path(tmp)

@@ -178,6 +178,37 @@ class PipelineGuiHomePresenterTest(unittest.TestCase):
         self.assertIn("operator wait", presentation.active_text)
         self.assertEqual(presentation.active_fg, "#fca5a5")
 
+    def test_build_control_presentation_does_not_call_ready_implement_lane_working(self) -> None:
+        presentation = build_control_presentation(
+            {
+                "active": {
+                    "file": "implement_handoff.md",
+                    "status": "implement",
+                    "label": "implement handoff",
+                    "mtime": 1.0,
+                    "control_seq": 1490,
+                },
+                "stale": [],
+            },
+            None,
+            turn_state={
+                "state": "IMPLEMENT_ACTIVE",
+                "active_lane": "Codex",
+                "active_role": "implement",
+                "active_control_file": "implement_handoff.md",
+                "active_control_seq": 1490,
+            },
+            lane_details={
+                "Codex": {
+                    "state": "READY",
+                    "progress_phase": "work_closeout_written",
+                }
+            },
+        )
+
+        self.assertIn("Codex work 작성 완료", presentation.active_text)
+        self.assertNotIn("Codex 실행 중", presentation.active_text)
+
     def test_build_control_presentation_mtime_fallback_without_seq(self) -> None:
         presentation = build_control_presentation(
             {

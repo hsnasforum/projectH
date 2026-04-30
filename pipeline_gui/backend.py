@@ -784,7 +784,50 @@ _TURN_STATE_ROLES: dict[str, str] = {
 }
 
 
-def describe_turn_state(turn_state: dict[str, object] | None) -> dict[str, str]:
+def _lane_detail_for_turn(
+    active_lane: str,
+    lane_details: dict[str, dict[str, object]] | None,
+) -> dict[str, object]:
+    if not active_lane or not isinstance(lane_details, dict):
+        return {}
+    detail = lane_details.get(active_lane)
+    return detail if isinstance(detail, dict) else {}
+
+
+def _turn_state_label(
+    state_value: str,
+    active_lane: str,
+    *,
+    lane_detail: dict[str, object],
+) -> str:
+    lane_state = str(lane_detail.get("state") or "").upper()
+    progress_phase = str(lane_detail.get("progress_phase") or "")
+    if state_value == "IMPLEMENT_ACTIVE" and active_lane:
+        if lane_state == "WORKING":
+            return f"{active_lane} 실행 중"
+        if progress_phase == "work_closeout_written":
+            return f"{active_lane} work 작성 완료"
+        if lane_state in {"READY", "IDLE"}:
+            return f"{active_lane} 대기 중"
+        if lane_state == "BOOTING":
+            return f"{active_lane} 기동 중"
+        if lane_state in {"BROKEN", "DEAD"}:
+            return f"{active_lane} 상태 확인 필요"
+        return f"{active_lane} 실행 중"
+    if state_value == "VERIFY_ACTIVE" and active_lane:
+        return f"{active_lane} 검증 중"
+    if state_value == "VERIFY_FOLLOWUP" and active_lane:
+        return f"{active_lane} 후속 판단 중"
+    if state_value == "ADVISORY_ACTIVE" and active_lane:
+        return f"{active_lane} 자문 중"
+    return _TURN_STATE_LABELS.get(state_value, state_value)
+
+
+def describe_turn_state(
+    turn_state: dict[str, object] | None,
+    *,
+    lane_details: dict[str, dict[str, object]] | None = None,
+) -> dict[str, str]:
     state_value = canonical_turn_state_name(
         (turn_state or {}).get("state"),
         legacy_state=(turn_state or {}).get("legacy_state"),
@@ -795,16 +838,11 @@ def describe_turn_state(turn_state: dict[str, object] | None) -> dict[str, str]:
     if not active_role:
         active_role = turn_state_role(state_value) or _TURN_STATE_ROLES.get(state_value, "")
 
-    if state_value == "IMPLEMENT_ACTIVE" and active_lane:
-        label = f"{active_lane} 실행 중"
-    elif state_value == "VERIFY_ACTIVE" and active_lane:
-        label = f"{active_lane} 검증 중"
-    elif state_value == "VERIFY_FOLLOWUP" and active_lane:
-        label = f"{active_lane} 후속 판단 중"
-    elif state_value == "ADVISORY_ACTIVE" and active_lane:
-        label = f"{active_lane} 자문 중"
-    else:
-        label = _TURN_STATE_LABELS.get(state_value, state_value)
+    label = _turn_state_label(
+        state_value,
+        active_lane,
+        lane_detail=_lane_detail_for_turn(active_lane, lane_details),
+    )
 
     return {
         "state": state_value,
@@ -828,6 +866,7 @@ def format_control_summary(
     *,
     verify_activity: dict[str, object] | None = None,
     turn_state: dict[str, object] | None = None,
+    lane_details: dict[str, dict[str, object]] | None = None,
 ) -> tuple[str, str]:
     """Return (active_text, stale_text) for display in the system card.
 
@@ -835,7 +874,7 @@ def format_control_summary(
     Do not mix turn_state with legacy slot parsing.
     """
     if turn_state is not None:
-        turn_desc = describe_turn_state(turn_state)
+        turn_desc = describe_turn_state(turn_state, lane_details=lane_details)
         label = turn_desc["label"]
         control_file = str(turn_state.get("active_control_file") or "")
         seq = control_seq_value(turn_state.get("active_control_seq"), default=-1)

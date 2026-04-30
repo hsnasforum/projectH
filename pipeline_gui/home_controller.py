@@ -230,7 +230,7 @@ class HomeController:
             or dict(compat.get("turn_state") or {})
             or None
         )
-        turn_description = describe_turn_state(turn_state)
+        turn_description = describe_turn_state(turn_state, lane_details=lane_details)
         log_lines: list[str] = []
         for data in read_runtime_event_tail(self.project, max_lines=14):
             event_type = str(data.get("event_type") or "")

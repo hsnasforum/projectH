@@ -129,8 +129,14 @@ def build_control_presentation(
     verify_activity: object | None,
     turn_state: dict[str, object] | None = None,
     automation_health: str = "ok",
+    lane_details: dict[str, dict[str, object]] | None = None,
 ) -> ControlPresentation:
-    active_text, stale_text = format_control_summary(control_slots, verify_activity=verify_activity, turn_state=turn_state)
+    active_text, stale_text = format_control_summary(
+        control_slots,
+        verify_activity=verify_activity,
+        turn_state=turn_state,
+        lane_details=lane_details,
+    )
     health = str(automation_health or "ok")
     active = None
     if isinstance(control_slots, dict):

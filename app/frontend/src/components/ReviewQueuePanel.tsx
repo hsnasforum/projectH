@@ -57,6 +57,17 @@ function pluralCount(label: string, count: number): string {
   return `${label} ${count}개`;
 }
 
+function relativeAgeLabel(isoTimestamp: string): string {
+  const timestamp = new Date(isoTimestamp).getTime();
+  if (!Number.isFinite(timestamp)) return "0분 전";
+  const elapsedMs = Math.max(0, Date.now() - timestamp);
+  const elapsedMinutes = Math.floor(elapsedMs / 60000);
+  if (elapsedMinutes < 60) return `${elapsedMinutes}분 전`;
+  const elapsedHours = Math.floor(elapsedMinutes / 60);
+  if (elapsedHours < 24) return `${elapsedHours}시간 전`;
+  return `${Math.floor(elapsedHours / 24)}일 전`;
+}
+
 export default function ReviewQueuePanel({ items, sessionId, onReview }: Props) {
   const [q, setQ] = useState("");
   const [editDrafts, setEditDrafts] = useState<Record<string, string | null>>({});
@@ -113,6 +124,7 @@ export default function ReviewQueuePanel({ items, sessionId, onReview }: Props) 
           const sourceSessionTitle = item.source_session_title?.trim();
           const reasonDraft = reasonDrafts[item.candidate_id] ?? "";
           const reasonNote = reasonDraft.trim() || undefined;
+          const ageLabel = relativeAgeLabel(item.derived_at);
           return (
             <li
               key={`${item.source_message_id}:${item.candidate_id}`}
@@ -133,14 +145,31 @@ export default function ReviewQueuePanel({ items, sessionId, onReview }: Props) 
                     {item.statement}
                   </p>
                 )}
-                {item.quality_info?.is_high_quality && (
-                  <span className="shrink-0 rounded-full bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-300">
-                    고품질
-                  </span>
-                )}
                 {item.is_global && (
                   <span className="shrink-0 rounded-full border border-violet-400/20 bg-violet-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-violet-300">
                     범용
+                  </span>
+                )}
+              </div>
+              <div className="mb-2 flex flex-wrap gap-1 text-[10px] font-medium text-sidebar-muted">
+                <span
+                  data-testid="review-queue-item-age"
+                  className="rounded-full border border-white/10 bg-white/5 px-1.5 py-0.5"
+                >
+                  {ageLabel}
+                </span>
+                <span
+                  data-testid="review-queue-item-family"
+                  className="rounded-full border border-white/10 bg-white/5 px-1.5 py-0.5"
+                >
+                  {item.candidate_family}
+                </span>
+                {item.quality_info?.is_high_quality === true && (
+                  <span
+                    data-testid="review-queue-item-quality"
+                    className="rounded-full bg-emerald-500/15 px-1.5 py-0.5 font-semibold text-emerald-300"
+                  >
+                    고품질
                   </span>
                 )}
               </div>

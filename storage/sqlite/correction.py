@@ -161,6 +161,7 @@ class SQLiteCorrectionStore:
         query: str | None = None,
         status: str | None = None,
         limit: int = 20,
+        offset: int = 0,
     ) -> list[CorrectionRecord]:
         clauses: list[str] = []
         params: list[object] = []
@@ -175,9 +176,9 @@ class SQLiteCorrectionStore:
             clauses.append("status = ?")
             params.append(status)
         where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
-        params.append(limit)
+        params.extend([max(0, limit), max(0, offset)])
         rows = self._db.fetchall(
-            f"SELECT * FROM corrections {where} ORDER BY updated_at DESC LIMIT ?",
+            f"SELECT * FROM corrections {where} ORDER BY updated_at DESC LIMIT ? OFFSET ?",
             tuple(params),
         )
         return [
@@ -342,4 +343,3 @@ class SQLiteCorrectionStore:
             if result is not None:
                 dismissed.append(result)
         return dismissed
-

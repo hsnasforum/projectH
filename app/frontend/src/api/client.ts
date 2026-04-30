@@ -246,6 +246,7 @@ export interface PreferenceRecord {
     replacements?: Array<{ from: string; to: string }>;
   };
   original_snippet?: string | null;
+  corrected_text?: string | null;
   corrected_snippet?: string | null;
   conflict_info?: {
     has_conflict: boolean;
@@ -303,6 +304,7 @@ export interface PreferencesPayload {
   ok: boolean;
   preferences: PreferenceRecord[];
   candidate_preferences?: PreferenceRecord[] | null;
+  total_count?: number | null;
   active_count: number;
   candidate_count: number;
   paused_count: number;
@@ -336,8 +338,14 @@ export interface CorrectionResponse {
   preference_id?: string | null;
 }
 
-export async function fetchPreferences(): Promise<PreferencesPayload> {
-  const res = await fetch(`${BASE}/api/preferences`);
+export async function fetchPreferences(params?: {
+  limit?: number;
+  offset?: number;
+}): Promise<PreferencesPayload> {
+  const url = new URL(`${BASE}/api/preferences`, window.location.origin);
+  if (params?.limit) url.searchParams.set("limit", String(params.limit));
+  if (params?.offset) url.searchParams.set("offset", String(params.offset));
+  const res = await fetch(url.toString());
   return res.json();
 }
 
@@ -397,10 +405,14 @@ export interface CorrectionDetailResponse {
 export async function fetchCorrectionList(params?: {
   query?: string;
   status?: string;
+  limit?: number;
+  offset?: number;
 }): Promise<CorrectionListResponse> {
   const url = new URL(`${BASE}/api/corrections/list`, window.location.origin);
   if (params?.query) url.searchParams.set("query", params.query);
   if (params?.status) url.searchParams.set("status", params.status);
+  if (params?.limit) url.searchParams.set("limit", String(params.limit));
+  if (params?.offset) url.searchParams.set("offset", String(params.offset));
   const res = await fetch(url.toString());
   if (!res.ok) throw new Error("correction list fetch failed");
   return res.json() as Promise<CorrectionListResponse>;
@@ -543,4 +555,36 @@ export async function updatePreferenceDescription(
     body: JSON.stringify({ preference_id: preferenceId, description }),
   });
   return res.json();
+}
+
+export async function deletePreference(preferenceId: string): Promise<void> {
+  const res = await fetch(`${BASE}/api/preferences/${encodeURIComponent(preferenceId)}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) throw new Error("delete preference failed");
+}
+
+export async function togglePreferenceReliability(preferenceId: string): Promise<PreferenceRecord> {
+  const res = await fetch(`${BASE}/api/preferences/${encodeURIComponent(preferenceId)}/toggle-reliability`, {
+    method: "POST",
+  });
+  if (!res.ok) throw new Error("toggle preference reliability failed");
+  const data = await res.json() as { ok?: boolean; preference?: PreferenceRecord };
+  if (!data.preference) throw new Error("toggle preference reliability response missing preference");
+  return data.preference;
+}
+
+export async function editPreferenceText(
+  preferenceId: string,
+  correctedText: string,
+): Promise<PreferenceRecord> {
+  const res = await fetch(`${BASE}/api/preferences/${encodeURIComponent(preferenceId)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ corrected_text: correctedText }),
+  });
+  if (!res.ok) throw new Error("edit preference text failed");
+  const data = await res.json() as { ok?: boolean; preference?: PreferenceRecord };
+  if (!data.preference) throw new Error("edit preference text response missing preference");
+  return data.preference;
 }

@@ -58,6 +58,9 @@ REJECTED:
   or menu choices.
 - Do not create another long advisory loop if verify can make a bounded
   decision from current evidence.
+- If `ADVISORY_FOLLOWUP_ALLOWED: false` appears in an advisory recovery prompt,
+  do not choose `.pipeline/advisory_request.md`; choose implement or a real
+  operator boundary.
 - Do not add hardcoded vendor names or exact pane/control prose to runtime
   logic.
 - Do not split the same incident into more file-local exceptions. Move repeated

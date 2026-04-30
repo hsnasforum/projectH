@@ -6772,6 +6772,8 @@ class BusyLaneNotificationDeferTest(unittest.TestCase):
             self.assertEqual(kwargs.get("pane_type"), "codex")
             self.assertIn("ROLE: advisory_recovery", args[1])
             self.assertIn("REQUEST_SEQ: 18", args[1])
+            self.assertIn("RECOVERY_ATTEMPT: 1", args[1])
+            self.assertIn("ADVISORY_FOLLOWUP_ALLOWED: true", args[1])
             self.assertIn("write exactly one next control", args[1])
             self.assertIn("do not reopen the same stale advisory request", args[1])
             self.assertEqual(core._current_turn_state, WatcherTurnState.VERIFY_FOLLOWUP)
@@ -6783,6 +6785,80 @@ class BusyLaneNotificationDeferTest(unittest.TestCase):
                 if line.strip()
             ]
             self.assertTrue(any(event.get("event_type") == "advisory_recovery" for event in events))
+
+    def test_repeated_stale_advisory_recovery_disallows_advisory_followup(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            watch_dir = root / "work"
+            base_dir = root / ".pipeline"
+            watch_dir.mkdir(parents=True, exist_ok=True)
+            base_dir.mkdir(parents=True, exist_ok=True)
+            _write_active_profile(root)
+
+            request_path = base_dir / "advisory_request.md"
+            request_path.write_text(
+                "\n".join(
+                    [
+                        "STATUS: request_open",
+                        "CONTROL_SEQ: 19",
+                        "SUPERSEDES: .pipeline/advisory_request.md CONTROL_SEQ 18 (superseded: stale_advisory_recovery)",
+                        "",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            old = time.time() - 20.0
+            os.utime(request_path, (old, old))
+
+            core = watcher_core.WatcherCore(
+                {
+                    "watch_dir": str(watch_dir),
+                    "base_dir": str(base_dir),
+                    "repo_root": str(root),
+                    "dry_run": True,
+                    "verify_pane_target": "codex-pane",
+                    "gemini_pane_target": "gemini-pane",
+                    "advisory_recovery_sec": 5.0,
+                }
+            )
+            core._initial_turn_checked = True
+            core._last_advisory_request_sig = core._get_path_sig(request_path)
+            core._transition_turn(
+                WatcherTurnState.ADVISORY_ACTIVE,
+                "test_setup_advisory",
+                active_control_file="advisory_request.md",
+                active_control_seq=19,
+            )
+            core._turn_entered_at = time.time() - 20.0
+
+            with (
+                mock.patch("watcher_core._shared_capture_pane_text", return_value="openai codex\n› "),
+                mock.patch("watcher_dispatch.tmux_send_keys", return_value=True) as send_prompt,
+            ):
+                recovered = core._recover_stale_advisory()
+
+            self.assertTrue(recovered)
+            send_prompt.assert_called_once()
+            args, _kwargs = send_prompt.call_args
+            prompt = args[1]
+            self.assertIn("RECOVERY_ATTEMPT: 2", prompt)
+            self.assertIn("ADVISORY_FOLLOWUP_ALLOWED: false", prompt)
+            self.assertIn("Repeated stale advisory recovery", prompt)
+            self.assertIn(
+                "next control (CONTROL_SEQ: 20): .pipeline/implement_handoff.md [implement] | .pipeline/operator_request.md [needs_operator]",
+                prompt,
+            )
+            self.assertNotIn(".pipeline/advisory_request.md [request_open]", prompt)
+            events = [
+                json.loads(line)
+                for line in core.run_events_path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            recovery_payload = [
+                event for event in events if event.get("event_type") == "advisory_recovery"
+            ][-1].get("payload") or {}
+            self.assertEqual(recovery_payload.get("advisory_recovery_attempt"), 2)
+            self.assertFalse(recovery_payload.get("advisory_followup_allowed"))
 
     def test_stale_advisory_recovery_uses_visible_advisory_busy_age(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -6865,6 +6941,74 @@ class BusyLaneNotificationDeferTest(unittest.TestCase):
             self.assertIn("SUPERSEDED_BY: advisory_recovery", request_text)
             self.assertIn("SUPERSEDED_REASON: stale_advisory_recovery", request_text)
             self.assertTrue(recovery_payload.get("advisory_request_superseded"))
+
+    def test_stale_advisory_default_recovery_uses_five_minute_busy_indicator(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            watch_dir = root / "work"
+            base_dir = root / ".pipeline"
+            watch_dir.mkdir(parents=True, exist_ok=True)
+            base_dir.mkdir(parents=True, exist_ok=True)
+            _write_active_profile(root)
+
+            request_path = base_dir / "advisory_request.md"
+            request_path.write_text("STATUS: request_open\nCONTROL_SEQ: 18\n", encoding="utf-8")
+
+            core = watcher_core.WatcherCore(
+                {
+                    "watch_dir": str(watch_dir),
+                    "base_dir": str(base_dir),
+                    "repo_root": str(root),
+                    "dry_run": False,
+                    "verify_pane_target": "codex-pane",
+                    "gemini_pane_target": "gemini-pane",
+                }
+            )
+            self.assertEqual(
+                core.advisory_recovery_sec,
+                watcher_core.DEFAULT_ADVISORY_RECOVERY_SEC,
+            )
+            core._initial_turn_checked = True
+            core._last_advisory_request_sig = core._get_path_sig(request_path)
+            core._transition_turn(
+                WatcherTurnState.ADVISORY_ACTIVE,
+                "test_setup_advisory",
+                active_control_file="advisory_request.md",
+                active_control_seq=18,
+            )
+            core._turn_entered_at = time.time()
+
+            pane_texts = {
+                "codex-pane": "openai codex\n> ",
+                "gemini-pane": "Thinking... (esc to cancel, 5m 01s)\n * Type your message",
+            }
+
+            with (
+                mock.patch(
+                    "watcher_core._shared_capture_pane_text",
+                    side_effect=lambda target: pane_texts[target],
+                ),
+                mock.patch(
+                    "watcher_core.subprocess.run",
+                    return_value=mock.Mock(returncode=0, stderr=""),
+                ) as send_escape,
+                mock.patch("watcher_dispatch.tmux_send_keys", return_value=True) as send_prompt,
+            ):
+                recovered = core._recover_stale_advisory()
+
+            self.assertTrue(recovered)
+            send_escape.assert_called_once()
+            send_prompt.assert_called_once()
+            events = [
+                json.loads(line)
+                for line in core.run_events_path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            recovery_payload = [
+                event for event in events if event.get("event_type") == "advisory_recovery"
+            ][-1].get("payload") or {}
+            self.assertEqual(recovery_payload.get("advisory_lane_busy_age_sec"), 301)
+            self.assertTrue(recovery_payload.get("advisory_lane_cancelled"))
 
     def test_inactive_advisory_lane_busy_is_cancelled(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -7008,6 +7152,47 @@ class BusyLaneNotificationDeferTest(unittest.TestCase):
             self.assertFalse(recovered)
             send_prompt.assert_not_called()
             self.assertEqual(core._current_turn_state, WatcherTurnState.ADVISORY_ACTIVE)
+
+    def test_next_control_seq_counts_superseded_control_slots(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            watch_dir = root / "work"
+            base_dir = root / ".pipeline"
+            watch_dir.mkdir(parents=True, exist_ok=True)
+            base_dir.mkdir(parents=True, exist_ok=True)
+            _write_active_profile(root)
+
+            (base_dir / "implement_handoff.md").write_text(
+                "STATUS: implement\nCONTROL_SEQ: 1443\n",
+                encoding="utf-8",
+            )
+            (base_dir / "operator_request.md").write_text(
+                "STATUS: needs_operator\nCONTROL_SEQ: 1444\n",
+                encoding="utf-8",
+            )
+            (base_dir / "advisory_request.md").write_text(
+                "\n".join(
+                    [
+                        "STATUS: superseded",
+                        "CONTROL_SEQ: 1445",
+                        "SUPERSEDED_BY: advisory_recovery",
+                        "SUPERSEDED_REASON: stale_advisory_recovery",
+                        "",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            core = watcher_core.WatcherCore(
+                {
+                    "watch_dir": str(watch_dir),
+                    "base_dir": str(base_dir),
+                    "repo_root": str(root),
+                    "dry_run": True,
+                }
+            )
+
+            self.assertEqual(core._get_next_control_seq(), 1446)
 
     def test_advisory_advice_followup_defers_until_codex_prompt_ready(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

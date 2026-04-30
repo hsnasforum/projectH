@@ -96,6 +96,7 @@ from pipeline_runtime.schema import (
     control_slot_spec,
     control_slot_spec_for_filename,
     iter_job_state_paths,
+    iter_control_slot_specs,
     latest_verify_note_for_work,
     process_starttime_fingerprint,
     read_control_meta,
@@ -172,6 +173,7 @@ _ROLLING_PIPELINE_PREFIXES = (
     ".pipeline/receipts/",
     ".pipeline/wrapper-events/",
 )
+ADVISORY_RECOVERY_FOLLOWUP_LIMIT = 2
 
 
 def _session_name_for_project(project_path: str) -> str:
@@ -213,6 +215,7 @@ logging.basicConfig(
     datefmt="%Y-%m-%dT%H:%M:%S",
 )
 log = logging.getLogger("watcher_core")
+DEFAULT_ADVISORY_RECOVERY_SEC = 300.0
 
 __all__ = ["WatcherCore", "main"]
 
@@ -469,7 +472,9 @@ class WatcherCore:
         self.advisory_retry_sec: float = float(
             config.get("advisory_idle_retry_sec", config.get("advisory_retry_sec", 30.0))
         )
-        self.advisory_recovery_sec: float = float(config.get("advisory_recovery_sec", 900.0))
+        self.advisory_recovery_sec: float = float(
+            config.get("advisory_recovery_sec", DEFAULT_ADVISORY_RECOVERY_SEC)
+        )
         self.operator_retriage_no_control_sec: float = float(
             config.get("operator_retriage_no_control_sec", 45.0)
         )
@@ -1223,8 +1228,17 @@ class WatcherCore:
 
     # ------------------------------------------------------------------
     def _get_next_control_seq(self) -> int:
-        candidates = self._iter_valid_control_signals()
-        seqs = [candidate.control_seq for candidate in candidates if candidate is not None and candidate.control_seq >= 0]
+        seqs: list[int] = []
+        seen: set[Path] = set()
+        for spec in iter_control_slot_specs():
+            for filename in spec.accepted_filenames:
+                path = self.pipeline_dir / filename
+                if path in seen or not path.exists():
+                    continue
+                seen.add(path)
+                control_seq = self._read_control_seq_from_path(path)
+                if control_seq >= 0:
+                    seqs.append(control_seq)
         if not seqs:
             return 1
         return max(seqs) + 1
@@ -2175,18 +2189,100 @@ class WatcherCore:
         if not ready:
             return None
 
+        recovery_attempt = self._advisory_recovery_attempt_for_request(request_control)
+        advisory_followup_allowed = recovery_attempt < ADVISORY_RECOVERY_FOLLOWUP_LIMIT
+        if advisory_followup_allowed:
+            next_controls = (
+                ".pipeline/implement_handoff.md [implement] | "
+                ".pipeline/advisory_request.md [request_open] | "
+                ".pipeline/operator_request.md [needs_operator]"
+            )
+            repeat_rule = (
+                "First stale advisory recovery: advisory follow-up is allowed only if it has "
+                "materially narrower new evidence; otherwise choose implement/operator."
+            )
+        else:
+            next_controls = (
+                ".pipeline/implement_handoff.md [implement] | "
+                ".pipeline/operator_request.md [needs_operator]"
+            )
+            repeat_rule = (
+                "Repeated stale advisory recovery: do not write another "
+                "`.pipeline/advisory_request.md`; choose a bounded implement handoff from "
+                "current evidence, or write an operator stop only for a real operator-only "
+                "boundary."
+            )
+
         return {
             "reason": "advisory_recovery",
             "control_file": request_control.path.name,
             "control_seq": request_seq,
             "request_sig": request_sig,
             "advisory_pending_age_sec": int(pending_age),
+            "advisory_recovery_attempt": recovery_attempt,
+            "advisory_followup_allowed": advisory_followup_allowed,
+            "advisory_recovery_next_controls": next_controls,
+            "advisory_recovery_repeat_rule": repeat_rule,
             "advisory_lane_target": advisory_target,
             "advisory_lane_busy": advisory_lane_busy,
             "advisory_lane_busy_age_sec": advisory_busy_age_sec,
             "verify_lane_ready": True,
             "verify_lane_ready_reason": defer_reason,
         }
+
+    # ------------------------------------------------------------------
+    def _advisory_recovery_attempt_for_request(self, request_control: ControlSignal) -> int:
+        chain_count = self._prior_recovery_chain_count_from_request(request_control.path)
+        prior_attempts = chain_count
+        if chain_count > 0:
+            prior_attempts = max(
+                prior_attempts,
+                self._prior_recovery_event_count(request_control.control_seq),
+            )
+        return max(1, prior_attempts + 1)
+
+    # ------------------------------------------------------------------
+    def _prior_recovery_chain_count_from_request(self, request_path: Path) -> int:
+        try:
+            request_text = request_path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return 0
+        count = 0
+        for raw_line in request_text.splitlines():
+            line = raw_line.strip().lower()
+            if not line.startswith("supersedes:"):
+                continue
+            if "advisory_request.md" in line and "stale_advisory_recovery" in line:
+                count += 1
+        return count
+
+    # ------------------------------------------------------------------
+    def _prior_recovery_event_count(self, current_control_seq: int) -> int:
+        try:
+            lines = self.run_events_path.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            return 0
+
+        count = 0
+        for line in reversed(lines[-200:]):
+            if not line.strip():
+                continue
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if event.get("event_type") != "advisory_recovery":
+                continue
+            payload = event.get("payload")
+            if not isinstance(payload, dict):
+                continue
+            seq = control_seq_value(payload.get("control_seq"), default=-1)
+            if current_control_seq >= 0 and seq >= current_control_seq:
+                continue
+            if payload.get("control_file") not in {"advisory_request.md", None}:
+                continue
+            count += 1
+        return count
 
     # ------------------------------------------------------------------
     def _cancel_advisory_lane_for_recovery(self, marker: dict[str, object]) -> bool:

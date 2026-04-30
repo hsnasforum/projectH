@@ -50,5 +50,8 @@ one newer control:
 - Do not send ordinary ABCD/menu choices to the operator when current evidence
   can narrow the answer.
 - Do not hand commit/push/PR work to implement.
+- In advisory recovery, if `ADVISORY_FOLLOWUP_ALLOWED: false`, do not write a
+  newer `.pipeline/advisory_request.md`; converge to implement or a real
+  operator boundary.
 - If the same incident repeats, prefer a replay test and owning helper/module
   over another file-local exception branch.

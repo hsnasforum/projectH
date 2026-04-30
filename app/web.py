@@ -51,6 +51,18 @@ from app.handlers.chat import ChatHandlerMixin
 DEFAULT_SESSION_ID = "demo-session"
 
 
+def _parse_positive_int(value: str | None, *, default: int, maximum: int = 100) -> int:
+    if value is None:
+        return default
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    if parsed <= 0:
+        return default
+    return min(parsed, maximum)
+
+
 def _has_manual_file_store_override(settings: AppSettings) -> bool:
     return (
         settings.sessions_dir != DEFAULT_SESSIONS_DIR
@@ -355,7 +367,13 @@ class LocalAssistantHandler(BaseHTTPRequestHandler):
             self._send_json(HTTPStatus.OK, {"ok": True})
             return
         if parsed.path == "/api/preferences":
-            self._send_json(HTTPStatus.OK, self.server.service.list_preferences_payload())
+            qs = parse_qs(parsed.query)
+            limit = _parse_positive_int((qs.get("limit") or [None])[0], default=20)
+            offset = _parse_positive_int((qs.get("offset") or [None])[0], default=0)
+            self._send_json(
+                HTTPStatus.OK,
+                self.server.service.list_preferences_payload(limit=limit, offset=offset),
+            )
             return
         if parsed.path == "/api/preferences/audit":
             self._send_json(HTTPStatus.OK, {"ok": True, "audit": self.server.service.get_preference_audit()})
@@ -368,7 +386,11 @@ class LocalAssistantHandler(BaseHTTPRequestHandler):
             qs = parse_qs(parsed.query)
             query = (qs.get("query") or [None])[0]
             status = (qs.get("status") or [None])[0]
-            response = self.server.service.get_correction_list(query=query, status=status)
+            limit = _parse_positive_int((qs.get("limit") or [None])[0], default=20)
+            offset = _parse_positive_int((qs.get("offset") or [None])[0], default=0)
+            response = self.server.service.get_correction_list(
+                query=query, status=status, limit=limit, offset=offset
+            )
             self._send_json(HTTPStatus.OK, response)
             return
         correction_detail_prefix = "/api/corrections/"
@@ -400,6 +422,12 @@ class LocalAssistantHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         parsed = urlparse(self.path)
+        preference_toggle_prefix = "/api/preferences/"
+        preference_toggle_suffix = "/toggle-reliability"
+        is_preference_reliability_toggle = (
+            parsed.path.startswith(preference_toggle_prefix)
+            and parsed.path.endswith(preference_toggle_suffix)
+        )
         if parsed.path not in {
             "/api/chat",
             "/api/chat/stream",
@@ -428,12 +456,21 @@ class LocalAssistantHandler(BaseHTTPRequestHandler):
             "/api/corrections/promote-pattern",
             "/api/sessions/delete",
             "/api/sessions/delete-all",
-        }:
+        } and not is_preference_reliability_toggle:
             self._send_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": {"message": "요청한 경로를 찾을 수 없습니다."}})
             return
 
         try:
             self._validate_same_origin()
+            if is_preference_reliability_toggle:
+                preference_id = parsed.path[
+                    len(preference_toggle_prefix):-len(preference_toggle_suffix)
+                ]
+                if not preference_id or "/" in preference_id:
+                    raise WebApiError(HTTPStatus.NOT_FOUND, "요청한 경로를 찾을 수 없습니다.")
+                response = self.server.service.toggle_preference_reliability(preference_id)
+                self._send_json(HTTPStatus.OK, response)
+                return
             if parsed.path == "/api/corrections/sync-adopted-to-candidates":
                 response = self.server.service.sync_adopted_corrections_to_candidates()
                 self._send_json(HTTPStatus.OK, response)
@@ -549,6 +586,54 @@ class LocalAssistantHandler(BaseHTTPRequestHandler):
             self._send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": {"message": "JSON 요청 본문 형식이 올바르지 않습니다."}})
         except ModelAdapterError as exc:
             self._send_json(HTTPStatus.BAD_GATEWAY, {"ok": False, "error": {"message": localize_text(str(exc))}})
+        except Exception as exc:
+            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"ok": False, "error": {"message": localize_text(str(exc))}})
+
+    def do_DELETE(self) -> None:
+        parsed = urlparse(self.path)
+        preference_prefix = "/api/preferences/"
+        if not parsed.path.startswith(preference_prefix):
+            self._send_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": {"message": "요청한 경로를 찾을 수 없습니다."}})
+            return
+
+        preference_id = parsed.path[len(preference_prefix):]
+        if not preference_id or "/" in preference_id:
+            self._send_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": {"message": "요청한 경로를 찾을 수 없습니다."}})
+            return
+
+        try:
+            self._validate_same_origin()
+            response = self.server.service.delete_preference(preference_id)
+            self._send_json(HTTPStatus.OK, response)
+        except WebApiError as exc:
+            self._send_json(exc.status_code, {"ok": False, "error": {"message": localize_text(exc.message)}})
+        except Exception as exc:
+            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"ok": False, "error": {"message": localize_text(str(exc))}})
+
+    def do_PATCH(self) -> None:
+        parsed = urlparse(self.path)
+        preference_prefix = "/api/preferences/"
+        if not parsed.path.startswith(preference_prefix):
+            self._send_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": {"message": "요청한 경로를 찾을 수 없습니다."}})
+            return
+
+        preference_id = parsed.path[len(preference_prefix):]
+        if not preference_id or "/" in preference_id:
+            self._send_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": {"message": "요청한 경로를 찾을 수 없습니다."}})
+            return
+
+        try:
+            self._validate_same_origin()
+            payload = self._read_json_body()
+            response = self.server.service.edit_preference_text(
+                preference_id,
+                payload.get("corrected_text"),
+            )
+            self._send_json(HTTPStatus.OK, response)
+        except WebApiError as exc:
+            self._send_json(exc.status_code, {"ok": False, "error": {"message": localize_text(exc.message)}})
+        except json.JSONDecodeError:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": {"message": "JSON 요청 본문 형식이 올바르지 않습니다."}})
         except Exception as exc:
             self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"ok": False, "error": {"message": localize_text(str(exc))}})
 

@@ -67,6 +67,8 @@ DEFAULT_ADVISORY_PROMPT = (
     "- keep `READ_FIRST` to the listed advisory-owner root doc only\n"
     "- if the request cites exact shipped docs or a current runtime-doc family, inspect those first\n"
     "- do not widen to `docs/superpowers/**`, `plandoc/**`, or historical planning docs unless the request, latest `/work`, or latest `/verify` cites them as current evidence\n"
+    "- do not use broad full-file `cat` reads on large planning docs such as `docs/TASK_BACKLOG.md`, `docs/MILESTONES.md`, or `docs/NEXT_STEPS.md`; use targeted search or section reads\n"
+    "- if named evidence is still insufficient after targeted reads, write `INSUFFICIENT_CONTEXT` with the exact missing evidence instead of expanding context\n"
     "- pane-only answer is not completion\n"
     "- use edit/write tools only; no shell heredoc or redirection\n"
     "- do not modify other repo files\n"
@@ -109,6 +111,8 @@ DEFAULT_ADVISORY_RECOVERY_PROMPT = (
     "REQUEST: .pipeline/advisory_request.md\n"
     "REQUEST_SEQ: {stale_control_seq}\n"
     "PENDING_AGE_SEC: {advisory_pending_age_sec}\n"
+    "RECOVERY_ATTEMPT: {advisory_recovery_attempt}\n"
+    "ADVISORY_FOLLOWUP_ALLOWED: {advisory_followup_allowed}\n"
     "NEXT_CONTROL_SEQ: {next_control_seq}\n"
     "WORK: {latest_work_path}\n"
     "VERIFY: {latest_verify_path}\n"
@@ -121,14 +125,15 @@ DEFAULT_ADVISORY_RECOVERY_PROMPT = (
     "- {latest_work_path}\n"
     "- {latest_verify_path}\n"
     "OUTPUTS:\n"
-    "- next control (CONTROL_SEQ: {next_control_seq}): .pipeline/implement_handoff.md [implement] | .pipeline/advisory_request.md [request_open] | .pipeline/operator_request.md [needs_operator]\n"
+    "- next control (CONTROL_SEQ: {next_control_seq}): {advisory_recovery_next_controls}\n"
     "RULES:\n"
     "- use ROLE_HARNESS and COUNCIL_HARNESS to converge stale advisory into one next control\n"
     "- keep `READ_FIRST` to the listed verify-owner root doc only\n"
     "- write exactly one next control\n"
     "- do not write `.pipeline/advisory_advice.md` on behalf of the advisory owner\n"
-    "- if advisory is still needed, write a newer, narrower `.pipeline/advisory_request.md`\n"
-    "- do not reopen the same stale advisory request after recovery; choose implement/operator, or ask advisory only with materially narrower new evidence\n"
+    "- {advisory_recovery_repeat_rule}\n"
+    "- if ADVISORY_FOLLOWUP_ALLOWED is true and advisory is still needed, write a newer, narrower `.pipeline/advisory_request.md`\n"
+    "- do not reopen the same stale advisory request after recovery; choose implement/operator, or ask advisory only when follow-up is allowed and materially narrower new evidence exists\n"
     "- if you write `.pipeline/implement_handoff.md`, keep its `READ_FIRST` to the implement-owner root doc only\n"
     "- operator stop header must include STATUS, CONTROL_SEQ, REASON_CODE, OPERATOR_POLICY, DECISION_CLASS, DECISION_REQUIRED, BASED_ON_WORK, BASED_ON_VERIFY\n"
     "- use `.pipeline/operator_request.md` only for a real operator-only decision, approval/truth-sync blocker, immediate safety stop, auth/credential blocker, or external publication boundary"
@@ -568,6 +573,20 @@ class WatcherPromptAssembler:
             **self.build_runtime_prompt_context(),
             "stale_control_seq": str(marker.get("control_seq") or "none"),
             "advisory_pending_age_sec": str(marker.get("advisory_pending_age_sec") or "0"),
+            "advisory_recovery_attempt": str(marker.get("advisory_recovery_attempt") or "1"),
+            "advisory_followup_allowed": (
+                "true" if bool(marker.get("advisory_followup_allowed", True)) else "false"
+            ),
+            "advisory_recovery_next_controls": str(
+                marker.get("advisory_recovery_next_controls")
+                or ".pipeline/implement_handoff.md [implement] | "
+                ".pipeline/advisory_request.md [request_open] | "
+                ".pipeline/operator_request.md [needs_operator]"
+            ),
+            "advisory_recovery_repeat_rule": str(
+                marker.get("advisory_recovery_repeat_rule")
+                or "If advisory is still needed, it must have materially narrower new evidence."
+            ),
         }
         return self._finalize_prompt_text(self.advisory_recovery_prompt.format(**context))
 

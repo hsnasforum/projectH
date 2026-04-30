@@ -67,7 +67,7 @@ class CorrectionHandlerMixin:
         self,
         query: str | None = None,
         status: str | None = None,
-        limit: int = 5,
+        limit: int = 20,
     ) -> dict[str, Any]:
         corrections = self.correction_store.list_filtered(
             query=query, status=status, limit=limit

@@ -147,6 +147,51 @@ class CorrectionSummaryTest(unittest.TestCase):
             self.assertEqual(payload["corrections"][0]["status"], "confirmed")
             self.assertNotEqual(payload["corrections"][0]["correction_id"], recorded["correction_id"])
 
+    def test_correction_list_searches_by_query(self) -> None:
+        with TemporaryDirectory() as d:
+            store = self._make_store(d)
+            first = store.record_correction(
+                artifact_id="art1",
+                session_id="s1",
+                source_message_id="msg1",
+                original_text="include the needle detail in the answer",
+                corrected_text="include the important detail in the answer",
+            )
+            second = store.record_correction(
+                artifact_id="art2",
+                session_id="s2",
+                source_message_id="msg2",
+                original_text="write a long paragraph",
+                corrected_text="write a concise summary",
+            )
+            self.assertIsNotNone(first)
+            self.assertIsNotNone(second)
+
+            payload = _CorrectionSummaryService(store).get_correction_list(query="needle")
+
+            self.assertIs(payload["ok"], True)
+            self.assertEqual(len(payload["corrections"]), 1)
+            self.assertEqual(payload["corrections"][0]["correction_id"], first["correction_id"])
+            self.assertNotEqual(payload["corrections"][0]["correction_id"], second["correction_id"])
+
+    def test_correction_list_respects_limit(self) -> None:
+        with TemporaryDirectory() as d:
+            store = self._make_store(d)
+            for index in range(3):
+                record = store.record_correction(
+                    artifact_id=f"art-limit-{index}",
+                    session_id=f"s-limit-{index}",
+                    source_message_id=f"msg-limit-{index}",
+                    original_text=f"limit original text {index}",
+                    corrected_text=f"limit corrected text {index}",
+                )
+                self.assertIsNotNone(record)
+
+            payload = _CorrectionSummaryService(store).get_correction_list(limit=2)
+
+            self.assertIs(payload["ok"], True)
+            self.assertEqual(len(payload["corrections"]), 2)
+
     def test_promote_pattern_seeds_reliability_from_recurrence(self) -> None:
         with TemporaryDirectory() as d:
             correction_store = self._make_store(d)

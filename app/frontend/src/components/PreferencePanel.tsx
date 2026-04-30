@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import type { CorrectionDetailRecord, CorrectionListResponse, CorrectionSummary, PreferenceAudit, PreferenceRecord } from "../api/client";
 import {
   confirmCorrectionPattern,
@@ -47,6 +47,9 @@ const CORRECTION_STATUS_OPTIONS: Array<{ value: CorrectionStatusFilter; label: s
   { value: "stopped", label: "STOPPED" },
 ];
 
+const CORRECTION_LIST_INITIAL_LIMIT = 5;
+const CORRECTION_LIST_LIMIT_STEP = 5;
+
 interface PanelProps {
   lastAppliedFingerprints?: string[];
   autoActivatedPreferenceNotice?: {
@@ -83,11 +86,12 @@ function isActiveLowReliabilityPreference(pref: PreferenceRecord) {
   );
 }
 
-function buildCorrectionListParams(query: string, status: CorrectionStatusFilter) {
+function buildCorrectionListParams(query: string, status: CorrectionStatusFilter, limit: number) {
   const trimmedQuery = query.trim();
-  const params: { query?: string; status?: string } = {};
+  const params: { query?: string; status?: string; limit?: number } = {};
   if (trimmedQuery) params.query = trimmedQuery;
   if (status !== "all") params.status = status;
+  if (limit > 0) params.limit = limit;
   return Object.keys(params).length ? params : undefined;
 }
 
@@ -116,6 +120,7 @@ export default function PreferencePanel({
   const [correctionList, setCorrectionList] = useState<CorrectionListResponse | null>(null);
   const [correctionQuery, setCorrectionQuery] = useState("");
   const [correctionStatusFilter, setCorrectionStatusFilter] = useState<CorrectionStatusFilter>("all");
+  const [correctionListLimit, setCorrectionListLimit] = useState(CORRECTION_LIST_INITIAL_LIMIT);
   const [loading, setLoading] = useState(false);
   const [expanded, setExpanded] = useState(true);
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
@@ -146,6 +151,7 @@ export default function PreferencePanel({
     id: string;
     preferenceId: string;
   } | null>(null);
+  const correctionSearchMounted = useRef(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -155,7 +161,7 @@ export default function PreferencePanel({
         fetchPreferenceAudit(),
         fetchCorrectionSummary().catch(() => null),
         fetchCorrectionList(
-          buildCorrectionListParams(correctionQuery, correctionStatusFilter),
+          buildCorrectionListParams(correctionQuery, correctionStatusFilter, correctionListLimit),
         ).catch(() => null),
       ]);
       // Filter out rejected items entirely
@@ -209,7 +215,7 @@ export default function PreferencePanel({
     } finally {
       setLoading(false);
     }
-  }, [correctionQuery, correctionStatusFilter]);
+  }, [correctionQuery, correctionStatusFilter, correctionListLimit]);
 
   useEffect(() => { load(); }, []);
 
@@ -227,15 +233,31 @@ export default function PreferencePanel({
     return () => window.clearTimeout(timer);
   }, [autoActivatedPreferenceNotice, load]);
 
+  useEffect(() => {
+    if (!correctionSearchMounted.current) {
+      correctionSearchMounted.current = true;
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      setSelectedCorrectionId(null);
+      setSelectedCorrectionDetail(null);
+      setCorrectionDetailMessage(null);
+      fetchCorrectionList(
+        buildCorrectionListParams(correctionQuery, correctionStatusFilter, correctionListLimit),
+      )
+        .then(setCorrectionList)
+        .catch(() => setCorrectionList(null));
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [correctionQuery, correctionStatusFilter, correctionListLimit]);
+
   const handleCorrectionStatusFilterChange = useCallback((nextStatus: CorrectionStatusFilter) => {
     setCorrectionStatusFilter(nextStatus);
+    setCorrectionListLimit(CORRECTION_LIST_INITIAL_LIMIT);
     setSelectedCorrectionId(null);
     setSelectedCorrectionDetail(null);
     setCorrectionDetailMessage(null);
-    fetchCorrectionList(buildCorrectionListParams(correctionQuery, nextStatus))
-      .then(setCorrectionList)
-      .catch(() => setCorrectionList(null));
-  }, [correctionQuery]);
+  }, []);
 
   const handleAction = useCallback(async (
     pref: PreferenceRecord,
@@ -583,7 +605,10 @@ export default function PreferencePanel({
                         className="min-w-0 flex-1 text-[10px] bg-transparent border-b border-sidebar-muted/20 text-sidebar-foreground placeholder:text-sidebar-muted/40 px-2 py-0.5 outline-none"
                         placeholder="교정 검색..."
                         value={correctionQuery}
-                        onChange={(e) => setCorrectionQuery(e.target.value)}
+                        onChange={(e) => {
+                          setCorrectionQuery(e.target.value);
+                          setCorrectionListLimit(CORRECTION_LIST_INITIAL_LIMIT);
+                        }}
                         onKeyDown={(e) => { if (e.key === "Enter") load(); }}
                       />
                       <select
@@ -602,7 +627,7 @@ export default function PreferencePanel({
                       </select>
                     </div>
                     <p className="text-[10px] text-sidebar-muted/60 mb-0.5">최근 교정</p>
-                    {correctionList.corrections.slice(0, 3).map((c) => (
+                    {correctionList.corrections.map((c) => (
                       <div
                         key={c.correction_id}
                         data-testid="correction-list-item"
@@ -637,6 +662,19 @@ export default function PreferencePanel({
                         [{c.status}] {(c.original_text ?? "").slice(0, 35)}
                       </div>
                     ))}
+                    {correctionList.corrections.length >= correctionListLimit && (
+                      <button
+                        type="button"
+                        data-testid="correction-show-more-btn"
+                        className="mt-1 w-full rounded bg-white/5 px-2 py-1 text-[10px] text-sidebar-muted/70 hover:bg-white/10 hover:text-sidebar-text"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          setCorrectionListLimit((current) => current + CORRECTION_LIST_LIMIT_STEP);
+                        }}
+                      >
+                        더 보기
+                      </button>
+                    )}
                     {(selectedCorrectionId || correctionDetailMessage || selectedCorrectionDetail) && (
                       <div
                         data-testid="correction-detail-panel"

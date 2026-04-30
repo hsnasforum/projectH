@@ -398,10 +398,12 @@ export interface CorrectionDetailResponse {
 export async function fetchCorrectionList(params?: {
   query?: string;
   status?: string;
+  limit?: number;
 }): Promise<CorrectionListResponse> {
   const url = new URL(`${BASE}/api/corrections/list`, window.location.origin);
   if (params?.query) url.searchParams.set("query", params.query);
   if (params?.status) url.searchParams.set("status", params.status);
+  if (params?.limit) url.searchParams.set("limit", String(params.limit));
   const res = await fetch(url.toString());
   if (!res.ok) throw new Error("correction list fetch failed");
   return res.json() as Promise<CorrectionListResponse>;

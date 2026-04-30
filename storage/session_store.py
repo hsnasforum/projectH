@@ -1030,9 +1030,10 @@ class SessionStore:
         preference_id = str(detail.get("preference_id") or "").strip()
         if not preference_id:
             return
-        stats = summary["per_preference_stats"].get(preference_id)
-        if not isinstance(stats, dict):
-            return
+        stats: PerPreferenceStats = summary["per_preference_stats"].setdefault(
+            preference_id,
+            SessionStore._empty_per_preference_stats(),
+        )
         stats["injected_count"] = int(stats.get("injected_count") or 0) + 1
 
     def get_global_audit_summary(self) -> Dict[str, Any]:

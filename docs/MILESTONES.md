@@ -1753,12 +1753,22 @@ Axis 1: `injected_count` 전역 감사 요약 — DONE
 `PerPreferenceStats`에 `injected_count` 필드 추가.
 `SessionStore.get_global_audit_summary()` 및 `SQLiteSessionStore.get_global_audit_summary()`가
 `preference_injected` task log 이벤트를 스캔해 `preference_id` 기준으로 `injected_count`를
-누적한다. `preference_id`가 없거나 기존 stats에 없는 이벤트는 무시한다.
+누적한다. M118 보정 후 `preference_id`가 없는 이벤트만 무시하고, 기존 stats에 없는
+유효 `preference_id` 이벤트는 zeroed entry를 만든 뒤 `injected_count`를 누적한다.
 `app/main.py` / `app/web.py` wiring에 `task_log_path` 연결 추가.
 
 Axis 2: docs sync (inline bundle) — DONE
 PRODUCT_SPEC / ACCEPTANCE_CRITERIA / ARCHITECTURE / MILESTONES /
 TASK_BACKLOG에 `injected_count` 필드, 스캔 동작, `PerPreferenceStats` 갱신을 반영.
+
+## M118 injected_count API exposure
+
+Axis 1: `injected_count` 집계 보정 + API 노출 — DONE
+M117에서 주입 전용 선호가 기존 `per_preference_stats` 항목이 없으면 누락되던
+제한을 제거했다. JSON/SQLite `get_global_audit_summary()`는 유효한
+`preference_id`를 가진 `preference_injected` 이벤트에 대해 zeroed stats entry를
+만든 뒤 `injected_count`를 누적한다. `list_preferences_payload()`는 각 선호 응답에
+top-level `injected_count`를 포함하되 기존 `reliability_stats` 구조는 유지한다.
 
 ## Next 3 Implementation Priorities
 

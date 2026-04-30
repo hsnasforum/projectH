@@ -145,7 +145,9 @@ class TestSQLiteSessionStoreGlobalAuditSummary(unittest.TestCase):
         self.assertEqual(per["fp-X"]["applied_count"], 1)
         self.assertEqual(per["fp-X"]["corrected_count"], 1)
         self.assertEqual(per["fp-X"]["injected_count"], 0)
-        self.assertNotIn("pref-missing", per)
+        self.assertEqual(per["pref-missing"]["applied_count"], 0)
+        self.assertEqual(per["pref-missing"]["corrected_count"], 0)
+        self.assertEqual(per["pref-missing"]["injected_count"], 1)
 
 
 class TestMigrationIntegrity(unittest.TestCase):

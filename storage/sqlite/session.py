@@ -266,9 +266,10 @@ class SQLiteSessionStore:
                     preference_id = str(detail.get("preference_id") or "").strip()
                     if not preference_id:
                         continue
-                    stats = summary["per_preference_stats"].get(preference_id)
-                    if not isinstance(stats, dict):
-                        continue
+                    stats = summary["per_preference_stats"].setdefault(
+                        preference_id,
+                        empty_per_preference_stats(),
+                    )
                     stats["injected_count"] = int(stats.get("injected_count") or 0) + 1
             return summary
 

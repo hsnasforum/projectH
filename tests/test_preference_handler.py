@@ -324,6 +324,43 @@ class PreferenceHandlerTest(unittest.TestCase):
         self.assertIs(by_id["pref-correction-rate"]["is_highly_reliable"], False)
         self.assertIs(by_id["pref-no-quality"]["is_highly_reliable"], False)
 
+    def test_list_preferences_payload_includes_injected_count(self) -> None:
+        service = _PreferenceService(
+            [
+                {
+                    "preference_id": "pref-injected",
+                    "delta_fingerprint": "fingerprint-injected",
+                    "description": "injected preference",
+                    "status": "active",
+                },
+                {
+                    "preference_id": "pref-default",
+                    "delta_fingerprint": "fingerprint-default",
+                    "description": "default injected count",
+                    "status": "active",
+                },
+            ],
+            audit_summary={
+                "per_preference_stats": {
+                    "fingerprint-injected": {
+                        "applied_count": 2,
+                        "corrected_count": 1,
+                        "injected_count": 4,
+                    },
+                },
+            },
+        )
+
+        payload = service.list_preferences_payload()
+        by_id = {pref["preference_id"]: pref for pref in payload["preferences"]}
+
+        self.assertEqual(by_id["pref-injected"]["injected_count"], 4)
+        self.assertEqual(
+            by_id["pref-injected"]["reliability_stats"],
+            {"applied_count": 2, "corrected_count": 1},
+        )
+        self.assertEqual(by_id["pref-default"]["injected_count"], 0)
+
     def test_list_preferences_payload_counts_highly_reliable_active_preferences(self) -> None:
         mixed_service = _PreferenceService(
             [

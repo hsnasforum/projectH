@@ -12083,6 +12083,143 @@ test("review queue search filter narrows list", async ({ page }) => {
   await expect(page.getByText("검색 결과 없음")).toBeVisible();
 });
 
+test("review queue item count reflects filter state", async ({ page }) => {
+  const sessionId = "demo-session";
+  const sessionTitle = "검토 항목 수 테스트";
+  const baseTimestamp = "2026-04-30T00:00:00Z";
+  const reviewQueueItem = (candidateId, statement) => ({
+    item_type: "durable_candidate",
+    candidate_id: candidateId,
+    candidate_scope: "durable_candidate",
+    candidate_family: "correction_rewrite_preference",
+    statement,
+    derived_from: { record_type: "candidate_confirmation_record" },
+    derived_at: baseTimestamp,
+    promotion_basis: "explicit_confirmation",
+    promotion_eligibility: "eligible_for_review",
+    artifact_id: `artifact-${candidateId}`,
+    source_message_id: `message-${candidateId}`,
+    source_session_id: sessionId,
+    source_session_title: sessionTitle,
+    supporting_artifact_ids: [`artifact-${candidateId}`],
+    supporting_source_message_ids: [`message-${candidateId}`],
+    supporting_signal_refs: [],
+    supporting_confirmation_refs: [],
+    created_at: baseTimestamp,
+    updated_at: baseTimestamp,
+    quality_info: { avg_similarity_score: 0.91, is_high_quality: true },
+    delta_summary: null,
+    original_snippet: null,
+    corrected_snippet: null,
+    context_turns: null,
+    evidence_summary: null,
+    is_global: false,
+  });
+  const alphaStatement = "alpha review queue count target statement";
+  const betaStatement = "beta review queue count target statement";
+
+  await page.route(/\/api\/sessions$/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        sessions: [
+          {
+            session_id: sessionId,
+            title: sessionTitle,
+            created_at: baseTimestamp,
+            updated_at: baseTimestamp,
+            message_count: 2,
+            pending_approval_count: 0,
+            last_message_preview: "review queue count",
+          },
+        ],
+      }),
+    });
+  });
+  await page.route(/\/api\/session\?session_id=demo-session/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        session: {
+          session_id: sessionId,
+          title: sessionTitle,
+          messages: [],
+          pending_approvals: [],
+          permissions: { web_search: "disabled" },
+          review_queue_items: [
+            reviewQueueItem("candidate-alpha-count", alphaStatement),
+            reviewQueueItem("candidate-beta-count", betaStatement),
+          ],
+        },
+      }),
+    });
+  });
+  await page.route(/\/api\/preferences(\?.*)?$/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: true,
+        preferences: [],
+        active_count: 0,
+        candidate_count: 0,
+        paused_count: 0,
+        total_applied: 0,
+        total_corrected: 0,
+        high_quality_active_count: 0,
+        highly_reliable_active_count: 0,
+        high_severity_conflict_count: 0,
+        low_reliability_active_count: 0,
+      }),
+    });
+  });
+  await page.route(/\/api\/preferences\/audit$/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: true,
+        audit: {
+          total: 0,
+          by_status: {},
+          conflict_pair_count: 0,
+          adopted_corrections_count: 0,
+          available_to_sync_count: 0,
+        },
+      }),
+    });
+  });
+  await page.route(/\/api\/corrections\/summary$/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ ok: true, total: 0, by_status: {}, top_recurring_fingerprints: [] }),
+    });
+  });
+  await page.route(/\/api\/corrections\/list(\?.*)?$/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ ok: true, corrections: [] }),
+    });
+  });
+
+  await page.goto("/app-preview");
+  const searchInput = page.getByTestId("review-queue-search-input");
+  const itemCount = page.getByTestId("review-queue-item-count");
+
+  await expect(searchInput).toBeVisible({ timeout: 10_000 });
+  await expect(itemCount).toHaveText("2개 항목");
+
+  await searchInput.fill("alpha review queue");
+  await expect(itemCount).toHaveText("1 / 2개 항목 (검색 결과)");
+
+  await searchInput.fill("missing review queue token");
+  await expect(itemCount).toHaveText("0 / 2개 항목 (검색 결과)");
+});
+
 test("활성 교정이 있으면 동기화 버튼이 보이고 클릭 시 후보가 생성됩니다", async ({ page }) => {
   let auditRequests = 0;
   let syncRequests = 0;

@@ -15156,6 +15156,97 @@ test("reviewed-memory loop: preference-low-reliability-badge가 신뢰도 저하
   await expect(lowReliabilityBadge).toContainText("신뢰도 저하");
 });
 
+test("preference injected count badge appears for injected preferences", async ({ page }) => {
+  await page.route(/\/api\/preferences(\?.*)?$/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: true,
+        preferences: [
+          {
+            preference_id: "pref-injected-count-visible",
+            delta_fingerprint: "sha256:pref-injected-count-visible",
+            description: "주입 횟수 표시용 활성 선호",
+            status: "active",
+            evidence_count: 2,
+            cross_session_count: 1,
+            reliability_stats: { applied_count: 2, corrected_count: 0 },
+            injected_count: 4,
+            quality_info: { avg_similarity_score: 0.9, is_high_quality: true },
+            is_highly_reliable: false,
+            conflict_info: null,
+            activated_at: "2026-04-30T00:00:00Z",
+            created_at: "2026-04-30T00:00:00Z",
+            updated_at: "2026-04-30T00:00:00Z",
+          },
+          {
+            preference_id: "pref-injected-count-hidden",
+            delta_fingerprint: "sha256:pref-injected-count-hidden",
+            description: "주입 횟수 미표시 활성 선호",
+            status: "active",
+            evidence_count: 1,
+            cross_session_count: 1,
+            reliability_stats: { applied_count: 0, corrected_count: 0 },
+            injected_count: 0,
+            quality_info: { avg_similarity_score: 0.9, is_high_quality: true },
+            is_highly_reliable: false,
+            conflict_info: null,
+            activated_at: "2026-04-30T00:00:00Z",
+            created_at: "2026-04-30T00:00:00Z",
+            updated_at: "2026-04-30T00:00:00Z",
+          },
+        ],
+        active_count: 2,
+        candidate_count: 0,
+        paused_count: 0,
+        total_applied: 2,
+        total_corrected: 0,
+        high_quality_active_count: 2,
+        highly_reliable_active_count: 0,
+        high_severity_conflict_count: 0,
+        low_reliability_active_count: 0,
+      }),
+    });
+  });
+  await page.route(/\/api\/preferences\/audit$/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: true,
+        audit: {
+          total: 2,
+          by_status: { active: 2, candidate: 0, paused: 0 },
+          conflict_pair_count: 0,
+          adopted_corrections_count: 0,
+          available_to_sync_count: 0,
+        },
+      }),
+    });
+  });
+  await page.route(/\/api\/corrections\/summary$/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ ok: true, total: 0, by_status: {}, top_recurring_fingerprints: [] }),
+    });
+  });
+  await page.route(/\/api\/corrections\/list(\?.*)?$/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ ok: true, corrections: [] }),
+    });
+  });
+
+  await page.goto("/app-preview");
+  await expect(page.getByText("선호 기억")).toBeVisible({ timeout: 5_000 });
+  const injectedCount = page.getByTestId("preference-injected-count");
+  await expect(injectedCount).toHaveCount(1, { timeout: 5_000 });
+  await expect(injectedCount).toHaveText("4회 주입 (50% 적용)");
+});
+
 test("preference show more appends next page", async ({ page }) => {
   let offsetRequests = 0;
   await page.route(/\/api\/preferences(\?.*)?$/, async (route) => {

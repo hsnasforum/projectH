@@ -73,6 +73,18 @@ function preferenceReliabilityCounts(pref: PreferenceRecord) {
   };
 }
 
+function preferenceInjectedLabel(pref: PreferenceRecord, reliability: ReturnType<typeof preferenceReliabilityCounts>) {
+  const injectedCount = pref.injected_count;
+  if (typeof injectedCount !== "number" || !Number.isFinite(injectedCount) || injectedCount < 1) {
+    return null;
+  }
+  if (reliability.applied > 0) {
+    const appliedRate = Math.round((reliability.applied / injectedCount) * 100);
+    return `${injectedCount}회 주입 (${appliedRate}% 적용)`;
+  }
+  return `${injectedCount}회 주입`;
+}
+
 function isActiveHighQualityPreference(pref: PreferenceRecord) {
   return pref.status === "active" && pref.quality_info?.is_high_quality === true;
 }
@@ -931,6 +943,7 @@ export default function PreferencePanel({
             const reviewReasonNote = pref.review_reason_note?.trim();
             const sourceSessionTitle = pref.source_session_title?.trim();
             const lastTransitionReason = pref.last_transition_reason?.trim();
+            const injectedLabel = preferenceInjectedLabel(pref, reliability);
             return (
               <div
                 key={pref.preference_id}
@@ -1049,9 +1062,17 @@ export default function PreferencePanel({
                 )}
 
                 <div className="mb-1 flex items-center justify-between gap-2">
-                  <p className="min-w-0 text-[9px] text-sidebar-muted/50 line-clamp-1">
-                    적용 {reliability.applied}회 · 교정 {reliability.corrected}회
-                  </p>
+                  <div className="min-w-0 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[9px] text-sidebar-muted/50">
+                    <span>적용 {reliability.applied}회 · 교정 {reliability.corrected}회</span>
+                    {injectedLabel && (
+                      <span
+                        data-testid="preference-injected-count"
+                        className="inline-flex items-center rounded-full bg-sky-500/15 px-1 py-0.5 font-semibold text-sky-300"
+                      >
+                        {injectedLabel}
+                      </span>
+                    )}
+                  </div>
                   {!isDescriptionEditing && (
                     <button
                       data-testid="pref-edit-description"

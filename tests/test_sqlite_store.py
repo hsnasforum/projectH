@@ -113,6 +113,14 @@ class TestSQLiteSessionStoreGlobalAuditSummary(unittest.TestCase):
             "text": "explicit correction",
         })
         self.store._save(session_id, data)
+        task_log_correction_session_id = "sqlite-task-log-correction-session"
+        task_log_data = self.store.get_session(task_log_correction_session_id)
+        task_log_data["messages"].append({
+            "message_id": "msg-task-log",
+            "role": "assistant",
+            "text": "task log correction session",
+        })
+        self.store._save(task_log_correction_session_id, task_log_data)
         task_logger = SQLiteTaskLogger(self.db)
         task_logger.log(
             session_id=session_id,
@@ -129,25 +137,43 @@ class TestSQLiteSessionStoreGlobalAuditSummary(unittest.TestCase):
             action="preference_injected",
             detail={"preference_id": "pref-missing"},
         )
+        task_logger.log(
+            session_id=task_log_correction_session_id,
+            action="preference_injected",
+            detail={"preference_id": "pref-task-log"},
+        )
+        task_logger.log(
+            session_id=task_log_correction_session_id,
+            action="correction_submitted",
+            detail={"message_id": "msg-task-log"},
+        )
 
         summary = self.store.get_global_audit_summary()
         per = summary["per_preference_stats"]
 
-        self.assertEqual(summary["session_count"], 1)
+        self.assertEqual(summary["session_count"], 2)
         self.assertEqual(summary["personalized_response_count"], 3)
         self.assertEqual(summary["personalized_correction_count"], 1)
         self.assertEqual(per["pref-A"]["applied_count"], 2)
         self.assertEqual(per["pref-A"]["corrected_count"], 1)
         self.assertEqual(per["pref-A"]["injected_count"], 1)
+        self.assertEqual(per["pref-A"]["injection_correction_count"], 1)
         self.assertEqual(per["pref-B"]["applied_count"], 1)
         self.assertEqual(per["pref-B"]["corrected_count"], 1)
         self.assertEqual(per["pref-B"]["injected_count"], 0)
+        self.assertEqual(per["pref-B"]["injection_correction_count"], 0)
         self.assertEqual(per["fp-X"]["applied_count"], 1)
         self.assertEqual(per["fp-X"]["corrected_count"], 1)
         self.assertEqual(per["fp-X"]["injected_count"], 0)
+        self.assertEqual(per["fp-X"]["injection_correction_count"], 0)
         self.assertEqual(per["pref-missing"]["applied_count"], 0)
         self.assertEqual(per["pref-missing"]["corrected_count"], 0)
         self.assertEqual(per["pref-missing"]["injected_count"], 1)
+        self.assertEqual(per["pref-missing"]["injection_correction_count"], 1)
+        self.assertEqual(per["pref-task-log"]["applied_count"], 0)
+        self.assertEqual(per["pref-task-log"]["corrected_count"], 0)
+        self.assertEqual(per["pref-task-log"]["injected_count"], 1)
+        self.assertEqual(per["pref-task-log"]["injection_correction_count"], 1)
 
 
 class TestMigrationIntegrity(unittest.TestCase):

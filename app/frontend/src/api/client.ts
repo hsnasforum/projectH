@@ -230,6 +230,8 @@ export interface PreferenceRecord {
     corrected_count?: number | null;
   } | null;
   injected_count?: number | null;
+  injection_correction_count?: number | null;
+  injection_correction_rate?: number | null;
   quality_info?: {
     avg_similarity_score: number | null;
     is_high_quality: boolean | null;

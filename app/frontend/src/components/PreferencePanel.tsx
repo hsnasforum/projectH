@@ -78,6 +78,12 @@ function preferenceInjectedLabel(pref: PreferenceRecord, reliability: ReturnType
   if (typeof injectedCount !== "number" || !Number.isFinite(injectedCount) || injectedCount < 1) {
     return null;
   }
+  const correctionRate = pref.injection_correction_rate;
+  if (typeof correctionRate === "number" && Number.isFinite(correctionRate) && correctionRate > 0) {
+    const appliedRate = Math.round((reliability.applied / injectedCount) * 100);
+    const correctionPercent = Math.round(correctionRate * 100);
+    return `${injectedCount}회 주입 (${appliedRate}% 적용 · ${correctionPercent}% 교정)`;
+  }
   if (reliability.applied > 0) {
     const appliedRate = Math.round((reliability.applied / injectedCount) * 100);
     return `${injectedCount}회 주입 (${appliedRate}% 적용)`;

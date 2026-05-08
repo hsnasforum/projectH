@@ -362,6 +362,61 @@ test.describe("controller office smoke", () => {
     await expect(page.locator("#lm-name")).toHaveText("Claude");
   });
 
+  test("controller derives operator eligibility for health-only auth attention", async ({ page }) => {
+    await disableRuntimeMonitor(page);
+    await page.route("**/api/runtime/status", (route) =>
+      route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({
+          runtime_state: "DEGRADED",
+          project_root: "/tmp/projectH",
+          automation_health: "needs_operator",
+          automation_reason_code: "claude_auth_login_required",
+          automation_next_action: "operator_required",
+          automation_health_detail: "lane tail에서 Please run /login 감지",
+          degraded_reason: "claude_auth_login_required",
+          degraded_reasons: ["claude_auth_login_required", "dispatch_stall"],
+          role_owners: { implement: "Codex", verify: "Claude", advisory: "Gemini" },
+          lanes: [
+            { name: "Codex", state: "ready", note: "prompt_visible" },
+            { name: "Claude", state: "broken", note: "auth_login_required", pid: 101 },
+            { name: "Gemini", state: "ready", note: "prompt_visible" },
+          ],
+          control: {
+            active_control_file: ".pipeline/implement_handoff.md",
+            active_control_status: "implement",
+            active_control_seq: 1544,
+          },
+          autonomy: {
+            mode: "normal",
+            reason_code: "",
+            block_reason: "",
+            operator_eligible: false,
+          },
+          turn_state: { state: "IDLE", active_role: "", active_lane: "" },
+          watcher: { alive: true },
+          active_round: { state: "VERIFY_PENDING", note: "waiting_task_accept_after_dispatch" },
+          artifacts: {},
+        }),
+      }),
+    );
+
+    await page.goto("/controller");
+    const board = page.locator("#operator-attention-board");
+    await expect(board).toBeVisible();
+    await expect(board).toContainText("인증 로그인 필요");
+    await expect(board).toContainText("Claude / VERIFY");
+    await expect(board).toContainText("implement_handoff.md · #1544");
+    await expect(board.locator(".operator-attention-row").filter({ hasText: "Next" })).toContainText("operator_required");
+    await expect(board.locator(".operator-attention-row").filter({ hasText: "Eligible" })).toContainText("true");
+
+    const attention = await page.evaluate(() => window.getOperatorAttentionDebug());
+    expect(attention.operatorEligible).toBe(true);
+    expect(attention.nextAction).toBe("operator_required");
+    expect(attention.laneName).toBe("Claude");
+    expect(attention.roleName).toBe("verify");
+  });
+
   test("controller labels commit push doc-sync operator attention without a lane", async ({ page }) => {
     await disableRuntimeMonitor(page);
     let statusRequests = 0;

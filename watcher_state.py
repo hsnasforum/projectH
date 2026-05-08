@@ -188,6 +188,34 @@ class PaneLease:
             path.unlink()
             log.info("lease released: slot=%s", slot)
 
+    def archive_for_restart(self, slot: str, *, archive_dir: Path | None = None) -> bool:
+        """
+        Preserve a potentially stale lease before watcher self-restart.
+
+        The supervisor owns the watcher process and can remain alive while the
+        old watcher's lock is no longer useful. Archiving keeps evidence while
+        allowing the restarted watcher to acquire the slot without waiting for
+        TTL expiry.
+        """
+        path = self._lock_path(slot)
+        if not path.exists():
+            return True
+        dest_dir = archive_dir or (self.lock_dir / "archive")
+        try:
+            dest_dir.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            log.warning("lease archive dir creation failed: slot=%s dir=%s error=%s", slot, dest_dir, exc)
+            return False
+        ts = int(time.time())
+        dest = dest_dir / f"{slot}.lock.stale-{ts}"
+        try:
+            path.rename(dest)
+        except OSError as exc:
+            log.warning("lease archive failed: slot=%s dest=%s error=%s", slot, dest, exc)
+            return False
+        log.info("lease archived for restart: slot=%s dest=%s", slot, dest)
+        return True
+
     def is_active(self, slot: str) -> bool:
         path = self._lock_path(slot)
         self._clear_if_owner_dead(slot)

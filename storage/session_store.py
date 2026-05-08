@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import json
 from pathlib import Path
 import threading
 from typing import Any, Dict, Iterator
@@ -41,9 +42,15 @@ ALLOWED_CANDIDATE_REVIEW_ACTION_TO_STATUS = CANDIDATE_REVIEW_ACTION_TO_STATUS
 
 
 class SessionStore:
-    def __init__(self, base_dir: str = "data/sessions") -> None:
+    def __init__(
+        self,
+        base_dir: str = "data/sessions",
+        *,
+        task_log_path: str | None = None,
+    ) -> None:
         self.base_dir = Path(base_dir)
         self.base_dir.mkdir(parents=True, exist_ok=True)
+        self.task_log_path = Path(task_log_path) if task_log_path else None
         self._lock = threading.RLock()
 
     def _path(self, session_id: str) -> Path:
@@ -986,6 +993,94 @@ class SessionStore:
                 )
             return sorted(summaries, key=lambda item: item.get("updated_at", ""), reverse=True)
 
+    @staticmethod
+    def _empty_per_preference_stats() -> PerPreferenceStats:
+        return {
+            "applied_count": 0,
+            "corrected_count": 0,
+            "injected_count": 0,
+            "injection_correction_count": 0,
+        }
+
+    def _iter_task_log_records_for_sessions(
+        self,
+        session_ids: set[str],
+    ) -> Iterator[dict[str, Any]]:
+        if not session_ids or self.task_log_path is None or not self.task_log_path.exists():
+            return
+        with self.task_log_path.open("r", encoding="utf-8") as f:
+            for raw_line in f:
+                line = raw_line.strip()
+                if not line:
+                    continue
+                try:
+                    loaded = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(loaded, dict):
+                    continue
+                if str(loaded.get("session_id") or "").strip() in session_ids:
+                    yield loaded
+
+    @staticmethod
+    def _preference_id_from_injection_event(event: dict[str, Any]) -> str:
+        if str(event.get("action") or event.get("event") or "").strip() != "preference_injected":
+            return ""
+        detail = event.get("detail")
+        if not isinstance(detail, dict):
+            return ""
+        return str(detail.get("preference_id") or "").strip()
+
+    @staticmethod
+    def _increment_preference_injection_count(
+        summary: Dict[str, Any],
+        event: dict[str, Any],
+    ) -> None:
+        preference_id = SessionStore._preference_id_from_injection_event(event)
+        if not preference_id:
+            return
+        stats: PerPreferenceStats = summary["per_preference_stats"].setdefault(
+            preference_id,
+            SessionStore._empty_per_preference_stats(),
+        )
+        stats["injected_count"] = int(stats.get("injected_count") or 0) + 1
+
+    @staticmethod
+    def _is_correction_task_log_record(event: dict[str, Any]) -> bool:
+        return str(event.get("action") or event.get("event") or "").strip() == "correction_submitted"
+
+    @staticmethod
+    def _session_has_correction_event(data: dict[str, Any]) -> bool:
+        for msg in data.get("messages", []):
+            if not isinstance(msg, dict):
+                continue
+            if msg.get("corrected_text") is not None:
+                return True
+            events = msg.get("preference_correction_events")
+            if isinstance(events, list) and any(isinstance(event, dict) for event in events):
+                return True
+            corrected_outcome = msg.get("corrected_outcome")
+            if (
+                isinstance(corrected_outcome, dict)
+                and str(corrected_outcome.get("outcome") or "").strip().lower() == "corrected"
+            ):
+                return True
+        return False
+
+    @staticmethod
+    def _increment_injection_correction_counts(
+        summary: Dict[str, Any],
+        preference_ids: set[str],
+    ) -> None:
+        for preference_id in preference_ids:
+            stats: PerPreferenceStats = summary["per_preference_stats"].setdefault(
+                preference_id,
+                SessionStore._empty_per_preference_stats(),
+            )
+            stats["injection_correction_count"] = int(
+                stats.get("injection_correction_count") or 0
+            ) + 1
+
     def get_global_audit_summary(self) -> Dict[str, Any]:
         """Return aggregate trace counts across all sessions for precondition assessment."""
         with self._lock:
@@ -1010,12 +1105,19 @@ class SessionStore:
                 elif label in {"unclear", "incorrect", "dislike"}:
                     summary["feedback_dislike_count"] += 1
 
+            session_ids: set[str] = set()
+            correction_session_ids: set[str] = set()
             for path in sorted(self.base_dir.glob("*.json")):
                 try:
                     session_id = path.stem
                     data = self.get_session(session_id)
                 except Exception:
                     continue
+                normalized_session_id = str(data.get("session_id") or session_id).strip()
+                if normalized_session_id:
+                    session_ids.add(normalized_session_id)
+                    if self._session_has_correction_event(data):
+                        correction_session_ids.add(normalized_session_id)
                 summary["session_count"] += 1
                 for msg in data.get("messages", []):
                     if (
@@ -1030,7 +1132,8 @@ class SessionStore:
                             summary["personalized_correction_count"] += 1
                         for pref_id in msg["applied_preference_ids"]:
                             pstats: PerPreferenceStats = summary["per_preference_stats"].setdefault(
-                                pref_id, {"applied_count": 0, "corrected_count": 0}
+                                pref_id,
+                                self._empty_per_preference_stats(),
                             )
                             pstats["applied_count"] += 1
                             if is_personalized_correction:
@@ -1042,7 +1145,8 @@ class SessionStore:
                         if not event_fingerprint:
                             continue
                         event_stats: PerPreferenceStats = summary["per_preference_stats"].setdefault(
-                            event_fingerprint, {"applied_count": 0, "corrected_count": 0}
+                            event_fingerprint,
+                            self._empty_per_preference_stats(),
                         )
                         event_stats["corrected_count"] += 1
                     count_feedback(msg.get("feedback"))
@@ -1055,6 +1159,22 @@ class SessionStore:
                         summary["operator_rolled_back_count"] += 1
                     elif status == "failed":
                         summary["operator_failed_count"] += 1
+            injected_preference_ids_by_session: dict[str, set[str]] = {}
+            for event in self._iter_task_log_records_for_sessions(session_ids):
+                event_session_id = str(event.get("session_id") or "").strip()
+                preference_id = self._preference_id_from_injection_event(event)
+                if event_session_id and preference_id:
+                    injected_preference_ids_by_session.setdefault(event_session_id, set()).add(
+                        preference_id
+                    )
+                self._increment_preference_injection_count(summary, event)
+                if event_session_id and self._is_correction_task_log_record(event):
+                    correction_session_ids.add(event_session_id)
+            for session_id in sorted(correction_session_ids):
+                self._increment_injection_correction_counts(
+                    summary,
+                    injected_preference_ids_by_session.get(session_id, set()),
+                )
             return summary
 
     def stream_trace_pairs(self) -> Iterator[Dict[str, Any]]:

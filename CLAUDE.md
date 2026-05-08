@@ -19,6 +19,16 @@ operator stops, duplicate handoffs, and stalled automation.
   not change document-first scope, replaceable runtime posture, or
   approval/operator boundaries.
 
+## Prompt Operating Principles
+
+- Follow the canonical prompt principles in `AGENTS.md`: outcome first,
+  minimal sufficient context, strong words only for invariants, honest
+  validation, and separated progress/final output.
+- In verify/handoff work, make the target outcome, evidence used, stop rule, and
+  validation command explicit before writing the next control.
+- If replaying Responses assistant items, preserve `phase` values exactly:
+  `commentary` for progress and `final_answer` for completed answers.
+
 ## Role Binding
 
 Claude follows `.pipeline/config/agent_profile.json`, not historical

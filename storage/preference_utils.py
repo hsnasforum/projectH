@@ -9,6 +9,10 @@ from core.delta_analysis import is_high_quality
 from core.contracts import PerPreferenceStats
 
 
+INJECTION_CORRECTION_THRESHOLD = 0.25
+INJECTION_MINIMUM_COUNT = 3
+
+
 def preference_fingerprint(preference: Mapping[str, Any]) -> str:
     return str(preference.get("fingerprint") or preference.get("delta_fingerprint") or "")
 
@@ -42,6 +46,28 @@ def _normalized_injection_correction_count(stats: Any) -> int:
         return 0
     count = stats.get("injection_correction_count", 0)
     return count if isinstance(count, int) else 0
+
+
+def _injection_correction_rate_exceeded(preference: Mapping[str, Any]) -> bool:
+    stats = preference.get("reliability_stats")
+    injected_count = preference.get("injected_count", None)
+    if not isinstance(injected_count, int):
+        injected_count = _normalized_injected_count(stats)
+    if not isinstance(injected_count, int) or injected_count < INJECTION_MINIMUM_COUNT:
+        return False
+    rate = preference.get("injection_correction_rate", 0.0)
+    if "injection_correction_rate" not in preference:
+        injection_correction_count = _normalized_injection_correction_count(stats)
+        rate = (
+            round(injection_correction_count / injected_count, 3)
+            if injected_count > 0
+            else 0.0
+        )
+    try:
+        normalized_rate = float(rate)
+    except (TypeError, ValueError):
+        return False
+    return normalized_rate > INJECTION_CORRECTION_THRESHOLD
 
 
 def _quality_info_from_existing(existing_quality_info: Any) -> dict[str, float | bool | None] | None:
@@ -101,14 +127,21 @@ def enrich_preference_reliability(
     )
     explicit_reliability = pref_copy.get("is_highly_reliable")
     pref_copy["is_highly_reliable"] = (
-        explicit_reliability
-        if isinstance(explicit_reliability, bool)
-        else is_highly_reliable_preference(pref_copy)
+        False
+        if _injection_correction_rate_exceeded(pref_copy)
+        else (
+            explicit_reliability
+            if isinstance(explicit_reliability, bool)
+            else is_highly_reliable_preference(pref_copy)
+        )
     )
     return pref_copy
 
 
 def is_highly_reliable_preference(preference: Mapping[str, Any]) -> bool:
+    if _injection_correction_rate_exceeded(preference):
+        return False
+
     explicit_reliability = preference.get("is_highly_reliable")
     if isinstance(explicit_reliability, bool):
         return explicit_reliability

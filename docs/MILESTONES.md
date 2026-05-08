@@ -1789,6 +1789,19 @@ JSON/SQLite `get_global_audit_summary()`가 `PerPreferenceStats`에
 `is_highly_reliable_preference()` boolean 계산은 변경하지 않는다.
 신규/갱신 unittest는 JSON store, SQLite store, preference handler 응답 필드를 고정한다.
 
+## M120 injection correction reliability filter
+
+Axis 1: injection-correction reliability demotion — DONE
+`storage.preference_utils`의 공유 신뢰도 projection이
+`injected_count >= 3` 및 `injection_correction_rate > 0.25` 조건을 먼저 평가한다.
+조건을 충족한 선호는 저장된 명시적 `is_highly_reliable=True` 값이 있어도
+`is_highly_reliable=False`로 강등된다. 조건 미충족 시에는 기존 명시값 우선 규칙과
+고품질 + 적용 3회 이상 + 교정률 15% 미만 규칙을 유지한다.
+`list_preferences_payload()`와 `AgentLoop._get_active_preferences()`는 같은 helper를 통해
+M119 주입-교정 감사 신호를 반영하며, `get_global_audit_summary()`와 UI/frontend는 변경하지 않았다.
+신규 unittest는 API payload demotion, 주입 횟수 미달, 비율 미달, 기존 신뢰도 회귀,
+명시값 override를 고정한다.
+
 ## Next 3 Implementation Priorities
 
 1. **PR 머지 백로그**: PR #91–#111 — 모두 draft, `pr_merge_gate` operator 승인 대기.

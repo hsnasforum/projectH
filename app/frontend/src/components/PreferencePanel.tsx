@@ -55,6 +55,7 @@ const CORRECTION_STATUS_OPTIONS: Array<{ value: CorrectionStatusFilter; label: s
 
 const CORRECTION_LIST_PAGE_SIZE = 5;
 const PREFERENCE_LIST_PAGE_SIZE = 20;
+const INJECTION_CORRECTION_DEMOTION_RATE = 0.25;
 
 interface PanelProps {
   lastAppliedFingerprints?: string[];
@@ -78,11 +79,30 @@ function preferenceInjectedLabel(pref: PreferenceRecord, reliability: ReturnType
   if (typeof injectedCount !== "number" || !Number.isFinite(injectedCount) || injectedCount < 1) {
     return null;
   }
+  const correctionRate = pref.injection_correction_rate;
+  if (typeof correctionRate === "number" && Number.isFinite(correctionRate) && correctionRate > 0) {
+    const appliedRate = Math.round((reliability.applied / injectedCount) * 100);
+    const correctionPercent = Math.round(correctionRate * 100);
+    return `${injectedCount}회 주입 (${appliedRate}% 적용 · ${correctionPercent}% 교정)`;
+  }
   if (reliability.applied > 0) {
     const appliedRate = Math.round((reliability.applied / injectedCount) * 100);
     return `${injectedCount}회 주입 (${appliedRate}% 적용)`;
   }
   return `${injectedCount}회 주입`;
+}
+
+function isDemotedByInjectionCorrection(pref: PreferenceRecord) {
+  const correctionRate = pref.injection_correction_rate;
+  const injectedCount = pref.injected_count;
+  return (
+    typeof correctionRate === "number" &&
+    Number.isFinite(correctionRate) &&
+    correctionRate > INJECTION_CORRECTION_DEMOTION_RATE &&
+    typeof injectedCount === "number" &&
+    Number.isFinite(injectedCount) &&
+    injectedCount >= 3
+  );
 }
 
 function isActiveHighQualityPreference(pref: PreferenceRecord) {
@@ -944,6 +964,7 @@ export default function PreferencePanel({
             const sourceSessionTitle = pref.source_session_title?.trim();
             const lastTransitionReason = pref.last_transition_reason?.trim();
             const injectedLabel = preferenceInjectedLabel(pref, reliability);
+            const isDemotedByInjection = isDemotedByInjectionCorrection(pref);
             return (
               <div
                 key={pref.preference_id}
@@ -1067,7 +1088,16 @@ export default function PreferencePanel({
                     {injectedLabel && (
                       <span
                         data-testid="preference-injected-count"
-                        className="inline-flex items-center rounded-full bg-sky-500/15 px-1 py-0.5 font-semibold text-sky-300"
+                        className={
+                          isDemotedByInjection
+                            ? "inline-flex items-center rounded-full bg-amber-500/20 px-1 py-0.5 font-semibold text-amber-300"
+                            : "inline-flex items-center rounded-full bg-sky-500/15 px-1 py-0.5 font-semibold text-sky-300"
+                        }
+                        title={
+                          isDemotedByInjection
+                            ? `교정률 ${Math.round((pref.injection_correction_rate ?? 0) * 100)}% 초과 - 신뢰도 자동 강등됨`
+                            : undefined
+                        }
                       >
                         {injectedLabel}
                       </span>

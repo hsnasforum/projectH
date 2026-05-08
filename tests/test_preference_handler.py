@@ -6,6 +6,7 @@ from typing import Any
 import unittest
 
 from app.handlers.preferences import PreferenceHandlerMixin, _jaccard_word_similarity
+from storage.preference_utils import is_highly_reliable_preference
 
 
 class _PreferenceStore:
@@ -323,6 +324,132 @@ class PreferenceHandlerTest(unittest.TestCase):
         self.assertIs(by_id["pref-too-few"]["is_highly_reliable"], False)
         self.assertIs(by_id["pref-correction-rate"]["is_highly_reliable"], False)
         self.assertIs(by_id["pref-no-quality"]["is_highly_reliable"], False)
+
+    def test_list_preferences_payload_demotes_high_injection_correction_rate(self) -> None:
+        service = _PreferenceService(
+            [
+                {
+                    "preference_id": "pref-injection-demoted",
+                    "delta_fingerprint": "fingerprint-injection-demoted",
+                    "description": "explicitly reliable but often corrected after injection",
+                    "status": "active",
+                    "avg_similarity_score": 0.15,
+                    "is_highly_reliable": True,
+                },
+                {
+                    "preference_id": "pref-injection-too-few",
+                    "delta_fingerprint": "fingerprint-injection-too-few",
+                    "description": "too few injections to demote",
+                    "status": "active",
+                    "avg_similarity_score": 0.15,
+                },
+                {
+                    "preference_id": "pref-injection-low-rate",
+                    "delta_fingerprint": "fingerprint-injection-low-rate",
+                    "description": "low injection correction rate",
+                    "status": "active",
+                    "avg_similarity_score": 0.15,
+                },
+                {
+                    "preference_id": "pref-injection-baseline",
+                    "delta_fingerprint": "fingerprint-injection-baseline",
+                    "description": "baseline reliable preference",
+                    "status": "active",
+                    "avg_similarity_score": 0.15,
+                },
+            ],
+            audit_summary={
+                "per_preference_stats": {
+                    "fingerprint-injection-demoted": {
+                        "applied_count": 5,
+                        "corrected_count": 0,
+                        "injected_count": 5,
+                        "injection_correction_count": 2,
+                    },
+                    "fingerprint-injection-too-few": {
+                        "applied_count": 5,
+                        "corrected_count": 0,
+                        "injected_count": 2,
+                        "injection_correction_count": 1,
+                    },
+                    "fingerprint-injection-low-rate": {
+                        "applied_count": 5,
+                        "corrected_count": 0,
+                        "injected_count": 5,
+                        "injection_correction_count": 1,
+                    },
+                    "fingerprint-injection-baseline": {
+                        "applied_count": 3,
+                        "corrected_count": 0,
+                    },
+                },
+            },
+        )
+
+        payload = service.list_preferences_payload()
+        by_id = {pref["preference_id"]: pref for pref in payload["preferences"]}
+
+        self.assertIs(by_id["pref-injection-demoted"]["is_highly_reliable"], False)
+        self.assertEqual(by_id["pref-injection-demoted"]["injection_correction_rate"], 0.4)
+        self.assertIs(by_id["pref-injection-too-few"]["is_highly_reliable"], True)
+        self.assertEqual(by_id["pref-injection-too-few"]["injection_correction_rate"], 0.5)
+        self.assertIs(by_id["pref-injection-low-rate"]["is_highly_reliable"], True)
+        self.assertEqual(by_id["pref-injection-low-rate"]["injection_correction_rate"], 0.2)
+        self.assertIs(by_id["pref-injection-baseline"]["is_highly_reliable"], True)
+
+    def test_high_injection_correction_rate_overrides_explicit_reliability(self) -> None:
+        self.assertIs(
+            is_highly_reliable_preference({
+                "is_highly_reliable": True,
+                "injected_count": 5,
+                "injection_correction_rate": 0.30,
+                "quality_info": {"is_high_quality": True},
+                "reliability_stats": {"applied_count": 5, "corrected_count": 0},
+            }),
+            False,
+        )
+
+    def test_list_preferences_payload_includes_injected_count(self) -> None:
+        service = _PreferenceService(
+            [
+                {
+                    "preference_id": "pref-injected",
+                    "delta_fingerprint": "fingerprint-injected",
+                    "description": "injected preference",
+                    "status": "active",
+                },
+                {
+                    "preference_id": "pref-default",
+                    "delta_fingerprint": "fingerprint-default",
+                    "description": "default injected count",
+                    "status": "active",
+                },
+            ],
+            audit_summary={
+                "per_preference_stats": {
+                    "fingerprint-injected": {
+                        "applied_count": 2,
+                        "corrected_count": 1,
+                        "injected_count": 4,
+                        "injection_correction_count": 1,
+                    },
+                },
+            },
+        )
+
+        payload = service.list_preferences_payload()
+        by_id = {pref["preference_id"]: pref for pref in payload["preferences"]}
+
+        self.assertEqual(by_id["pref-injected"]["injected_count"], 4)
+        self.assertEqual(by_id["pref-injected"]["injection_correction_count"], 1)
+        self.assertEqual(by_id["pref-injected"]["injection_correction_rate"], 0.25)
+        self.assertEqual(
+            by_id["pref-injected"]["reliability_stats"],
+            {"applied_count": 2, "corrected_count": 1},
+        )
+        self.assertEqual(by_id["pref-default"]["injected_count"], 0)
+        self.assertEqual(by_id["pref-default"]["injection_correction_count"], 0)
+        self.assertEqual(by_id["pref-default"]["injection_correction_rate"], 0.0)
 
     def test_list_preferences_payload_counts_highly_reliable_active_preferences(self) -> None:
         mixed_service = _PreferenceService(

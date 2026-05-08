@@ -3656,6 +3656,15 @@ function attentionEvidenceText(data, reason, missingReason, laneName) {
   return 'runtime status에서 operator 대기 상태를 감지했습니다.';
 }
 
+function attentionOperatorEligible(autonomy, nextAction, controlNeedsOperator, healthNeedsOperator) {
+  if (autonomy.operator_eligible === true) return true;
+  if (controlNeedsOperator || healthNeedsOperator || ['operator_required', 'pr_boundary'].includes(nextAction)) {
+    return true;
+  }
+  if (autonomy.operator_eligible === false) return false;
+  return undefined;
+}
+
 function buildOperatorAttention(data = runtimeStateStore.data) {
   const payload = data || {};
   const presentation = getPresentation(payload);
@@ -3667,6 +3676,7 @@ function buildOperatorAttention(data = runtimeStateStore.data) {
     return { visible: false, suppressed: true };
   }
   if (!controlNeedsOperator && !healthNeedsOperator) return { visible: false };
+  const nextAction = firstNonEmpty(payload.automation_next_action, healthNeedsOperator ? 'operator_required' : '');
   const reason = firstNonEmpty(
     autonomy.reason_code,
     autonomy.block_reason,
@@ -3689,8 +3699,8 @@ function buildOperatorAttention(data = runtimeStateStore.data) {
     policy: firstNonEmpty(autonomy.operator_policy, autonomy.classification_source),
     decision: attentionDecisionText(payload, reason, missingReason, laneName),
     evidence: attentionEvidenceText(payload, reason, missingReason, laneName),
-    nextAction: firstNonEmpty(payload.automation_next_action, healthNeedsOperator ? 'operator_required' : ''),
-    operatorEligible: autonomy.operator_eligible,
+    nextAction,
+    operatorEligible: attentionOperatorEligible(autonomy, nextAction, controlNeedsOperator, healthNeedsOperator),
   };
 }
 

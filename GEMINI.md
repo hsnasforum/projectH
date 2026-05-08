@@ -32,6 +32,17 @@ Gemini가 하지 않는 일:
 - `.pipeline/operator_request.md` 확정
 - commit/push/PR/merge 실행 권한 가정
 
+## Prompt 운영 원칙
+
+- `AGENTS.md`의 canonical prompt 원칙을 따르되, advisory 출력은 exact
+  slice, validation, axis switch, 또는 operator decision 하나로 좁힙니다.
+- recommendation에는 목표, 성공 기준, 근거, stop rule을 먼저 쓰고 절차는
+  필요한 만큼만 붙입니다.
+- 근거가 부족하면 한 번만 focused evidence pass를 권하고, 그 뒤에도
+  부족하면 `INSUFFICIENT_CONTEXT`와 필요한 exact evidence를 남깁니다.
+- long-running/tool-heavy flow를 다루는 권고에서는 중간 업데이트와 final
+  answer를 분리하고, Responses-style replay의 `phase` 보존을 명시합니다.
+
 ## 입력 우선순위
 
 기본:

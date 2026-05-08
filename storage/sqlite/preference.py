@@ -100,7 +100,30 @@ class SQLitePreferenceStore:
         return results
 
     def activate_preference(self, preference_id: str) -> PreferenceRecord | None:
-        return self._update_status(preference_id, "active")
+        now = _now_iso()
+        row = self._db.fetchone(
+            "SELECT * FROM preferences WHERE preference_id = ?",
+            (preference_id,),
+        )
+        if row is None:
+            return None
+        data = json.loads(row["data"])
+        data["is_highly_reliable"] = True
+        data["status"] = "active"
+        data["activated_at"] = now
+        data["updated_at"] = now
+        self._db.execute(
+            "UPDATE preferences SET status = ?, updated_at = ?, activated_at = ?, data = ? WHERE preference_id = ?",
+            (
+                "active",
+                now,
+                now,
+                json.dumps(data, ensure_ascii=False, default=str),
+                preference_id,
+            ),
+        )
+        self._db.commit()
+        return self.get(preference_id)
 
     def pause_preference(self, preference_id: str) -> PreferenceRecord | None:
         return self._update_status(preference_id, "paused")

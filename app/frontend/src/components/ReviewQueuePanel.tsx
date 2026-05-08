@@ -57,6 +57,17 @@ function pluralCount(label: string, count: number): string {
   return `${label} ${count}개`;
 }
 
+function relativeAgeLabel(isoTimestamp: string): string {
+  const timestamp = new Date(isoTimestamp).getTime();
+  if (!Number.isFinite(timestamp)) return "0분 전";
+  const elapsedMs = Math.max(0, Date.now() - timestamp);
+  const elapsedMinutes = Math.floor(elapsedMs / 60000);
+  if (elapsedMinutes < 60) return `${elapsedMinutes}분 전`;
+  const elapsedHours = Math.floor(elapsedMinutes / 60);
+  if (elapsedHours < 24) return `${elapsedHours}시간 전`;
+  return `${Math.floor(elapsedHours / 24)}일 전`;
+}
+
 export default function ReviewQueuePanel({ items, sessionId, onReview }: Props) {
   const [q, setQ] = useState("");
   const [editDrafts, setEditDrafts] = useState<Record<string, string | null>>({});
@@ -69,6 +80,9 @@ export default function ReviewQueuePanel({ items, sessionId, onReview }: Props) 
   const filteredItems = trimmedQuery
     ? items.filter((item) => item.statement.toLowerCase().includes(trimmedQuery))
     : items;
+  const itemCountLabel = filteredItems.length === items.length
+    ? `${items.length}개 항목`
+    : `${filteredItems.length} / ${items.length}개 항목 (검색 결과)`;
 
   return (
     <div className="border-t border-white/[0.06] px-3 py-2" aria-label={`${sessionId} review queue`}>
@@ -85,6 +99,9 @@ export default function ReviewQueuePanel({ items, sessionId, onReview }: Props) 
           onChange={(event) => setQ(event.target.value)}
         />
       </div>
+      <p data-testid="review-queue-item-count" className="px-2 pb-1 text-[10px] font-medium text-sidebar-muted/70">
+        {itemCountLabel}
+      </p>
       <ul className="max-h-[220px] space-y-1 overflow-y-auto pr-0.5">
         {filteredItems.length === 0 && trimmedQuery && (
           <li className="px-2 py-3 text-center text-[11px] text-sidebar-muted/60">
@@ -107,6 +124,7 @@ export default function ReviewQueuePanel({ items, sessionId, onReview }: Props) 
           const sourceSessionTitle = item.source_session_title?.trim();
           const reasonDraft = reasonDrafts[item.candidate_id] ?? "";
           const reasonNote = reasonDraft.trim() || undefined;
+          const ageLabel = relativeAgeLabel(item.derived_at);
           return (
             <li
               key={`${item.source_message_id}:${item.candidate_id}`}
@@ -127,14 +145,31 @@ export default function ReviewQueuePanel({ items, sessionId, onReview }: Props) 
                     {item.statement}
                   </p>
                 )}
-                {item.quality_info?.is_high_quality && (
-                  <span className="shrink-0 rounded-full bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-300">
-                    고품질
-                  </span>
-                )}
                 {item.is_global && (
                   <span className="shrink-0 rounded-full border border-violet-400/20 bg-violet-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-violet-300">
                     범용
+                  </span>
+                )}
+              </div>
+              <div className="mb-2 flex flex-wrap gap-1 text-[10px] font-medium text-sidebar-muted">
+                <span
+                  data-testid="review-queue-item-age"
+                  className="rounded-full border border-white/10 bg-white/5 px-1.5 py-0.5"
+                >
+                  {ageLabel}
+                </span>
+                <span
+                  data-testid="review-queue-item-family"
+                  className="rounded-full border border-white/10 bg-white/5 px-1.5 py-0.5"
+                >
+                  {item.candidate_family}
+                </span>
+                {item.quality_info?.is_high_quality === true && (
+                  <span
+                    data-testid="review-queue-item-quality"
+                    className="rounded-full bg-emerald-500/15 px-1.5 py-0.5 font-semibold text-emerald-300"
+                  >
+                    고품질
                   </span>
                 )}
               </div>
@@ -167,65 +202,6 @@ export default function ReviewQueuePanel({ items, sessionId, onReview }: Props) 
                       {evidenceSummary.recurring_session_count}개 세션 반복
                     </span>
                   )}
-                </div>
-              )}
-              {contextTurns.length > 0 && (
-                <div
-                  data-testid="review-context-turns"
-                  className="mb-2 space-y-1 border-l border-white/10 pl-2 text-[11px] leading-snug"
-                >
-                  <p className="font-medium text-sidebar-muted">대화 맥락</p>
-                  {contextTurns.map((turn, index) => (
-                    <div
-                      key={turn.message_id ?? `${item.candidate_id}:context:${index}`}
-                      data-testid="review-context-turn"
-                      className="flex min-w-0 gap-1.5"
-                    >
-                      <span
-                        className={`mt-0.5 h-fit shrink-0 rounded-full border px-1.5 py-0.5 text-[10px] font-medium ${contextRoleClass(turn.role.trim())}`}
-                      >
-                        {contextRoleLabel(turn.role.trim())}
-                      </span>
-                      <p className="min-w-0 flex-1 whitespace-pre-wrap break-words text-sidebar-muted line-clamp-3">
-                        {turn.text.trim()}
-                      </p>
-                    </div>
-                  ))}
-                </div>
-              )}
-              {hasEvidenceDetail && (
-                <button
-                  data-testid="review-detail-toggle"
-                  className="mb-2 text-[11px] font-medium text-sky-300 transition-colors hover:text-sky-200 hover:underline"
-                  onClick={() =>
-                    setExpandedItems((prev) => {
-                      const next = new Set(prev);
-                      if (next.has(item.candidate_id)) {
-                        next.delete(item.candidate_id);
-                      } else {
-                        next.add(item.candidate_id);
-                      }
-                      return next;
-                    })
-                  }
-                >
-                  {isExpanded ? "접기" : "상세 보기"}
-                </button>
-              )}
-              {hasEvidenceDetail && isExpanded && (
-                <div className="mb-2 space-y-1 text-[11px] leading-snug">
-                  <div>
-                    <p className="mb-0.5 font-medium text-sidebar-muted">원문</p>
-                    <p className="whitespace-pre-wrap break-words rounded bg-red-500/10 p-1.5 text-red-200">
-                      {item.original_snippet}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="mb-0.5 font-medium text-sidebar-muted">교정</p>
-                    <p className="whitespace-pre-wrap break-words rounded bg-emerald-500/10 p-1.5 text-emerald-200">
-                      {item.corrected_snippet}
-                    </p>
-                  </div>
                 </div>
               )}
               <label className="mb-2 block text-[11px] font-medium text-sidebar-muted">
@@ -309,6 +285,65 @@ export default function ReviewQueuePanel({ items, sessionId, onReview }: Props) 
                   거절
                 </button>
               </div>
+              {contextTurns.length > 0 && (
+                <div
+                  data-testid="review-context-turns"
+                  className="mb-2 space-y-1 border-l border-white/10 pl-2 text-[11px] leading-snug"
+                >
+                  <p className="font-medium text-sidebar-muted">대화 맥락</p>
+                  {contextTurns.map((turn, index) => (
+                    <div
+                      key={turn.message_id ?? `${item.candidate_id}:context:${index}`}
+                      data-testid="review-context-turn"
+                      className="flex min-w-0 gap-1.5"
+                    >
+                      <span
+                        className={`mt-0.5 h-fit shrink-0 rounded-full border px-1.5 py-0.5 text-[10px] font-medium ${contextRoleClass(turn.role.trim())}`}
+                      >
+                        {contextRoleLabel(turn.role.trim())}
+                      </span>
+                      <p className="min-w-0 flex-1 whitespace-pre-wrap break-words text-sidebar-muted line-clamp-3">
+                        {turn.text.trim()}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {hasEvidenceDetail && (
+                <button
+                  data-testid="review-detail-toggle"
+                  className="mb-2 text-[11px] font-medium text-sky-300 transition-colors hover:text-sky-200 hover:underline"
+                  onClick={() =>
+                    setExpandedItems((prev) => {
+                      const next = new Set(prev);
+                      if (next.has(item.candidate_id)) {
+                        next.delete(item.candidate_id);
+                      } else {
+                        next.add(item.candidate_id);
+                      }
+                      return next;
+                    })
+                  }
+                >
+                  {isExpanded ? "접기" : "상세 보기"}
+                </button>
+              )}
+              {hasEvidenceDetail && isExpanded && (
+                <div className="mb-2 space-y-1 text-[11px] leading-snug">
+                  <div>
+                    <p className="mb-0.5 font-medium text-sidebar-muted">원문</p>
+                    <p className="whitespace-pre-wrap break-words rounded bg-red-500/10 p-1.5 text-red-200">
+                      {item.original_snippet}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="mb-0.5 font-medium text-sidebar-muted">교정</p>
+                    <p className="whitespace-pre-wrap break-words rounded bg-emerald-500/10 p-1.5 text-emerald-200">
+                      {item.corrected_snippet}
+                    </p>
+                  </div>
+                </div>
+              )}
             </li>
           );
         })}

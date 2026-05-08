@@ -447,6 +447,8 @@ class CorrectionRecord(TypedDict, total=False):
 class PerPreferenceStats(TypedDict, total=False):
     applied_count: int
     corrected_count: int
+    injected_count: int
+    injection_correction_count: int
 
 
 class PreferenceRecord(TypedDict, total=False):
@@ -467,6 +469,9 @@ class PreferenceRecord(TypedDict, total=False):
     pattern_family: str | None
     avg_similarity_score: float | None
     reliability_stats: PerPreferenceStats
+    injected_count: int
+    injection_correction_count: int
+    injection_correction_rate: float
     quality_info: dict[str, Any] | None
     is_highly_reliable: bool | None
     activated_at: str | None

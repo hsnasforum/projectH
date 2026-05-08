@@ -869,6 +869,19 @@ class PanePromptDetectionTest(unittest.TestCase):
         self.assertFalse(watcher_core._shared_pane_text_has_busy_indicator(text))
         self.assertTrue(watcher_core._shared_pane_text_is_idle(text))
 
+    def test_claude_code_prompt_with_nbsp_counts_as_ready(self) -> None:
+        text = "\n".join(
+            [
+                "✻ Churned for 5m 8s",
+                "❯\xa0M119 Axis 2 구현 시작해줘",
+                "  ⏵⏵ bypass permissions on (shift+tab to cycle)",
+            ]
+        )
+
+        self.assertTrue(watcher_core._shared_pane_text_has_input_cursor(text))
+        self.assertFalse(watcher_core._shared_pane_text_has_busy_indicator(text, "Claude"))
+        self.assertTrue(watcher_core._shared_pane_text_is_idle(text, "Claude"))
+
     def test_claude_code_prompt_after_busy_tail_counts_as_ready(self) -> None:
         text = "\n".join(
             [
@@ -2739,6 +2752,48 @@ class PaneLeaseOwnerPidWiringTest(unittest.TestCase):
             with mock.patch("watcher_state.os.kill", return_value=None):
                 self.assertFalse(lease.is_active("slot_verify"))
                 self.assertFalse(legacy_lock.exists())
+
+    def test_archive_for_restart_moves_active_lease_to_archive(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            lock_dir = root / ".pipeline" / "locks"
+            lock_dir.mkdir(parents=True, exist_ok=True)
+
+            lease = PaneLease(lock_dir, default_ttl=900, dry_run=False)
+            self.assertTrue(lease.acquire("slot_verify", "job-1", 1, "codex-pane", ttl=900))
+
+            with mock.patch("watcher_state.time.time", return_value=1234):
+                self.assertTrue(lease.archive_for_restart("slot_verify"))
+
+            self.assertFalse((lock_dir / "slot_verify.lock").exists())
+            archived = lock_dir / "archive" / "slot_verify.lock.stale-1234"
+            self.assertTrue(archived.exists())
+            archived_data = json.loads(archived.read_text(encoding="utf-8"))
+            self.assertEqual(archived_data["job_id"], "job-1")
+
+    def test_archive_for_restart_returns_true_when_no_lease_exists(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            lock_dir = root / ".pipeline" / "locks"
+            lease = PaneLease(lock_dir, default_ttl=900, dry_run=False)
+
+            self.assertTrue(lease.archive_for_restart("slot_verify"))
+            self.assertFalse((lock_dir / "archive").exists())
+
+    def test_watcher_acquire_succeeds_after_archive_for_restart(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            lock_dir = root / ".pipeline" / "locks"
+            lock_dir.mkdir(parents=True, exist_ok=True)
+
+            lease = PaneLease(lock_dir, default_ttl=900, dry_run=False)
+            self.assertTrue(lease.acquire("slot_verify", "job-1", 1, "codex-pane", ttl=900))
+            self.assertFalse(lease.acquire("slot_verify", "job-2", 2, "codex-pane", ttl=900))
+
+            self.assertTrue(lease.archive_for_restart("slot_verify"))
+            self.assertTrue(lease.acquire("slot_verify", "job-2", 2, "codex-pane", ttl=900))
+            lock_data = json.loads((lock_dir / "slot_verify.lock").read_text(encoding="utf-8"))
+            self.assertEqual(lock_data["job_id"], "job-2")
 
 
 class WatcherDispatchQueueControlMismatchTest(unittest.TestCase):

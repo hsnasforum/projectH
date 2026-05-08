@@ -154,7 +154,10 @@ class WebAppService(
             except Exception:
                 pass
         else:
-            self.session_store = SessionStore(base_dir=settings.sessions_dir)
+            self.session_store = SessionStore(
+                base_dir=settings.sessions_dir,
+                task_log_path=settings.task_log_path,
+            )
             self.task_logger = TaskLogger(path=settings.task_log_path)
             from storage.artifact_store import ArtifactStore
             self.artifact_store = ArtifactStore(base_dir=settings.artifacts_dir)

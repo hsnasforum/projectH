@@ -150,6 +150,7 @@
 136. M120: Injection-correction reliability filter completed 2026-04-30 — shared preference reliability projection now forces `is_highly_reliable=False` when `injected_count >= 3` and `injection_correction_rate > 0.25`, even when the stored explicit reliability value is true; otherwise the existing explicit-value and high-quality/applied-count/correction-rate rules remain unchanged.
 137. M119 Axis 2: Injection-correction rate badge UI completed 2026-05-08 — `PreferenceRecord` now includes `injection_correction_count` / `injection_correction_rate`, `PreferencePanel` renders positive correction rates as `N회 주입 (A% 적용 · R% 교정)`, and the targeted `preference injected count badge` Playwright smoke plus dist JS update are complete.
 138. Pipeline runtime fix: lane_surface NBSP prompt detection completed 2026-05-08 — `line_looks_like_input_prompt()` normalizes `\xa0` to regular space before prompt detection, and `PanePromptDetectionTest` covers the Claude Code prompt with NBSP regression.
+139. M120 Axis 2: Injection correction demotion badge UI completed 2026-05-08 — `isDemotedByInjectionCorrection()` mirrors the backend threshold in `PreferencePanel`, the injection badge turns amber with a demotion tooltip when `injection_correction_rate > 0.25` and `injected_count >= 3`, and E2E smoke verifies badge text, title, and amber class.
 
 ## Current Phase In Progress
 

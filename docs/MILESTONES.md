@@ -1789,6 +1789,19 @@ JSON/SQLite `get_global_audit_summary()`가 `PerPreferenceStats`에
 `is_highly_reliable_preference()` boolean 계산은 변경하지 않는다.
 신규/갱신 unittest는 JSON store, SQLite store, preference handler 응답 필드를 고정한다.
 
+Axis 2: injection correction rate 배지 — DONE
+`PreferenceRecord` TypeScript 타입에 `injection_correction_count` /
+`injection_correction_rate`를 추가했다. `preferenceInjectedLabel()`은
+`injection_correction_rate > 0`이면 `N회 주입 (A% 적용 · R% 교정)` 형식을
+반환하고, 교정률이 없거나 0이면 기존 주입/적용률 문구를 유지한다.
+`e2e/tests/web-smoke.spec.mjs`의 `preference injected count badge appears for
+injected preferences` 픽스처를 갱신했고 격리 Playwright smoke가 통과했다.
+
+Fix: lane_surface NBSP prompt 감지 — DONE
+내부 pipeline runtime에서 `line_looks_like_input_prompt()`가 `\xa0`를 공백으로
+정규화한 뒤 prompt 여부를 판정하게 했다. `PanePromptDetectionTest`에 NBSP가
+포함된 Claude Code prompt 감지 회귀 테스트를 추가했다.
+
 ## M120 injection correction reliability filter
 
 Axis 1: injection-correction reliability demotion — DONE
@@ -1801,6 +1814,12 @@ Axis 1: injection-correction reliability demotion — DONE
 M119 주입-교정 감사 신호를 반영하며, `get_global_audit_summary()`와 UI/frontend는 변경하지 않았다.
 신규 unittest는 API payload demotion, 주입 횟수 미달, 비율 미달, 기존 신뢰도 회귀,
 명시값 override를 고정한다.
+
+Axis 2: injection correction demotion badge — DONE
+`isDemotedByInjectionCorrection()`이 `injection_correction_rate > 0.25` AND
+`injected_count >= 3` 조건을 프런트엔드에서 미러해, 주입 배지를 amber로
+변경하고 `교정률 R% 초과 - 신뢰도 자동 강등됨` tooltip을 추가했다.
+E2E smoke가 배지 텍스트, title 속성, amber class를 검증했다.
 
 ## Next 3 Implementation Priorities
 

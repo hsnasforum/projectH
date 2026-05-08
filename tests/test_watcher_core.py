@@ -869,6 +869,19 @@ class PanePromptDetectionTest(unittest.TestCase):
         self.assertFalse(watcher_core._shared_pane_text_has_busy_indicator(text))
         self.assertTrue(watcher_core._shared_pane_text_is_idle(text))
 
+    def test_claude_code_prompt_with_nbsp_counts_as_ready(self) -> None:
+        text = "\n".join(
+            [
+                "✻ Churned for 5m 8s",
+                "❯\xa0M119 Axis 2 구현 시작해줘",
+                "  ⏵⏵ bypass permissions on (shift+tab to cycle)",
+            ]
+        )
+
+        self.assertTrue(watcher_core._shared_pane_text_has_input_cursor(text))
+        self.assertFalse(watcher_core._shared_pane_text_has_busy_indicator(text, "Claude"))
+        self.assertTrue(watcher_core._shared_pane_text_is_idle(text, "Claude"))
+
     def test_claude_code_prompt_after_busy_tail_counts_as_ready(self) -> None:
         text = "\n".join(
             [

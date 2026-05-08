@@ -15174,7 +15174,7 @@ test("preference injected count badge appears for injected preferences", async (
             reliability_stats: { applied_count: 2, corrected_count: 0 },
             injected_count: 4,
             injection_correction_count: 1,
-            injection_correction_rate: 0.25,
+            injection_correction_rate: 0.4,
             quality_info: { avg_similarity_score: 0.9, is_high_quality: true },
             is_highly_reliable: false,
             conflict_info: null,
@@ -15246,7 +15246,9 @@ test("preference injected count badge appears for injected preferences", async (
   await expect(page.getByText("선호 기억")).toBeVisible({ timeout: 5_000 });
   const injectedCount = page.getByTestId("preference-injected-count");
   await expect(injectedCount).toHaveCount(1, { timeout: 5_000 });
-  await expect(injectedCount).toHaveText("4회 주입 (50% 적용 · 25% 교정)");
+  await expect(injectedCount).toHaveText("4회 주입 (50% 적용 · 40% 교정)");
+  await expect(injectedCount).toHaveAttribute("title", /신뢰도 자동 강등됨/);
+  await expect(injectedCount).toHaveClass(/bg-amber-500\/20/);
 });
 
 test("preference show more appends next page", async ({ page }) => {

@@ -1815,6 +1815,12 @@ M119 주입-교정 감사 신호를 반영하며, `get_global_audit_summary()`�
 신규 unittest는 API payload demotion, 주입 횟수 미달, 비율 미달, 기존 신뢰도 회귀,
 명시값 override를 고정한다.
 
+Axis 2: injection correction demotion badge — DONE
+`isDemotedByInjectionCorrection()`이 `injection_correction_rate > 0.25` AND
+`injected_count >= 3` 조건을 프런트엔드에서 미러해, 주입 배지를 amber로
+변경하고 `교정률 R% 초과 - 신뢰도 자동 강등됨` tooltip을 추가했다.
+E2E smoke가 배지 텍스트, title 속성, amber class를 검증했다.
+
 ## Next 3 Implementation Priorities
 
 1. **PR 머지 백로그**: PR #91–#111 — 모두 draft, `pr_merge_gate` operator 승인 대기.

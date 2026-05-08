@@ -17,6 +17,7 @@ from typing import Any
 from pipeline_gui.platform import resolve_project_runtime_file
 from pipeline_gui.project import _session_name_for
 from pipeline_gui.setup_profile import resolve_project_runtime_adapter
+from watcher_state import PaneLease
 from watcher_prompt_assembly import (
     DEFAULT_ADVISORY_PROMPT,
     DEFAULT_FOLLOWUP_PROMPT,
@@ -2660,6 +2661,9 @@ class RuntimeSupervisor:
         payload = {key: value for key, value in marker.items() if key != "restart_key"}
         self._append_event("watcher_self_restart_started", payload)
         try:
+            lease = PaneLease(self.base_dir / "locks")
+            for slot in ("slot_verify", "slot_implement", "slot_advisory", "slot_followup"):
+                lease.archive_for_restart(slot)
             self._terminate_pid_file(self.base_dir / "experimental.pid")
             watcher_info = self._spawn_experimental_watcher()
         except Exception as exc:

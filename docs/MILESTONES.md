@@ -1747,10 +1747,84 @@ Axis 2: docs sync (inline bundle) — DONE
 PRODUCT_SPEC / ACCEPTANCE_CRITERIA / ARCHITECTURE / MILESTONES /
 TASK_BACKLOG에 stop-word 필터, overlap 점수 정렬, is_highly_reliable 동점 우선순위를 반영.
 
+## M117 주입 피드백 루프
+
+Axis 1: `injected_count` 전역 감사 요약 — DONE
+`PerPreferenceStats`에 `injected_count` 필드 추가.
+`SessionStore.get_global_audit_summary()` 및 `SQLiteSessionStore.get_global_audit_summary()`가
+`preference_injected` task log 이벤트를 스캔해 `preference_id` 기준으로 `injected_count`를
+누적한다. M118 보정 후 `preference_id`가 없는 이벤트만 무시하고, 기존 stats에 없는
+유효 `preference_id` 이벤트는 zeroed entry를 만든 뒤 `injected_count`를 누적한다.
+`app/main.py` / `app/web.py` wiring에 `task_log_path` 연결 추가.
+
+Axis 2: docs sync (inline bundle) — DONE
+PRODUCT_SPEC / ACCEPTANCE_CRITERIA / ARCHITECTURE / MILESTONES /
+TASK_BACKLOG에 `injected_count` 필드, 스캔 동작, `PerPreferenceStats` 갱신을 반영.
+
+## M118 injected_count API exposure
+
+Axis 1: `injected_count` 집계 보정 + API 노출 — DONE
+M117에서 주입 전용 선호가 기존 `per_preference_stats` 항목이 없으면 누락되던
+제한을 제거했다. JSON/SQLite `get_global_audit_summary()`는 유효한
+`preference_id`를 가진 `preference_injected` 이벤트에 대해 zeroed stats entry를
+만든 뒤 `injected_count`를 누적한다. `list_preferences_payload()`는 각 선호 응답에
+top-level `injected_count`를 포함하되 기존 `reliability_stats` 구조는 유지한다.
+
+Axis 2: frontend badge + dist/E2E — DONE
+`PreferenceRecord` 타입에 top-level `injected_count`를 추가했다.
+`PreferencePanel`은 `injected_count > 0`인 선호 카드에 `N회 주입` 배지를 표시하고,
+`applied_count > 0`이면 `(R% 적용)` 전환율을 함께 표시한다.
+`npx vite build`로 dist 갱신; `e2e/tests/web-smoke.spec.mjs`에
+`preference injected count badge appears for injected preferences` 시나리오 추가.
+격리 Playwright 시나리오 1개 통과.
+
+## M119 injection correction feedback loop
+
+Axis 1: injection-correction audit projection — DONE
+JSON/SQLite `get_global_audit_summary()`가 `PerPreferenceStats`에
+`injection_correction_count`를 추가한다. 같은 세션에 `preference_injected`
+이벤트와 교정 이벤트가 함께 있으면 해당 세션에서 주입된 선호별로 1회 누적한다.
+`list_preferences_payload()`는 top-level `injection_correction_count`와
+`injection_correction_rate`를 노출하되 `reliability_stats` 구조와
+`is_highly_reliable_preference()` boolean 계산은 변경하지 않는다.
+신규/갱신 unittest는 JSON store, SQLite store, preference handler 응답 필드를 고정한다.
+
+Axis 2: injection correction rate 배지 — DONE
+`PreferenceRecord` TypeScript 타입에 `injection_correction_count` /
+`injection_correction_rate`를 추가했다. `preferenceInjectedLabel()`은
+`injection_correction_rate > 0`이면 `N회 주입 (A% 적용 · R% 교정)` 형식을
+반환하고, 교정률이 없거나 0이면 기존 주입/적용률 문구를 유지한다.
+`e2e/tests/web-smoke.spec.mjs`의 `preference injected count badge appears for
+injected preferences` 픽스처를 갱신했고 격리 Playwright smoke가 통과했다.
+
+Fix: lane_surface NBSP prompt 감지 — DONE
+내부 pipeline runtime에서 `line_looks_like_input_prompt()`가 `\xa0`를 공백으로
+정규화한 뒤 prompt 여부를 판정하게 했다. `PanePromptDetectionTest`에 NBSP가
+포함된 Claude Code prompt 감지 회귀 테스트를 추가했다.
+
+## M120 injection correction reliability filter
+
+Axis 1: injection-correction reliability demotion — DONE
+`storage.preference_utils`의 공유 신뢰도 projection이
+`injected_count >= 3` 및 `injection_correction_rate > 0.25` 조건을 먼저 평가한다.
+조건을 충족한 선호는 저장된 명시적 `is_highly_reliable=True` 값이 있어도
+`is_highly_reliable=False`로 강등된다. 조건 미충족 시에는 기존 명시값 우선 규칙과
+고품질 + 적용 3회 이상 + 교정률 15% 미만 규칙을 유지한다.
+`list_preferences_payload()`와 `AgentLoop._get_active_preferences()`는 같은 helper를 통해
+M119 주입-교정 감사 신호를 반영하며, `get_global_audit_summary()`와 UI/frontend는 변경하지 않았다.
+신규 unittest는 API payload demotion, 주입 횟수 미달, 비율 미달, 기존 신뢰도 회귀,
+명시값 override를 고정한다.
+
+Axis 2: injection correction demotion badge — DONE
+`isDemotedByInjectionCorrection()`이 `injection_correction_rate > 0.25` AND
+`injected_count >= 3` 조건을 프런트엔드에서 미러해, 주입 배지를 amber로
+변경하고 `교정률 R% 초과 - 신뢰도 자동 강등됨` tooltip을 추가했다.
+E2E smoke가 배지 텍스트, title 속성, amber class를 검증했다.
+
 ## Next 3 Implementation Priorities
 
-1. **PR 머지 백로그**: PR #91–#110 — 모두 draft, `pr_merge_gate` operator 승인 대기.
-2. **M116 완료**: Axis 1+2 docs sync 완료 — commit/push/PR 대기.
+1. **PR 머지 백로그**: PR #91–#111 — 모두 draft, `pr_merge_gate` operator 승인 대기.
+2. **M117 완료**: Axis 1+2 docs sync 완료 — commit/push/PR 대기.
 3. **장기**: cross-session memory 강화, north star 방향 유지.
 
 ## Do Not Pull Forward

@@ -6,6 +6,7 @@ import json
 import threading
 from typing import Any
 
+from core.contracts import PerPreferenceStats
 from storage.sqlite.database import SQLiteDatabase, _now_iso
 
 
@@ -182,6 +183,14 @@ class SQLiteSessionStore:
                 "operator_failed_count": 0,
             }
 
+            def empty_per_preference_stats() -> PerPreferenceStats:
+                return {
+                    "applied_count": 0,
+                    "corrected_count": 0,
+                    "injected_count": 0,
+                    "injection_correction_count": 0,
+                }
+
             def count_feedback(feedback: Any) -> None:
                 if not isinstance(feedback, dict):
                     return
@@ -191,12 +200,36 @@ class SQLiteSessionStore:
                 elif label in {"unclear", "incorrect", "dislike"}:
                     summary["feedback_dislike_count"] += 1
 
+            def session_has_correction_event(data: dict[str, Any]) -> bool:
+                for msg in data.get("messages", []):
+                    if not isinstance(msg, dict):
+                        continue
+                    if msg.get("corrected_text") is not None:
+                        return True
+                    events = msg.get("preference_correction_events")
+                    if isinstance(events, list) and any(isinstance(event, dict) for event in events):
+                        return True
+                    corrected_outcome = msg.get("corrected_outcome")
+                    if (
+                        isinstance(corrected_outcome, dict)
+                        and str(corrected_outcome.get("outcome") or "").strip().lower() == "corrected"
+                    ):
+                        return True
+                return False
+
             rows = self._db.fetchall("SELECT data FROM sessions")
+            session_ids: set[str] = set()
+            correction_session_ids: set[str] = set()
             for row in rows:
                 try:
                     data = json.loads(row["data"])
                 except Exception:
                     continue
+                normalized_session_id = str(data.get("session_id") or "").strip()
+                if normalized_session_id:
+                    session_ids.add(normalized_session_id)
+                    if session_has_correction_event(data):
+                        correction_session_ids.add(normalized_session_id)
                 summary["session_count"] += 1
                 for msg in data.get("messages", []):
                     if not isinstance(msg, dict):
@@ -213,7 +246,8 @@ class SQLiteSessionStore:
                             summary["personalized_correction_count"] += 1
                         for pref_id in msg["applied_preference_ids"]:
                             pstats = summary["per_preference_stats"].setdefault(
-                                pref_id, {"applied_count": 0, "corrected_count": 0}
+                                pref_id,
+                                empty_per_preference_stats(),
                             )
                             pstats["applied_count"] += 1
                             if is_personalized_correction:
@@ -225,7 +259,8 @@ class SQLiteSessionStore:
                         if not event_fingerprint:
                             continue
                         event_stats = summary["per_preference_stats"].setdefault(
-                            event_fingerprint, {"applied_count": 0, "corrected_count": 0}
+                            event_fingerprint,
+                            empty_per_preference_stats(),
                         )
                         event_stats["corrected_count"] += 1
                     count_feedback(msg.get("feedback"))
@@ -240,6 +275,50 @@ class SQLiteSessionStore:
                         summary["operator_rolled_back_count"] += 1
                     elif status == "failed":
                         summary["operator_failed_count"] += 1
+            injected_preference_ids_by_session: dict[str, set[str]] = {}
+            if session_ids:
+                session_placeholders = ",".join("?" for _ in session_ids)
+                task_rows = self._db.fetchall(
+                    (
+                        "SELECT session_id, action, detail FROM task_log "
+                        f"WHERE action IN (?, ?) AND session_id IN ({session_placeholders})"
+                    ),
+                    ("preference_injected", "correction_submitted", *tuple(sorted(session_ids))),
+                )
+                for task_row in task_rows:
+                    action = str(task_row.get("action") or "").strip()
+                    session_id = str(task_row.get("session_id") or "").strip()
+                    try:
+                        detail = json.loads(task_row.get("detail") or "{}")
+                    except (TypeError, json.JSONDecodeError):
+                        detail = {}
+                    if action == "correction_submitted":
+                        if session_id:
+                            correction_session_ids.add(session_id)
+                        continue
+                    if action != "preference_injected" or not isinstance(detail, dict):
+                        continue
+                    preference_id = str(detail.get("preference_id") or "").strip()
+                    if not preference_id:
+                        continue
+                    if session_id:
+                        injected_preference_ids_by_session.setdefault(session_id, set()).add(
+                            preference_id
+                        )
+                    stats = summary["per_preference_stats"].setdefault(
+                        preference_id,
+                        empty_per_preference_stats(),
+                    )
+                    stats["injected_count"] = int(stats.get("injected_count") or 0) + 1
+            for session_id in sorted(correction_session_ids):
+                for preference_id in injected_preference_ids_by_session.get(session_id, set()):
+                    stats = summary["per_preference_stats"].setdefault(
+                        preference_id,
+                        empty_per_preference_stats(),
+                    )
+                    stats["injection_correction_count"] = int(
+                        stats.get("injection_correction_count") or 0
+                    ) + 1
             return summary
 
     # ── Data-processing parity with SessionStore ─────────────────

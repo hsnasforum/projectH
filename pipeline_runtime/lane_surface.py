@@ -117,7 +117,7 @@ def _recent_nonempty_lines(text: str, *, limit: int) -> list[str]:
 
 
 def line_looks_like_input_prompt(line: str) -> bool:
-    stripped = line.strip()
+    stripped = line.replace("\xa0", " ").strip()
     if not stripped:
         return False
     return (

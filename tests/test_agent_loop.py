@@ -211,6 +211,44 @@ class AgentLoopPreferenceTest(unittest.TestCase):
             ],
         )
 
+    def test_preference_context_terms_removes_stop_words(self) -> None:
+        loop = _build_loop([])
+
+        self.assertEqual(
+            loop._preference_context_terms("The budget is in report should 는 요약"),
+            {"budget", "report", "요약"},
+        )
+
+    def test_get_active_preferences_with_stop_words_only_falls_back_to_all(self) -> None:
+        loop = _build_loop(
+            [
+                {
+                    "preference_id": "pref-budget",
+                    "description": "budget summaries should be concise",
+                    "delta_fingerprint": "fp-budget",
+                    "is_highly_reliable": True,
+                },
+                {
+                    "preference_id": "pref-meeting",
+                    "description": "meeting notes should use bullets",
+                    "delta_fingerprint": "fp-meeting",
+                    "is_highly_reliable": True,
+                },
+            ],
+        )
+
+        self.assertEqual(
+            loop._get_active_preferences(user_input="the is a", session_id="session-1"),
+            [
+                {"description": "budget summaries should be concise", "fingerprint": "fp-budget"},
+                {"description": "meeting notes should use bullets", "fingerprint": "fp-meeting"},
+            ],
+        )
+        self.assertEqual(
+            [entry["detail"]["reason"] for entry in loop.task_logger.entries],
+            ["fallback_all", "fallback_all"],
+        )
+
     def test_get_active_preferences_with_user_input_returns_context_matches(self) -> None:
         loop = _build_loop(
             [
@@ -233,6 +271,66 @@ class AgentLoopPreferenceTest(unittest.TestCase):
         self.assertEqual(
             loop._get_active_preferences(user_input="budget please", session_id="session-1"),
             [{"description": "formal voice", "fingerprint": "fp-budget"}],
+        )
+
+    def test_get_active_preferences_orders_context_matches_by_overlap_score(self) -> None:
+        loop = _build_loop(
+            [
+                {
+                    "preference_id": "pref-low-score",
+                    "description": "budget",
+                    "delta_fingerprint": "fp-low-score",
+                    "is_highly_reliable": True,
+                },
+                {
+                    "preference_id": "pref-high-score",
+                    "description": "formal voice",
+                    "corrected_text": "budget summary format",
+                    "delta_fingerprint": "fp-high-score",
+                    "is_highly_reliable": True,
+                },
+            ],
+        )
+
+        self.assertEqual(
+            loop._get_active_preferences(
+                user_input="budget summary format",
+                session_id="session-1",
+            ),
+            [
+                {"description": "formal voice", "fingerprint": "fp-high-score"},
+                {"description": "budget", "fingerprint": "fp-low-score"},
+            ],
+        )
+
+    def test_get_active_preferences_prefers_highly_reliable_on_context_score_tie(self) -> None:
+        loop = _build_loop(
+            [
+                {
+                    "preference_id": "pref-normal",
+                    "description": "budget wording",
+                    "delta_fingerprint": "fp-normal",
+                    "is_highly_reliable": False,
+                },
+                {
+                    "preference_id": "pref-reliable",
+                    "description": "budget format",
+                    "delta_fingerprint": "fp-reliable",
+                    "is_highly_reliable": True,
+                },
+            ],
+        )
+
+        self.assertEqual(
+            loop._get_active_preferences(
+                highly_reliable_only=False,
+                user_input="budget",
+                session_id="session-1",
+            ),
+            [
+                {"description": "budget format", "fingerprint": "fp-reliable"},
+                {"description": "budget wording", "fingerprint": "fp-normal"},
+            ],
         )
 
     def test_get_active_preferences_with_no_context_match_falls_back_to_all(self) -> None:

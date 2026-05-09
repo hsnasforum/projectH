@@ -4086,18 +4086,28 @@ class AgentLoop:
         if not peers_by_label:
             return 0
         agreement_score = 0
+        contributing_label_count = 0
         for label, peer_indices in peers_by_label.items():
-            count = len(peer_indices)
+            if not trust_score_by_index:
+                continue
+            trusted_peer_indices = [
+                peer_index
+                for peer_index in peer_indices
+                if trust_score_by_index.get(peer_index, 0) >= 4
+            ]
+            if not trusted_peer_indices:
+                continue
+            contributing_label_count += 1
+            count = len(trusted_peer_indices)
+            best_peer_trust = max(trust_score_by_index.get(idx, 0) for idx in trusted_peer_indices)
             agreement_score += 4
-            if trust_score_by_index:
-                best_peer_trust = max(trust_score_by_index.get(idx, 0) for idx in peer_indices)
-                if best_peer_trust >= 7:
-                    agreement_score += 2
+            if best_peer_trust >= 7:
+                agreement_score += 2
             if count >= 2:
                 agreement_score += 2
             if self._entity_fact_sort_key(label)[0] <= 4:
                 agreement_score += 1
-        if len(peers_by_label) >= 2:
+        if contributing_label_count >= 2:
             agreement_score += 3
         return agreement_score
 

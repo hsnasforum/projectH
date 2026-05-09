@@ -2855,6 +2855,88 @@ class SmokeTest(unittest.TestCase):
         self.assertIsNotNone(coverage["개발"].primary_claim)
         self.assertEqual(coverage["개발"].primary_claim.value, "펄어비스")
 
+    def test_summarize_slot_coverage_mixed_trust_requires_two_trusted_supporters(self) -> None:
+        from core.contracts import CoverageStatus, SourceRole
+        from core.web_claims import ClaimRecord, summarize_slot_coverage
+
+        mixed_single_trusted = ClaimRecord(
+            slot="개발",
+            value="펄어비스",
+            source_url="https://official.example.com/developer",
+            source_title="개발 공식",
+            source_role=SourceRole.OFFICIAL,
+            support_count=3,
+            supporting_sources=(
+                ("https://official.example.com/developer", "개발 공식", SourceRole.OFFICIAL),
+                ("https://blog.example.com/developer", "개발 블로그", SourceRole.BLOG),
+                ("https://community.example.com/developer", "개발 커뮤니티", SourceRole.COMMUNITY),
+            ),
+        )
+        trusted_agreement = ClaimRecord(
+            slot="개발",
+            value="펄어비스",
+            source_url="https://official.example.com/developer",
+            source_title="개발 공식",
+            source_role=SourceRole.OFFICIAL,
+            support_count=1,
+            supporting_sources=(
+                ("https://official.example.com/developer", "개발 공식", SourceRole.OFFICIAL),
+                ("https://data.example.com/developer", "개발 데이터", SourceRole.DATABASE),
+            ),
+        )
+        trusted_conflict = ClaimRecord(
+            slot="개발",
+            value="다른 개발사",
+            source_url="https://wiki.example.com/developer-alt",
+            source_title="개발 위키",
+            source_role=SourceRole.WIKI,
+            support_count=1,
+            supporting_sources=(
+                ("https://wiki.example.com/developer-alt", "개발 위키", SourceRole.WIKI),
+                ("https://data.example.com/developer-alt", "개발 데이터", SourceRole.DATABASE),
+            ),
+        )
+
+        mixed_coverage = summarize_slot_coverage([mixed_single_trusted], slots=("개발",))
+        self.assertEqual(mixed_coverage["개발"].status, CoverageStatus.WEAK)
+        self.assertEqual(mixed_coverage["개발"].trusted_source_count, 1)
+
+        trusted_coverage = summarize_slot_coverage([trusted_agreement], slots=("개발",))
+        self.assertEqual(trusted_coverage["개발"].status, CoverageStatus.STRONG)
+        self.assertEqual(trusted_coverage["개발"].trusted_source_count, 2)
+
+        conflict_coverage = summarize_slot_coverage(
+            [trusted_agreement, trusted_conflict],
+            slots=("개발",),
+        )
+        self.assertEqual(conflict_coverage["개발"].status, CoverageStatus.CONFLICT)
+        self.assertEqual(conflict_coverage["개발"].trusted_source_count, 2)
+
+    def test_entity_source_fact_agreement_score_requires_trusted_peer(self) -> None:
+        loop = AgentLoop.__new__(AgentLoop)
+        sources = [{}, {}, {}]
+        fact_bullets_by_index = {
+            0: ["개발: 펄어비스", "장르/성격: 오픈월드 액션 어드벤처"],
+            1: ["개발: 펄어비스"],
+            2: ["장르/성격: 오픈월드 액션 어드벤처"],
+        }
+
+        untrusted_score = loop._entity_source_fact_agreement_score(
+            source_index=0,
+            sources=sources,
+            fact_bullets_by_index=fact_bullets_by_index,
+            trust_score_by_index={0: 10, 1: 0, 2: 3},
+        )
+        trusted_score = loop._entity_source_fact_agreement_score(
+            source_index=0,
+            sources=sources,
+            fact_bullets_by_index=fact_bullets_by_index,
+            trust_score_by_index={0: 10, 1: 4, 2: 7},
+        )
+
+        self.assertEqual(untrusted_score, 0)
+        self.assertEqual(trusted_score, 15)
+
     def test_slot_coverage_weak_with_trusted_single_source_has_positive_trusted_count(self) -> None:
         from core.contracts import CoverageStatus, SourceRole
         from core.web_claims import ClaimRecord, summarize_slot_coverage

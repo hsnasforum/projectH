@@ -1821,10 +1821,33 @@ Axis 2: injection correction demotion badge — DONE
 변경하고 `교정률 R% 초과 - 신뢰도 자동 강등됨` tooltip을 추가했다.
 E2E smoke가 배지 텍스트, title 속성, amber class를 검증했다.
 
+## M121 watcher self-restart lease reclamation
+
+Axis 1: watcher lease reclamation before self-restart — DONE
+`PaneLease.archive_for_restart()`를 `watcher_state.py`에 추가해, slot lock이 있으면
+`locks/archive/<slot>.lock.stale-<timestamp>`로 보존 이동하고, lock이 없으면 no-op `True`를
+반환하게 했다. archive 디렉터리 생성 또는 rename 실패 시 `False`를 반환하고 warning log를 남긴다.
+`RuntimeSupervisor._maybe_restart_watcher_for_source_change()`가 `_terminate_pid_file()` 직전에
+`slot_verify`, `slot_implement`, `slot_advisory`, `slot_followup` 4개 slot lock을 archive한다.
+`PaneLeaseOwnerPidWiringTest`에 active lease 보존 이동, lock 없음 no-op, archive 후 TTL 이전 acquire
+성공 회귀 테스트 3개를 추가했다. (10개 전체 통과)
+
+## M122 entity-card 웹 조사 품질 개선
+
+Axis 1: trust-gated multi-source agreement — DONE
+`_entity_source_fact_agreement_score()`에서 `trust_score_by_index`가 없거나
+trust score 4 미만 peer만 있는 label은 agreement score에 기여하지 않도록 했다.
+agreement score의 다중 peer 보너스와 label 폭 보너스는 trust score ≥ 4 peer가 있는
+label/peer만 기준으로 계산한다.
+`summarize_slot_coverage()`의 STRONG 조건을 `trusted_source_count >= 2`로 단순화해
+raw support_count가 비신뢰 소스를 포함해도 STRONG을 만들지 못하게 했다.
+회귀 테스트 2개(mixed-trust WEAK/STRONG/CONFLICT, low-trust peer 기여 없음)를
+`tests/test_smoke.py`에 추가했다. (152개 전체 통과)
+
 ## Next 3 Implementation Priorities
 
-1. **PR 머지 백로그**: PR #91–#111 — 모두 draft, `pr_merge_gate` operator 승인 대기.
-2. **M117 완료**: Axis 1+2 docs sync 완료 — commit/push/PR 대기.
+1. **M122 후속**: entity-card 웹 조사 품질 2단계 — 약한 슬롯 재조사, 단일 소스/미해결 슬롯 구분 강화.
+2. **PR 스택 정리**: PR #113–#118 모두 MERGED; 후속 브랜치 base 재조정 및 main 병합 gate 대기.
 3. **장기**: cross-session memory 강화, north star 방향 유지.
 
 ## Do Not Pull Forward

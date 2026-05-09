@@ -2691,7 +2691,7 @@ class SmokeTest(unittest.TestCase):
 
         self.assertLess(queries.index("상태 탐침"), queries.index("서비스/배급 탐침"))
 
-    def test_second_pass_prioritizes_zero_trusted_weak_over_positive_trusted_weak(self) -> None:
+    def test_second_pass_prioritizes_unresolved_over_positive_trusted_weak(self) -> None:
         from core.contracts import SourceRole
         from core.web_claims import ClaimRecord
 
@@ -2724,7 +2724,7 @@ class SmokeTest(unittest.TestCase):
             source_role=SourceRole.OFFICIAL,
             support_count=1,
         )
-        zero_trusted_weak = ClaimRecord(
+        unresolved_claim = ClaimRecord(
             slot="이용 형태",
             value="PC와 콘솔",
             source_url="https://blog.example.com/platform",
@@ -2741,7 +2741,7 @@ class SmokeTest(unittest.TestCase):
             _strong_claim("장르/성격", "오픈월드 액션 어드벤처"),
             _strong_claim("상태", "출시 예정"),
             positive_trusted_weak,
-            zero_trusted_weak,
+            unresolved_claim,
         ]
 
         queries = loop._build_entity_second_pass_queries(
@@ -2751,6 +2751,61 @@ class SmokeTest(unittest.TestCase):
         )
 
         self.assertLess(queries.index("이용 형태 탐침"), queries.index("서비스/배급 탐침"))
+
+    def test_second_pass_unresolved_slot_prefers_probe_first_and_allows_two_queries(self) -> None:
+        from core.contracts import SourceRole
+        from core.web_claims import ClaimRecord
+
+        loop = AgentLoop.__new__(AgentLoop)
+        loop._build_entity_claim_confirmation_queries = (
+            lambda *, query, slot, claim_value: [f"{slot} 확인 1", f"{slot} 확인 2"]
+        )
+        loop._build_entity_slot_probe_queries = (
+            lambda *, query, slot, status, primary_claim: [f"{slot} 탐침 1", f"{slot} 탐침 2"]
+        )
+        loop._entity_slot_from_search_query = lambda **kwargs: ""
+
+        def _strong_claim(slot: str, value: str) -> ClaimRecord:
+            return ClaimRecord(
+                slot=slot,
+                value=value,
+                source_url=f"https://example.com/{slot}-official",
+                source_title=f"{slot} 공식",
+                source_role=SourceRole.OFFICIAL,
+                support_count=2,
+                supporting_sources=(
+                    (f"https://example.com/{slot}-official", f"{slot} 공식", SourceRole.OFFICIAL),
+                    (f"https://data.example.com/{slot}", f"{slot} 데이터", SourceRole.DATABASE),
+                ),
+            )
+
+        unresolved_claim = ClaimRecord(
+            slot="이용 형태",
+            value="PC와 콘솔",
+            source_url="https://blog.example.com/platform",
+            source_title="플랫폼 블로그",
+            source_role=SourceRole.BLOG,
+            support_count=2,
+            supporting_sources=(
+                ("https://blog.example.com/platform", "플랫폼 블로그", SourceRole.BLOG),
+                ("https://community.example.com/platform", "플랫폼 커뮤니티", SourceRole.COMMUNITY),
+            ),
+        )
+        loop._build_entity_claim_records = lambda **kwargs: [
+            _strong_claim("개발", "펄어비스"),
+            _strong_claim("장르/성격", "오픈월드 액션 어드벤처"),
+            _strong_claim("상태", "출시 예정"),
+            unresolved_claim,
+        ]
+
+        queries = loop._build_entity_second_pass_queries(
+            query="붉은사막",
+            selected_sources=[],
+            existing_queries=[],
+        )
+
+        self.assertEqual(queries[:2], ["이용 형태 탐침 1", "이용 형태 탐침 2"])
+        self.assertNotIn("이용 형태 확인 1", queries[:2])
 
     def test_coverage_reinvestigation_overall_cap_is_now_5(self) -> None:
         from core.contracts import CoverageStatus, SourceRole
@@ -2822,7 +2877,7 @@ class SmokeTest(unittest.TestCase):
             confidence_by_role[SourceRole.DATABASE],
         )
 
-    def test_summarize_slot_coverage_untrusted_only_agreement_stays_weak(self) -> None:
+    def test_summarize_slot_coverage_untrusted_only_agreement_is_unresolved(self) -> None:
         """Raw multi-source support alone must not mark a slot `strong` when
         none of the supporters are trusted roles. `strong` coverage requires
         trusted agreement (at least two distinct trusted-role supporters)."""
@@ -2848,7 +2903,7 @@ class SmokeTest(unittest.TestCase):
         )
 
         coverage = summarize_slot_coverage([untrusted_only], slots=CORE_ENTITY_SLOTS)
-        self.assertEqual(coverage["개발"].status, CoverageStatus.WEAK)
+        self.assertEqual(coverage["개발"].status, CoverageStatus.UNRESOLVED)
         self.assertEqual(coverage["개발"].trusted_source_count, 0)
         self.assertEqual(coverage["상태"].status, CoverageStatus.MISSING)
         self.assertEqual(coverage["상태"].trusted_source_count, 0)
@@ -2911,6 +2966,85 @@ class SmokeTest(unittest.TestCase):
         )
         self.assertEqual(conflict_coverage["개발"].status, CoverageStatus.CONFLICT)
         self.assertEqual(conflict_coverage["개발"].trusted_source_count, 2)
+
+    def test_summarize_slot_coverage_separates_unresolved_from_weak_without_breaking_strong_conflict(self) -> None:
+        from core.contracts import CoverageStatus, SourceRole
+        from core.web_claims import ClaimRecord, summarize_slot_coverage
+
+        unresolved_claim = ClaimRecord(
+            slot="이용 형태",
+            value="PC와 콘솔",
+            source_url="https://blog.example.com/platform",
+            source_title="플랫폼 블로그",
+            source_role=SourceRole.BLOG,
+            support_count=2,
+            supporting_sources=(
+                ("https://blog.example.com/platform", "플랫폼 블로그", SourceRole.BLOG),
+                ("https://community.example.com/platform", "플랫폼 커뮤니티", SourceRole.COMMUNITY),
+            ),
+        )
+        weak_claim = ClaimRecord(
+            slot="서비스/배급",
+            value="펄어비스",
+            source_url="https://official.example.com/service",
+            source_title="서비스 공식",
+            source_role=SourceRole.OFFICIAL,
+            support_count=1,
+        )
+        strong_claim = ClaimRecord(
+            slot="개발",
+            value="펄어비스",
+            source_url="https://official.example.com/developer",
+            source_title="개발 공식",
+            source_role=SourceRole.OFFICIAL,
+            support_count=2,
+            supporting_sources=(
+                ("https://official.example.com/developer", "개발 공식", SourceRole.OFFICIAL),
+                ("https://data.example.com/developer", "개발 데이터", SourceRole.DATABASE),
+            ),
+        )
+        conflict_primary = ClaimRecord(
+            slot="장르/성격",
+            value="오픈월드 액션 어드벤처",
+            source_url="https://official.example.com/genre",
+            source_title="장르 공식",
+            source_role=SourceRole.OFFICIAL,
+            support_count=2,
+            supporting_sources=(
+                ("https://official.example.com/genre", "장르 공식", SourceRole.OFFICIAL),
+                ("https://data.example.com/genre", "장르 데이터", SourceRole.DATABASE),
+            ),
+        )
+        conflict_alternative = ClaimRecord(
+            slot="장르/성격",
+            value="생존 제작 RPG",
+            source_url="https://wiki.example.com/genre",
+            source_title="장르 위키",
+            source_role=SourceRole.WIKI,
+            support_count=2,
+            supporting_sources=(
+                ("https://wiki.example.com/genre", "장르 위키", SourceRole.WIKI),
+                ("https://data.example.com/genre-alt", "장르 보조 데이터", SourceRole.DATABASE),
+            ),
+        )
+
+        coverage = summarize_slot_coverage(
+            [
+                unresolved_claim,
+                weak_claim,
+                strong_claim,
+                conflict_primary,
+                conflict_alternative,
+            ],
+            slots=("이용 형태", "서비스/배급", "개발", "장르/성격"),
+        )
+
+        self.assertEqual(coverage["이용 형태"].status, CoverageStatus.UNRESOLVED)
+        self.assertEqual(coverage["이용 형태"].trusted_source_count, 0)
+        self.assertEqual(coverage["서비스/배급"].status, CoverageStatus.WEAK)
+        self.assertEqual(coverage["서비스/배급"].trusted_source_count, 1)
+        self.assertEqual(coverage["개발"].status, CoverageStatus.STRONG)
+        self.assertEqual(coverage["장르/성격"].status, CoverageStatus.CONFLICT)
 
     def test_entity_source_fact_agreement_score_requires_trusted_peer(self) -> None:
         loop = AgentLoop.__new__(AgentLoop)
@@ -3398,6 +3532,32 @@ class SmokeTest(unittest.TestCase):
             [
                 "붉은사막 오픈월드 액션 어드벤처 게임 장르 위키",
                 "붉은사막 오픈월드 액션 어드벤처 게임 소개",
+            ],
+        )
+
+    def test_entity_slot_probe_queries_include_primary_value_for_unresolved(self) -> None:
+        from core.contracts import CoverageStatus, SourceRole
+        from core.web_claims import ClaimRecord
+
+        loop = AgentLoop.__new__(AgentLoop)
+        primary_claim = ClaimRecord(
+            slot="이용 형태",
+            value="PC와 콘솔",
+            source_url="https://blog.example.com/platform",
+            source_title="플랫폼 블로그",
+            source_role=SourceRole.BLOG,
+        )
+
+        self.assertEqual(
+            loop._build_entity_slot_probe_queries(
+                query="붉은사막",
+                slot="이용 형태",
+                status=CoverageStatus.UNRESOLVED,
+                primary_claim=primary_claim,
+            ),
+            [
+                "붉은사막 PC와 콘솔 플랫폼 공식",
+                "붉은사막 PC와 콘솔 플랫폼",
             ],
         )
 

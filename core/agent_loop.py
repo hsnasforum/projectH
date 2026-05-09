@@ -2693,6 +2693,7 @@ class AgentLoop:
         }
         status_priority = {
             CoverageStatus.MISSING: 0,
+            CoverageStatus.UNRESOLVED: 0,
             CoverageStatus.WEAK: 1,
             CoverageStatus.CONFLICT: 2,
         }
@@ -3905,7 +3906,7 @@ class AgentLoop:
         primary_claim: ClaimRecord | None,
     ) -> list[str]:
         compact_value = " ".join(str(getattr(primary_claim, "value", "") or "").split()).strip().rstrip(".")
-        if status in {CoverageStatus.WEAK, CoverageStatus.CONFLICT} and compact_value:
+        if status in {CoverageStatus.UNRESOLVED, CoverageStatus.WEAK, CoverageStatus.CONFLICT} and compact_value:
             query_map: dict[str, list[str]] = {
                 "개발": [f"{query} {compact_value} 개발사 공식", f"{query} {compact_value} 개발사 위키"],
                 "서비스/배급": [f"{query} {compact_value} 서비스 공식", f"{query} {compact_value} 운영 공식"],
@@ -3981,10 +3982,7 @@ class AgentLoop:
             prior_probe_count = prior_slot_probe_counts.get(slot, 0)
             if slot_coverage.status == CoverageStatus.CONFLICT:
                 tier = 0
-            elif (
-                slot_coverage.status != CoverageStatus.MISSING
-                and getattr(slot_coverage, "trusted_source_count", 0) == 0
-            ):
+            elif slot_coverage.status == CoverageStatus.UNRESOLVED:
                 tier = 1
             elif slot_coverage.status == CoverageStatus.MISSING and prior_probe_count >= 1:
                 tier = 2
@@ -4018,7 +4016,7 @@ class AgentLoop:
                 else ""
             )
             prefer_probe_first = (
-                slot_coverage.status == CoverageStatus.MISSING
+                slot_coverage.status in {CoverageStatus.MISSING, CoverageStatus.UNRESOLVED}
                 or prior_probe_count >= 1
                 or (slot_coverage.status == CoverageStatus.WEAK and source_role != SourceRole.OFFICIAL)
             )
@@ -4030,7 +4028,7 @@ class AgentLoop:
             added_for_slot = 0
             max_queries_for_slot = (
                 2
-                if slot_coverage.status in {CoverageStatus.WEAK, CoverageStatus.CONFLICT}
+                if slot_coverage.status in {CoverageStatus.UNRESOLVED, CoverageStatus.WEAK, CoverageStatus.CONFLICT}
                 and (prior_probe_count >= 1 or source_role != SourceRole.OFFICIAL)
                 else 1
             )

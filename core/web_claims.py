@@ -200,6 +200,8 @@ def summarize_slot_coverage(
             if has_trusted_agreement and not has_conflict
             else CoverageStatus.CONFLICT
             if has_conflict
+            else CoverageStatus.UNRESOLVED
+            if trusted_count == 0
             else CoverageStatus.WEAK
         )
         coverage[slot] = SlotCoverage(

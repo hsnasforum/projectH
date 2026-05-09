@@ -1844,9 +1844,18 @@ raw support_count가 비신뢰 소스를 포함해도 STRONG을 만들지 못하
 회귀 테스트 2개(mixed-trust WEAK/STRONG/CONFLICT, low-trust peer 기여 없음)를
 `tests/test_smoke.py`에 추가했다. (152개 전체 통과)
 
+Axis 2: UNRESOLVED status separation + second-pass probe targeting — DONE
+`CoverageStatus.UNRESOLVED`를 추가해 신뢰 소스 0개 슬롯(완전 미해결)을 신뢰 소스 1개
+슬롯(WEAK)과 명시적으로 분리했다. `summarize_slot_coverage()`가 `trusted_count == 0`일 때
+UNRESOLVED를 반환하고, `_build_entity_second_pass_queries()`에서 UNRESOLVED 슬롯을
+probe-first + 2-query boost 대상으로 지정한다. 기존 `trusted_source_count == 0`
+워크어라운드를 명시 상태로 교체하고, `status_priority`, compact-value 확인 쿼리,
+`prefer_probe_first`, `max_queries_for_slot` 5곳을 업데이트했다.
+회귀 테스트 3개 추가 + 2개 rename으로 총 155개 통과.
+
 ## Next 3 Implementation Priorities
 
-1. **M122 후속**: entity-card 웹 조사 품질 2단계 — 약한 슬롯 재조사, 단일 소스/미해결 슬롯 구분 강화.
+1. **M122 Axis 3**: UNRESOLVED 상태 display/hint 함수 전파 — `core/agent_loop.py` line 4374 이후 표시 문구와 reinvestigation 안내에 UNRESOLVED 레이블 적용.
 2. **PR 스택 정리**: PR #113–#118 모두 MERGED; 후속 브랜치 base 재조정 및 main 병합 gate 대기.
 3. **장기**: cross-session memory 강화, north star 방향 유지.
 

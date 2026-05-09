@@ -4570,6 +4570,8 @@ class AgentLoop:
             return 2
         if normalized == CoverageStatus.WEAK:
             return 1
+        if normalized == CoverageStatus.UNRESOLVED:
+            return 0
         return 0
 
     def _claim_coverage_status_label(self, status: str) -> str:
@@ -4580,6 +4582,8 @@ class AgentLoop:
             return "정보 상충"
         if normalized == CoverageStatus.WEAK:
             return "단일 출처"
+        if normalized == CoverageStatus.UNRESOLVED:
+            return "미해결"
         return "미확인"
 
     def _looks_like_related_entity_query(self, previous_query: str | None, current_query: str | None) -> bool:
@@ -4686,6 +4690,7 @@ class AgentLoop:
                 )
             if current_status in {
                 CoverageStatus.CONFLICT,
+                CoverageStatus.UNRESOLVED,
                 CoverageStatus.WEAK,
                 CoverageStatus.MISSING,
             }:

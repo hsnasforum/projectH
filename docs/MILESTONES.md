@@ -1853,9 +1853,17 @@ probe-first + 2-query boost 대상으로 지정한다. 기존 `trusted_source_co
 `prefer_probe_first`, `max_queries_for_slot` 5곳을 업데이트했다.
 회귀 테스트 3개 추가 + 2개 rename으로 총 155개 통과.
 
+Axis 3: UNRESOLVED display/hint 전파 — DONE
+`_claim_coverage_status_label()`이 `CoverageStatus.UNRESOLVED`를 `미해결`로 표시하고,
+`_claim_coverage_status_rank()`이 UNRESOLVED를 rank 0으로 명시한다.
+`_build_claim_coverage_progress_summary()`의 unresolved slot 집합에 UNRESOLVED를 포함해
+값은 있으나 신뢰 출처가 없는 슬롯을 progress summary에서 누락하지 않게 했다.
+`_annotate_claim_coverage_progress()`는 rank/label 호출자이므로 자동으로 UNRESOLVED를 처리한다.
+회귀 테스트 3개 추가로 155 + 1 = 156개 통과.
+
 ## Next 3 Implementation Priorities
 
-1. **M122 Axis 3**: UNRESOLVED 상태 display/hint 함수 전파 — `core/agent_loop.py` line 4374 이후 표시 문구와 reinvestigation 안내에 UNRESOLVED 레이블 적용.
+1. **M122 완료**: entity-card 웹 조사 품질 개선 3축(신뢰 합의 게이트 / UNRESOLVED 분리 / display 전파) 완료. 다음 웹 조사 개선 방향은 advisory 통해 결정.
 2. **PR 스택 정리**: PR #113–#118 모두 MERGED; 후속 브랜치 base 재조정 및 main 병합 gate 대기.
 3. **장기**: cross-session memory 강화, north star 방향 유지.
 

@@ -3505,15 +3505,19 @@ class SmokeTest(unittest.TestCase):
         self.assertEqual(loop._claim_coverage_status_label(CoverageStatus.STRONG), "교차 확인")
         self.assertEqual(loop._claim_coverage_status_label(CoverageStatus.CONFLICT), "정보 상충")
         self.assertEqual(loop._claim_coverage_status_label(CoverageStatus.WEAK), "단일 출처")
+        self.assertEqual(loop._claim_coverage_status_label(CoverageStatus.UNRESOLVED), "미해결")
         self.assertEqual(loop._claim_coverage_status_label(CoverageStatus.MISSING), "미확인")
 
         strong_rank = loop._claim_coverage_status_rank(CoverageStatus.STRONG)
         conflict_rank = loop._claim_coverage_status_rank(CoverageStatus.CONFLICT)
         weak_rank = loop._claim_coverage_status_rank(CoverageStatus.WEAK)
+        unresolved_rank = loop._claim_coverage_status_rank(CoverageStatus.UNRESOLVED)
         missing_rank = loop._claim_coverage_status_rank(CoverageStatus.MISSING)
         self.assertGreater(strong_rank, conflict_rank)
         self.assertGreater(conflict_rank, weak_rank)
-        self.assertGreater(weak_rank, missing_rank)
+        self.assertGreater(weak_rank, unresolved_rank)
+        self.assertEqual(unresolved_rank, 0)
+        self.assertEqual(missing_rank, 0)
 
         primary_claim = ClaimRecord(
             slot="장르/성격",
@@ -3829,6 +3833,22 @@ class SmokeTest(unittest.TestCase):
                     query=query,
                 )
                 self.assertEqual(summary, expected)
+
+    def test_build_claim_coverage_progress_summary_includes_unresolved_status(self) -> None:
+        from core.contracts import CoverageStatus
+
+        loop = AgentLoop.__new__(AgentLoop)
+        summary = loop._build_claim_coverage_progress_summary(
+            previous_claim_coverage=[
+                {"slot": "이용 형태", "status": CoverageStatus.MISSING},
+            ],
+            current_claim_coverage=[
+                {"slot": "이용 형태", "status": CoverageStatus.UNRESOLVED},
+            ],
+            query="붉은사막 다시 확인해줘",
+        )
+
+        self.assertEqual(summary, "재조사했지만 아직 이용 형태 미해결 상태입니다.")
 
     def test_build_claim_coverage_progress_summary_focus_slot_weak_multi_source_emits_multi_source_wording(self) -> None:
         from core.contracts import CoverageStatus

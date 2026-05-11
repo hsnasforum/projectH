@@ -1876,9 +1876,16 @@ trusted 출처가 없고 값도 비어 있는 UNRESOLVED 슬롯에 대해 공통
 second-pass 루프의 `_select_ranked_web_sources` max_items를 3에서 5로 늘려 조사 대상 출처
 범위를 확장했다. 회귀 테스트 2개 추가, 160개 전체 통과.
 
+Axis 3: CONFLICT 슬롯 크로스-검증 쿼리 — DONE
+CONFLICT 상태 슬롯의 second-pass probe가 primary claim만 재확인하던 한계를 극복했다.
+`SlotCoverage`에 `competing_claim` 필드를 추가해 경쟁 신뢰 출처의 claim을 보존하고,
+`_build_entity_slot_probe_queries()`에서 primary/competing 값을 모두 포함한
+슬롯별 크로스-검증 쿼리를 반환한다. 기존 CONFLICT fallback 경로는 유지된다.
+회귀 테스트 2개 추가, 162개 전체 통과.
+
 ## Next 3 Implementation Priorities
 
-1. **M123 Axis 2 완료**: UNRESOLVED 무값 슬롯 공식 출처 탐색 강화 + second-pass max_items 3→5 완료. doc-sync 완료. publish bundle 대기 (operator 결정). M123 Axis 3 범위 advisory 결정 대기.
+1. **M123 Axis 3 완료**: CONFLICT 슬롯 크로스-검증 쿼리 강화 완료. doc-sync 완료. publish bundle 대기 (operator 결정). M123 아크 종료 또는 Axis 4 범위 advisory 결정 대기.
 2. **PR 스택 정리**: PR #113–#118 모두 MERGED; 후속 브랜치 base 재조정 및 main 병합 gate 대기.
 3. **장기**: cross-session memory 강화, north star 방향 유지.
 

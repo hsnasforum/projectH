@@ -2670,7 +2670,7 @@ class SmokeTest(unittest.TestCase):
         loop = AgentLoop.__new__(AgentLoop)
         loop._build_entity_claim_confirmation_queries = lambda **kwargs: []
         loop._build_entity_slot_probe_queries = (
-            lambda *, query, slot, status, primary_claim: [f"{slot} 탐침"]
+            lambda *, query, slot, status, primary_claim, competing_claim=None: [f"{slot} 탐침"]
         )
         loop._entity_slot_from_search_query = lambda **kwargs: ""
 
@@ -2744,7 +2744,7 @@ class SmokeTest(unittest.TestCase):
         loop = AgentLoop.__new__(AgentLoop)
         loop._build_entity_claim_confirmation_queries = lambda **kwargs: []
         loop._build_entity_slot_probe_queries = (
-            lambda *, query, slot, status, primary_claim: [f"{slot} 탐침"]
+            lambda *, query, slot, status, primary_claim, competing_claim=None: [f"{slot} 탐침"]
         )
         loop._entity_slot_from_search_query = lambda **kwargs: ""
 
@@ -2807,7 +2807,7 @@ class SmokeTest(unittest.TestCase):
             lambda *, query, slot, claim_value: [f"{slot} 확인 1", f"{slot} 확인 2"]
         )
         loop._build_entity_slot_probe_queries = (
-            lambda *, query, slot, status, primary_claim: [f"{slot} 탐침 1", f"{slot} 탐침 2"]
+            lambda *, query, slot, status, primary_claim, competing_claim=None: [f"{slot} 탐침 1", f"{slot} 탐침 2"]
         )
         loop._entity_slot_from_search_query = lambda **kwargs: ""
 
@@ -2860,7 +2860,7 @@ class SmokeTest(unittest.TestCase):
         loop = AgentLoop.__new__(AgentLoop)
         loop._build_entity_claim_confirmation_queries = lambda **kwargs: []
         loop._build_entity_slot_probe_queries = (
-            lambda *, query, slot, status, primary_claim: [f"{slot} 탐침"]
+            lambda *, query, slot, status, primary_claim, competing_claim=None: [f"{slot} 탐침"]
         )
         loop._entity_slot_from_search_query = lambda **kwargs: ""
 
@@ -2913,7 +2913,7 @@ class SmokeTest(unittest.TestCase):
         loop = AgentLoop.__new__(AgentLoop)
         loop._build_entity_claim_confirmation_queries = lambda **kwargs: []
         loop._build_entity_slot_probe_queries = (
-            lambda *, query, slot, status, primary_claim: [f"{slot} 탐침"]
+            lambda *, query, slot, status, primary_claim, competing_claim=None: [f"{slot} 탐침"]
         )
         loop._entity_slot_from_search_query = lambda **kwargs: ""
 
@@ -2953,7 +2953,7 @@ class SmokeTest(unittest.TestCase):
         loop = AgentLoop.__new__(AgentLoop)
         loop._build_entity_claim_confirmation_queries = lambda **kwargs: []
         loop._build_entity_slot_probe_queries = (
-            lambda *, query, slot, status, primary_claim: [f"붉은사막 {slot} 탐침"]
+            lambda *, query, slot, status, primary_claim, competing_claim=None: [f"붉은사막 {slot} 탐침"]
         )
         loop._build_entity_claim_records = lambda **kwargs: []
         loop._entity_slot_from_search_query = lambda **kwargs: ""
@@ -3303,6 +3303,11 @@ class SmokeTest(unittest.TestCase):
         self.assertEqual(
             coverage["장르/성격"].primary_claim.value,
             "생존 제작 RPG",
+        )
+        self.assertIsNotNone(coverage["장르/성격"].competing_claim)
+        self.assertEqual(
+            coverage["장르/성격"].competing_claim.value,
+            "오픈월드 액션 어드벤처 게임",
         )
         self.assertEqual(coverage["장르/성격"].candidate_count, 2)
 
@@ -3675,6 +3680,67 @@ class SmokeTest(unittest.TestCase):
             [
                 "붉은사막 오픈월드 액션 어드벤처 게임 장르 위키",
                 "붉은사막 오픈월드 액션 어드벤처 게임 소개",
+            ],
+        )
+
+    def test_conflict_slot_with_competing_value_produces_cross_verification_queries(self) -> None:
+        from core.contracts import CoverageStatus, SourceRole
+        from core.web_claims import ClaimRecord
+
+        loop = AgentLoop.__new__(AgentLoop)
+        primary_claim = ClaimRecord(
+            slot="개발",
+            value="펄어비스",
+            source_url="https://official.example.com/developer",
+            source_title="개발 공식",
+            source_role=SourceRole.OFFICIAL,
+        )
+        competing_claim = ClaimRecord(
+            slot="개발",
+            value="다른 개발사",
+            source_url="https://wiki.example.com/developer",
+            source_title="개발 위키",
+            source_role=SourceRole.WIKI,
+        )
+
+        self.assertEqual(
+            loop._build_entity_slot_probe_queries(
+                query="붉은사막",
+                slot="개발",
+                status=CoverageStatus.CONFLICT,
+                primary_claim=primary_claim,
+                competing_claim=competing_claim,
+            ),
+            [
+                "붉은사막 펄어비스 개발사 공식",
+                "붉은사막 다른 개발사 개발사 공식",
+                "붉은사막 개발사 정확한 정보",
+            ],
+        )
+
+    def test_conflict_slot_without_competing_value_falls_through_to_existing_branch(self) -> None:
+        from core.contracts import CoverageStatus, SourceRole
+        from core.web_claims import ClaimRecord
+
+        loop = AgentLoop.__new__(AgentLoop)
+        primary_claim = ClaimRecord(
+            slot="개발",
+            value="펄어비스",
+            source_url="https://official.example.com/developer",
+            source_title="개발 공식",
+            source_role=SourceRole.OFFICIAL,
+        )
+
+        self.assertEqual(
+            loop._build_entity_slot_probe_queries(
+                query="붉은사막",
+                slot="개발",
+                status=CoverageStatus.CONFLICT,
+                primary_claim=primary_claim,
+            ),
+            [
+                "붉은사막 펄어비스 개발사 공식",
+                "붉은사막 펄어비스 개발사 위키",
             ],
         )
 

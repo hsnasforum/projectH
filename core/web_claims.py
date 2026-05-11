@@ -28,6 +28,7 @@ class SlotCoverage:
     primary_claim: ClaimRecord | None = None
     candidate_count: int = 0
     trusted_source_count: int = 0
+    competing_claim: ClaimRecord | None = None
 
 
 _ROLE_PRIORITY = {
@@ -195,6 +196,21 @@ def summarize_slot_coverage(
         trusted_count = _trusted_supporting_source_count(primary)
         has_trusted_agreement = trusted_count >= 2
         has_conflict = _has_competing_trusted_alternative(items, primary)
+        competing = (
+            max(
+                (
+                    item
+                    for item in items
+                    if item is not primary
+                    and not claim_values_overlap(item.value, primary.value)
+                    and _trusted_supporting_source_count(item) >= 2
+                ),
+                key=_claim_sort_key,
+                default=None,
+            )
+            if has_conflict
+            else None
+        )
         status = (
             CoverageStatus.STRONG
             if has_trusted_agreement and not has_conflict
@@ -210,5 +226,6 @@ def summarize_slot_coverage(
             primary_claim=primary,
             candidate_count=len(items),
             trusted_source_count=trusted_count,
+            competing_claim=competing,
         )
     return coverage

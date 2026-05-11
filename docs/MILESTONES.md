@@ -1895,9 +1895,16 @@ STRONG으로 수렴시키는 경로를 `summarize_slot_coverage()` 직접 호출
 UNRESOLVED→STRONG(공식 출처 2개 추가)과 CONFLICT→STRONG(경쟁 claim 신뢰 감소) 두 경로 검증.
 회귀 테스트 2개 추가, 164개 전체 통과.
 
+Axis 2: investigation_quality_summary 필드 추가 — DONE
+entity-card 웹 조사 응답에 슬롯별 status 카운트(STRONG/WEAK/CONFLICT/UNRESOLVED/MISSING)를
+`AgentResponse.investigation_quality_summary`로 노출했다.
+`core/web_claims.py`의 `compute_investigation_quality_summary()` 헬퍼가 커버리지 dict를
+받아 카운트를 반환하며, entity-card primary 응답 경로에서만 wiring한다.
+회귀 테스트 2개 추가, 166개 전체 통과.
+
 ## Next 3 Implementation Priorities
 
-1. **M124 Axis 1 완료**: UNRESOLVED/CONFLICT 수렴 벤치마크 fixture 추가 (164개 통과). doc-sync 완료. publish bundle 대기 (operator 결정). M124 Axis 2 범위 advisory 결정 대기.
+1. **M124 Axis 2 완료**: investigation_quality_summary 필드 추가 (166개 통과). doc-sync 완료. publish bundle 대기 (operator 결정). M124 Axis 3 범위 advisory 결정 대기.
 2. **PR 스택 정리**: PR #113–#118 모두 MERGED; 후속 브랜치 base 재조정 및 main 병합 gate 대기.
 3. **장기**: cross-session memory 강화, north star 방향 유지.
 

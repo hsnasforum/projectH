@@ -156,6 +156,7 @@
 142. M122 Axis 2: UNRESOLVED status separation completed 2026-05-08 — `CoverageStatus.UNRESOLVED` added for zero-trusted-source slots; `summarize_slot_coverage()` emits UNRESOLVED when `trusted_count == 0`; `_build_entity_second_pass_queries()` targets UNRESOLVED slots with probe-first ordering and 2-query boost; 5 sites updated in `agent_loop.py`; 3 regression tests added + 2 renamed; 155 tests pass.
 143. M122 Axis 3: UNRESOLVED display/hint propagation completed 2026-05-08 — `_claim_coverage_status_label()` returns "미해결" for UNRESOLVED; `_claim_coverage_status_rank()` returns 0 for UNRESOLVED; `_build_claim_coverage_progress_summary()` includes UNRESOLVED in unresolved_slots set; `_annotate_claim_coverage_progress()` handles UNRESOLVED automatically via rank/label callers; 3 regression tests added; 156 tests pass.
 144. M123 Axis 1: UNRESOLVED early-return suppression completed 2026-05-08 — `_build_entity_second_pass_queries()` now computes `unresolved_slots` and guards early return with `and not unresolved_slots`; prevents skipping second-pass when UNRESOLVED slots remain even if STRONG slot count is sufficient; 2 regression tests added; 158 tests pass.
+145. M123 Axis 2: UNRESOLVED 무값 슬롯 공식 출처 탐색 강화 completed 2026-05-08 — `_build_entity_slot_probe_queries()`에서 UNRESOLVED + 값 없음 조건에 슬롯별 공식/나무위키 probe 쿼리 반환 추가; second-pass `_select_ranked_web_sources` max_items 3→5 확장; 회귀 테스트 2개 추가(160개 통과).
 
 ## Current Phase In Progress
 

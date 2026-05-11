@@ -1577,6 +1577,52 @@ class SmokeTest(unittest.TestCase):
             )
             self.assertGreater(len(search_tool.search_calls), 4)
 
+    def test_second_pass_source_selection_uses_five_items(self) -> None:
+        from core.contracts import SearchIntentKind
+
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            search_tool = _FakeWebSearchTool(
+                {
+                    "붉은사막": [
+                        SimpleNamespace(
+                            title="붉은사막 - 나무위키",
+                            url="https://namu.wiki/w/%EB%B6%89%EC%9D%80%EC%82%AC%EB%A7%89",
+                            snippet="붉은사막은 펄어비스가 개발 중인 오픈월드 액션 어드벤처 게임이다.",
+                        ),
+                    ],
+                }
+            )
+            loop = AgentLoop(
+                model=MockModelAdapter(),
+                session_store=SessionStore(base_dir=str(tmp_path / "sessions")),
+                task_logger=TaskLogger(path=str(tmp_path / "task_log.jsonl")),
+                tools={
+                    "read_file": FileReaderTool(),
+                    "write_note": WriteNoteTool(),
+                    "search_web": search_tool,
+                },
+                notes_dir=str(tmp_path / "notes"),
+                web_search_store=WebSearchStore(base_dir=str(tmp_path / "web-search")),
+            )
+
+            with patch.object(loop, "_build_entity_second_pass_queries", return_value=[]) as build_mock:
+                with patch.object(loop, "_select_ranked_web_sources", wraps=loop._select_ranked_web_sources) as select_mock:
+                    response = loop._run_web_search(
+                        request=UserRequest(
+                            user_text="붉은사막에 대해 알려줘",
+                            session_id="second-pass-source-selection-session",
+                            metadata={"web_search_permission": "enabled"},
+                        ),
+                        query="붉은사막",
+                        intent_kind=SearchIntentKind.EXTERNAL_FACT,
+                    )
+
+            self.assertEqual(response.actions_taken, ["web_search"])
+            self.assertTrue(build_mock.called)
+            self.assertEqual(select_mock.call_args_list[0].kwargs["answer_mode"], AnswerMode.ENTITY_CARD)
+            self.assertEqual(select_mock.call_args_list[0].kwargs["max_items"], 5)
+
     def test_web_search_entity_summary_uses_claim_confirmation_query_for_weak_slot(self) -> None:
         with TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
@@ -3655,6 +3701,25 @@ class SmokeTest(unittest.TestCase):
             [
                 "붉은사막 PC와 콘솔 플랫폼 공식",
                 "붉은사막 PC와 콘솔 플랫폼",
+            ],
+        )
+
+    def test_unresolved_slot_no_value_produces_official_site_query(self) -> None:
+        from core.contracts import CoverageStatus
+
+        loop = AgentLoop.__new__(AgentLoop)
+
+        self.assertEqual(
+            loop._build_entity_slot_probe_queries(
+                query="붉은사막",
+                slot="개발",
+                status=CoverageStatus.UNRESOLVED,
+                primary_claim=None,
+            ),
+            [
+                "붉은사막 공식 사이트",
+                "붉은사막 개발사 나무위키",
+                "붉은사막 개발사 위키",
             ],
         )
 

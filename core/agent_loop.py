@@ -3916,6 +3916,16 @@ class AgentLoop:
             }
             return query_map.get(slot, [])
 
+        if status == CoverageStatus.UNRESOLVED:
+            query_map = {
+                "개발": [f"{query} 공식 사이트", f"{query} 개발사 나무위키", f"{query} 개발사 위키"],
+                "서비스/배급": [f"{query} 공식 서비스", f"{query} 서비스 나무위키", f"{query} 배급사 공식"],
+                "장르/성격": [f"{query} 나무위키", f"{query} 위키 장르", f"{query} 소개 공식"],
+                "상태": [f"{query} 공식 출시", f"{query} 나무위키 상태", f"{query} 서비스 종료 공식"],
+                "이용 형태": [f"{query} 공식 플랫폼", f"{query} 나무위키 플랫폼", f"{query} 플랫폼 공식"],
+            }
+            return query_map.get(slot, [])
+
         query_map = {
             "개발": [f"{query} 개발사 공식", f"{query} 개발사 위키", f"{query} 개발사"],
             "서비스/배급": [f"{query} 서비스 공식", f"{query} 운영사 공식", f"{query} 배급"],
@@ -6465,7 +6475,7 @@ class AgentLoop:
                     answer_mode=effective_answer_mode,
                     freshness_risk=freshness_risk,
                     ranked_sources=ranked_sources,
-                    max_items=3,
+                    max_items=5,
                 )
                 second_pass_queries = self._build_entity_second_pass_queries(
                     query=query,

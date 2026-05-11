@@ -1870,9 +1870,15 @@ M122 Axis 2에서 추가된 `CoverageStatus.UNRESOLVED`가 `_build_entity_second
 추가해 UNRESOLVED 슬롯이 남은 경우 second-pass 보강 쿼리가 항상 생성되도록 했다.
 회귀 테스트 2개(UNRESOLVED 슬롯 존재 시 비억제, STRONG만 충분 시 기존 억제 유지) 추가로 158개 통과.
 
+Axis 2: UNRESOLVED 무값 슬롯 공식 출처 탐색 강화 — DONE
+trusted 출처가 없고 값도 비어 있는 UNRESOLVED 슬롯에 대해 공통 fallback 쿼리 대신
+슬롯별 공식/나무위키 probe 쿼리를 반환하도록 `_build_entity_slot_probe_queries()`를 확장했다.
+second-pass 루프의 `_select_ranked_web_sources` max_items를 3에서 5로 늘려 조사 대상 출처
+범위를 확장했다. 회귀 테스트 2개 추가, 160개 전체 통과.
+
 ## Next 3 Implementation Priorities
 
-1. **M123 Axis 1 완료**: UNRESOLVED 슬롯 존재 시 second-pass 이른 반환 억제 완료. M123 Axis 2 후속 방향은 advisory 결정 대기.
+1. **M123 Axis 2 완료**: UNRESOLVED 무값 슬롯 공식 출처 탐색 강화 + second-pass max_items 3→5 완료. doc-sync 완료. publish bundle 대기 (operator 결정). M123 Axis 3 범위 advisory 결정 대기.
 2. **PR 스택 정리**: PR #113–#118 모두 MERGED; 후속 브랜치 base 재조정 및 main 병합 gate 대기.
 3. **장기**: cross-session memory 강화, north star 방향 유지.
 

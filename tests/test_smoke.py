@@ -3318,6 +3318,92 @@ class SmokeTest(unittest.TestCase):
         )
         self.assertEqual(coverage_no_conflict["장르/성격"].status, CoverageStatus.STRONG)
 
+    def test_m124_unresolved_slot_converges_to_strong_with_official_source(self) -> None:
+        from core.contracts import CoverageStatus, SourceRole
+        from core.web_claims import ClaimRecord, summarize_slot_coverage
+
+        untrusted_developer = ClaimRecord(
+            slot="개발",
+            value="A사",
+            source_url="https://blog.example.com/developer",
+            source_title="개발 블로그",
+            source_role=SourceRole.BLOG,
+            support_count=1,
+            supporting_sources=(),
+        )
+        official_developer = ClaimRecord(
+            slot="개발",
+            value="A사",
+            source_url="https://official.example.com/developer",
+            source_title="개발 공식",
+            source_role=SourceRole.OFFICIAL,
+            support_count=1,
+            supporting_sources=(
+                ("https://official.example.com/developer", "개발 공식", SourceRole.OFFICIAL),
+                ("https://data.example.com/developer", "개발 데이터", SourceRole.OFFICIAL),
+            ),
+        )
+
+        before_coverage = summarize_slot_coverage([untrusted_developer], slots=("개발",))
+        after_coverage = summarize_slot_coverage([official_developer], slots=("개발",))
+
+        self.assertEqual(before_coverage["개발"].status, CoverageStatus.UNRESOLVED)
+        self.assertEqual(before_coverage["개발"].trusted_source_count, 0)
+        self.assertEqual(after_coverage["개발"].status, CoverageStatus.STRONG)
+        self.assertGreaterEqual(after_coverage["개발"].trusted_source_count, 2)
+
+    def test_m124_conflict_slot_converges_to_strong_when_competing_claim_loses_support(self) -> None:
+        from core.contracts import CoverageStatus, SourceRole
+        from core.web_claims import ClaimRecord, summarize_slot_coverage
+
+        primary_service = ClaimRecord(
+            slot="서비스/배급",
+            value="A사",
+            source_url="https://official.example.com/service",
+            source_title="서비스 공식",
+            source_role=SourceRole.OFFICIAL,
+            support_count=2,
+            supporting_sources=(
+                ("https://official.example.com/service", "서비스 공식", SourceRole.OFFICIAL),
+                ("https://data.example.com/service", "서비스 데이터", SourceRole.DATABASE),
+            ),
+        )
+        competing_service = ClaimRecord(
+            slot="서비스/배급",
+            value="B사",
+            source_url="https://wiki.example.com/service-alt",
+            source_title="서비스 위키",
+            source_role=SourceRole.WIKI,
+            support_count=2,
+            supporting_sources=(
+                ("https://wiki.example.com/service-alt", "서비스 위키", SourceRole.WIKI),
+                ("https://data.example.com/service-alt", "서비스 보조 데이터", SourceRole.DATABASE),
+            ),
+        )
+        weakened_competing_service = ClaimRecord(
+            slot="서비스/배급",
+            value="B사",
+            source_url="https://wiki.example.com/service-alt",
+            source_title="서비스 위키",
+            source_role=SourceRole.WIKI,
+            support_count=1,
+            supporting_sources=(),
+        )
+
+        before_coverage = summarize_slot_coverage(
+            [primary_service, competing_service],
+            slots=("서비스/배급",),
+        )
+        after_coverage = summarize_slot_coverage(
+            [primary_service, weakened_competing_service],
+            slots=("서비스/배급",),
+        )
+
+        self.assertEqual(before_coverage["서비스/배급"].status, CoverageStatus.CONFLICT)
+        self.assertIsNotNone(before_coverage["서비스/배급"].competing_claim)
+        self.assertEqual(after_coverage["서비스/배급"].status, CoverageStatus.STRONG)
+        self.assertIsNone(after_coverage["서비스/배급"].competing_claim)
+
     def test_claims_summarize_slot_coverage_prefers_official_over_wiki_when_support_ties(self) -> None:
         from core.contracts import SourceRole
         from core.web_claims import (

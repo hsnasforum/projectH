@@ -3947,11 +3947,13 @@ class AgentLoop:
         )
         coverage = summarize_slot_coverage(claim_records, slots=CORE_ENTITY_SLOTS)
         strong_slots = {slot for slot, item in coverage.items() if item.status == CoverageStatus.STRONG}
+        unresolved_slots = {slot for slot, item in coverage.items() if item.status == CoverageStatus.UNRESOLVED}
         has_distribution_or_access = bool({"서비스/배급", "이용 형태"} & strong_slots)
         if (
             len(strong_slots) >= 4
             and {"개발", "장르/성격"} <= strong_slots
             and has_distribution_or_access
+            and not unresolved_slots
         ):
             return []
 

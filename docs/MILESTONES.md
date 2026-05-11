@@ -1861,9 +1861,18 @@ Axis 3: UNRESOLVED display/hint 전파 — DONE
 `_annotate_claim_coverage_progress()`는 rank/label 호출자이므로 자동으로 UNRESOLVED를 처리한다.
 회귀 테스트 3개 추가로 155 + 1 = 156개 통과.
 
+## M123 entity-card 웹 조사 품질 개선 (2차)
+
+Axis 1: UNRESOLVED 슬롯 존재 시 second-pass 이른 반환 억제 — DONE
+M122 Axis 2에서 추가된 `CoverageStatus.UNRESOLVED`가 `_build_entity_second_pass_queries()`의
+이른 반환 조건에 반영되지 않아, STRONG 슬롯이 충분하면 UNRESOLVED 슬롯이 남아 있어도 second-pass를
+건너뛰는 gap이 있었다. `unresolved_slots` 집합을 계산하고 이른 반환 조건에 `and not unresolved_slots`를
+추가해 UNRESOLVED 슬롯이 남은 경우 second-pass 보강 쿼리가 항상 생성되도록 했다.
+회귀 테스트 2개(UNRESOLVED 슬롯 존재 시 비억제, STRONG만 충분 시 기존 억제 유지) 추가로 158개 통과.
+
 ## Next 3 Implementation Priorities
 
-1. **M122 완료**: entity-card 웹 조사 품질 개선 3축(신뢰 합의 게이트 / UNRESOLVED 분리 / display 전파) 완료. 다음 웹 조사 개선 방향은 advisory 통해 결정.
+1. **M123 Axis 1 완료**: UNRESOLVED 슬롯 존재 시 second-pass 이른 반환 억제 완료. M123 Axis 2 후속 방향은 advisory 결정 대기.
 2. **PR 스택 정리**: PR #113–#118 모두 MERGED; 후속 브랜치 base 재조정 및 main 병합 gate 대기.
 3. **장기**: cross-session memory 강화, north star 방향 유지.
 

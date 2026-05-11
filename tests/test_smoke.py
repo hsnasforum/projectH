@@ -2807,6 +2807,99 @@ class SmokeTest(unittest.TestCase):
         self.assertEqual(queries[:2], ["이용 형태 탐침 1", "이용 형태 탐침 2"])
         self.assertNotIn("이용 형태 확인 1", queries[:2])
 
+    def test_second_pass_does_not_early_return_when_unresolved_slot_remains(self) -> None:
+        from core.contracts import SourceRole
+        from core.web_claims import ClaimRecord
+
+        loop = AgentLoop.__new__(AgentLoop)
+        loop._build_entity_claim_confirmation_queries = lambda **kwargs: []
+        loop._build_entity_slot_probe_queries = (
+            lambda *, query, slot, status, primary_claim: [f"{slot} 탐침"]
+        )
+        loop._entity_slot_from_search_query = lambda **kwargs: ""
+
+        def _strong_claim(slot: str, value: str) -> ClaimRecord:
+            return ClaimRecord(
+                slot=slot,
+                value=value,
+                source_url=f"https://example.com/{slot}-official",
+                source_title=f"{slot} 공식",
+                source_role=SourceRole.OFFICIAL,
+                support_count=2,
+                supporting_sources=(
+                    (f"https://example.com/{slot}-official", f"{slot} 공식", SourceRole.OFFICIAL),
+                    (f"https://data.example.com/{slot}", f"{slot} 데이터", SourceRole.DATABASE),
+                ),
+            )
+
+        unresolved_claim = ClaimRecord(
+            slot="이용 형태",
+            value="PC와 콘솔",
+            source_url="https://blog.example.com/platform",
+            source_title="플랫폼 블로그",
+            source_role=SourceRole.BLOG,
+            support_count=2,
+            supporting_sources=(
+                ("https://blog.example.com/platform", "플랫폼 블로그", SourceRole.BLOG),
+                ("https://community.example.com/platform", "플랫폼 커뮤니티", SourceRole.COMMUNITY),
+            ),
+        )
+        loop._build_entity_claim_records = lambda **kwargs: [
+            _strong_claim("개발", "펄어비스"),
+            _strong_claim("서비스/배급", "펄어비스"),
+            _strong_claim("장르/성격", "오픈월드 액션 어드벤처"),
+            _strong_claim("상태", "출시 예정"),
+            unresolved_claim,
+        ]
+
+        queries = loop._build_entity_second_pass_queries(
+            query="붉은사막",
+            selected_sources=[],
+            existing_queries=[],
+        )
+
+        self.assertEqual(queries, ["이용 형태 탐침"])
+
+    def test_second_pass_keeps_early_return_when_strong_slots_are_sufficient(self) -> None:
+        from core.contracts import SourceRole
+        from core.web_claims import ClaimRecord
+
+        loop = AgentLoop.__new__(AgentLoop)
+        loop._build_entity_claim_confirmation_queries = lambda **kwargs: []
+        loop._build_entity_slot_probe_queries = (
+            lambda *, query, slot, status, primary_claim: [f"{slot} 탐침"]
+        )
+        loop._entity_slot_from_search_query = lambda **kwargs: ""
+
+        def _strong_claim(slot: str, value: str) -> ClaimRecord:
+            return ClaimRecord(
+                slot=slot,
+                value=value,
+                source_url=f"https://example.com/{slot}-official",
+                source_title=f"{slot} 공식",
+                source_role=SourceRole.OFFICIAL,
+                support_count=2,
+                supporting_sources=(
+                    (f"https://example.com/{slot}-official", f"{slot} 공식", SourceRole.OFFICIAL),
+                    (f"https://data.example.com/{slot}", f"{slot} 데이터", SourceRole.DATABASE),
+                ),
+            )
+
+        loop._build_entity_claim_records = lambda **kwargs: [
+            _strong_claim("개발", "펄어비스"),
+            _strong_claim("서비스/배급", "펄어비스"),
+            _strong_claim("장르/성격", "오픈월드 액션 어드벤처"),
+            _strong_claim("상태", "출시 예정"),
+        ]
+
+        queries = loop._build_entity_second_pass_queries(
+            query="붉은사막",
+            selected_sources=[],
+            existing_queries=[],
+        )
+
+        self.assertEqual(queries, [])
+
     def test_coverage_reinvestigation_overall_cap_is_now_5(self) -> None:
         from core.contracts import CoverageStatus, SourceRole
         from core.web_claims import CORE_ENTITY_SLOTS, ClaimRecord, summarize_slot_coverage

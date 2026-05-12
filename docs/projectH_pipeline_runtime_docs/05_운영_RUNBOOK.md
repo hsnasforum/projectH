@@ -347,7 +347,7 @@ controller browser UI의 active runtime contract는 아래로 제한합니다.
 - operator는 stale stop 파일만 보고 automation을 계속 막지 말고, 최신 `/verify` 또는 다음 control 생성 여부를 먼저 확인해야 합니다.
 - stale stop suppression은 operator 문서를 삭제하거나 rewrite하는 동작이 아니라 supervisor read-model 정규화입니다.
 - watcher는 이 상태에서 startup/rolling turn을 `VERIFY_FOLLOWUP`으로 다시 열고, verify/handoff owner에게 다음 canonical control outcome을 다시 쓰도록 1회 control-recovery prompt를 보낼 수 있습니다.
-- control-recovery prompt 이후 verify/handoff owner가 새 `implement_handoff.md`, `advisory_request.md`, 또는 `operator_request.md`를 쓰지 않고 idle로 돌아오면 watcher가 `operator_retriage_no_next_control` advisory request를 씁니다. `pr_merge_completed`처럼 이미 완료된 merge gate도 이 no-silent-stall guard에 포함됩니다.
+- control-recovery prompt 이후 verify/handoff owner가 새 `implement_handoff.md`, `advisory_request.md`, 또는 `operator_request.md`를 쓰지 않고 idle로 돌아오면 watcher가 `operator_retriage_no_next_control` guard를 실행합니다. advisory가 켜져 있으면 advisory request를 쓰고, 현재 Codex-only profile처럼 `advisory_enabled=false`이면 advisory slot을 쓰지 않고 Codex verify lane에 `ADVISORY_DISABLED: true`, `PUBLISH_HELD: true` retriage prompt를 다시 보내 `verify_followup_no_next_control`로 표면화합니다. `pr_merge_completed`처럼 이미 완료된 merge gate도 이 no-silent-stall guard에 포함됩니다.
 - 이때 browser/TUI 표면에서는 `control=none`이더라도 active verify/handoff-owner lane이 `WORKING` / `followup`으로 보일 수 있습니다.
 
 ## 6.10 gated operator candidate
@@ -362,10 +362,11 @@ controller browser UI의 active runtime contract는 아래로 제한합니다.
 
 - canonical operator stop 파일은 남아 있지만, supervisor/watcher가 이를 즉시 operator wait current truth로 승격하지 않은 상태입니다.
 - `status.autonomy.block_reason`과 `suppress_operator_until`이 24시간 gate의 이유와 deadline입니다.
-- `recovery`면 lane/session/receipt/auth 계열 자가복구가 먼저이고, `triage`면 verify/handoff-owner와 advisory owner 판단이 먼저이며, `hibernate`면 현재는 idle stable이라 operator 호출 없이 unattended로 유지하는 편이 맞습니다.
+- `recovery`면 lane/session/receipt/auth 계열 자가복구가 먼저이고, `triage`면 verify/handoff-owner 판단이 먼저입니다. advisory가 활성화된 profile에서만 advisory owner 판단을 추가로 사용하며, `hibernate`면 현재는 idle stable이라 operator 호출 없이 unattended로 유지하는 편이 맞습니다.
 - 예외적으로 `internal_only + next_slice_selection + waiting_next_control` 조합은 idle hibernate가 아니라 `triage`로 보고 verify/handoff-owner follow-up을 다시 여는 편이 맞습니다. genuine `idle_hibernate + internal_only`만 unattended idle로 남깁니다.
 - `pending_operator`가 보이면 legacy/전환기 surface로 보고 `reason_code`를 먼저 확인합니다. `approval_required`, `safety_stop`, `truth_sync_required` 같은 real-risk reason은 즉시 `needs_operator` current truth여야 하며, 반복 advisory로 재승격되면 operator gate 회귀로 봅니다.
 - `next_direction_after_launcher_close`, `direction_selection_after_feature_complete`, `milestone_direction`처럼 launcher 종료 후 다음 우선순위를 묻는 stop은 operator-only 결정이 아니라 `slice_ambiguity + gate_24h + next_slice_selection`으로 정규화되어야 합니다. 이 reason이 `needs_operator + immediate_publish`로 보이면 생산성 차단 회귀입니다.
+- `publish_boundary_accumulated_dirty_tree`처럼 advisory가 누적 dirty tree를 publish boundary로 표현한 compatibility reason은 `commit_push_bundle_authorization + internal_only + release_gate`로 정규화되어야 합니다. 이 reason이 `hibernate + ok/attention`으로 누우면 Codex가 한 라운드 뒤 멈춘 것처럼 보이는 생산성 차단 회귀입니다.
 - `pr_creation_gate + gate_24h + release_gate`는 operator publication boundary가 아니라 draft PR 생성 publish follow-up입니다. 이 reason이 `needs_operator` 또는 `hibernate + ok`로 보이면 자동 PR 라우팅 회귀입니다.
 - `external_publication_boundary` / `publication_boundary` / `pr_boundary`는 merge/release/destructive publication 경계입니다. 이 reason이 merge 전인데 `hibernate + ok` 또는 반복 verify follow-up으로 보이면 no-silent-stall surface 회귀이며, 정상 표시는 `needs_operator + pr_boundary`입니다. `pr_merge_gate + internal_only + merge_gate`는 예외적으로 merge backlog를 남긴 채 `attention + verify_followup`으로 다음 local control을 고르게 합니다. merge가 이미 끝난 `pr_merge_gate`가 계속 `needs_operator`로 보이면 `pr_merge_completed` / `pr_merge_head_mismatch` recovery 감지 또는 `gh` 조회 경로를 확인합니다.
 - 같은 결정을 `CONTROL_SEQ`만 올려 다시 쓴 경우에는 suppress deadline과 retriage age가 이어져야 합니다. seq-only bump가 보이는데 `operator_retriage_no_next_control` age가 0초로 돌아가면 watcher/supervisor semantic fingerprint 회귀로 봅니다.
@@ -385,8 +386,8 @@ controller browser UI의 active runtime contract는 아래로 제한합니다.
 - 이 recovery는 이미 승인돼 끝난 큰 검증 묶음을 인식하는 경로입니다. small/local slice dirty state만으로 새 commit/push operator stop을 열라는 의미가 아닙니다.
 - canonical stop 파일은 삭제하지 않고, watcher/supervisor는 `VERIFY_FOLLOWUP`으로 verify/handoff owner가 다음 control을 정리하게 합니다.
 - upstream이 없거나 remote/upstream이 HEAD를 포함하지 않거나 non-rolling source dirty가 있으면 generic `approval_required`는 fail-closed로 기존 `needs_operator`를 유지합니다.
-- 다만 `commit_push_bundle_authorization + OPERATOR_POLICY: internal_only`는 이미 큰 publish 묶음 승인이 난 follow-up으로 보고, dirty source가 남아 있어도 operator 재호출이 아니라 verify/handoff-owner triage로 넘깁니다.
-- 이 triage는 implement handoff를 만들라는 뜻이 아닙니다. implement lane은 commit/push 금지 경계가 유지되므로, verify/handoff owner가 직접 publish를 처리하거나 처리 불가 시 advisory escalation으로 넘겨야 합니다.
+- 다만 `commit_push_bundle_authorization + OPERATOR_POLICY: internal_only`는 이미 큰 publish 묶음 승인이 난 follow-up으로 보고, dirty source가 남아 있어도 operator 재호출이 아니라 verify/handoff-owner triage로 넘깁니다. `authorize ... or explicitly hold publication`처럼 승인과 보류를 동시에 묻는 문구는 승인 완료가 아니라 publish backlog 후보입니다.
+- 이 triage는 implement handoff를 만들라는 뜻이 아닙니다. implement lane은 commit/push 금지 경계가 유지됩니다. 현재 Codex-only profile의 기본 복구 prompt는 publish backlog를 보류하고 다음 safe local control을 쓰며, commit/push/PR 실행은 명시 승인된 별도 publish round로만 다룹니다.
 
 ## 6.12 duplicate supervisor
 다음 조건이 보이면 duplicate supervisor로 판단합니다.

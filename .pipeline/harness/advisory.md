@@ -34,8 +34,9 @@ the active control slot, latest `/work`, latest `/verify`, or supervisor
 ## Allowed
 
 - Read the named request/work/verify/docs/code paths.
-- Write one advisory report under the current advisory report path, currently
-  `report/gemini/` for the active Gemini advisory profile.
+- Write one advisory report under the current advisory report path. Until a
+  role-neutral path exists, `report/gemini/` remains the historical
+  compatibility location even when the active advisory owner is not Gemini.
 - Write `.pipeline/advisory_advice.md` with `STATUS: advice_ready`.
 
 ## Forbidden

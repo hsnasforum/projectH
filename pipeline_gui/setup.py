@@ -176,7 +176,7 @@ Canonical control filenames are role-based: `.pipeline/implement_handoff.md`,
 `.pipeline/gemini_request.md`, and `.pipeline/gemini_advice.md` are read-only
 compatibility inputs for the same logical slots.
 The runtime adapter always carries the full three-lane physical catalog (`Claude`, `Codex`, `Gemini`) and marks each lane with `enabled` plus bound `roles`.
-Support policy is shape-based rather than name-whitelist based: distinct implement/verify 3-lane with advisory enabled is `supported`, distinct implement/verify 2-lane with advisory disabled is also `supported`, one-lane self-verify is `experimental`, and invalid profiles are `blocked`/`broken`.
+Support policy is shape-based rather than name-whitelist based: distinct implement/verify 3-lane with advisory enabled is `supported`, distinct implement/verify 2-lane with advisory disabled is also `supported`, self-verify profiles are `experimental`, and invalid profiles are `blocked`/`broken`.
 """
 
 _TMPL_CLAUDE = """\
@@ -184,7 +184,7 @@ _TMPL_CLAUDE = """\
 
 ## Working Principles
 
-- Follow the active `role_bindings`; Claude may be implement owner or verify/handoff owner depending on the current profile.
+- Follow the active `role_bindings`; Claude may be implement owner, verify/handoff owner, or advisory owner depending on the current profile.
 - Read the codebase before making changes.
 - Prefer editing existing files over creating new ones.
 - Make the smallest change that solves the problem.

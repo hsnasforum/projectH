@@ -1,17 +1,16 @@
 {
   "status": "setup_requested",
-  "setup_id": "setup-20260419-195239-7007a0",
+  "setup_id": "setup-20260512-124049-codex-selfverify",
   "schema_version": 1,
   "project_root": "/home/xpdlqj/code/projectH",
   "selected_agents": [
     "Claude",
-    "Codex",
-    "Gemini"
+    "Codex"
   ],
   "role_bindings": {
     "implement": "Codex",
-    "verify": "Claude",
-    "advisory": "Gemini"
+    "verify": "Codex",
+    "advisory": "Claude"
   },
   "role_options": {
     "advisory_enabled": true,
@@ -20,15 +19,15 @@
   },
   "mode_flags": {
     "single_agent_mode": false,
-    "self_verify_allowed": false,
+    "self_verify_allowed": true,
     "self_advisory_allowed": false
   },
   "config_paths": {
     "active": ".pipeline/config/agent_profile.json",
     "draft": ".pipeline/config/agent_profile.draft.json"
   },
-  "draft_fingerprint": "sha256:c7f68be32534241711a9f30b865ef1bd23989fa4c0beeaa5acdcc03ce192ea18",
-  "executor_candidate": "Claude",
+  "draft_fingerprint": "sha256:7dc534cd7d09e277086d17777aa7651a0c16d3ef6668561c91e3d4f39828b105",
+  "executor_candidate": "Codex",
   "support_level": "experimental",
   "controls": {
     "preview_allowed": true,
@@ -45,19 +44,40 @@
   "effective_runtime_plan": {
     "enabled_lanes": [
       "Claude",
-      "Codex",
-      "Gemini"
+      "Codex"
     ],
     "role_owners": {
       "implement": "Codex",
-      "verify": "Claude",
-      "advisory": "Gemini"
+      "verify": "Codex",
+      "advisory": "Claude"
     },
     "prompt_owners": {
-      "implement": "Claude",
+      "implement": "Codex",
       "verify": "Codex",
-      "advisory": "Gemini"
+      "advisory": "Claude"
     },
+    "role_harnesses": [
+      {
+        "role": "implement",
+        "path": ".pipeline/harness/implement.md",
+        "purpose": "bounded implementation and work closeout protocol"
+      },
+      {
+        "role": "verify",
+        "path": ".pipeline/harness/verify.md",
+        "purpose": "verification, handoff, and next-control protocol"
+      },
+      {
+        "role": "advisory",
+        "path": ".pipeline/harness/advisory.md",
+        "purpose": "bounded arbitration and recommendation protocol"
+      },
+      {
+        "role": "council",
+        "path": ".pipeline/harness/council.md",
+        "purpose": "multi-role convergence protocol for blocked or ambiguous rounds"
+      }
+    ],
     "controls": {
       "preview_allowed": true,
       "apply_allowed": true,

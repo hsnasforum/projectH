@@ -157,7 +157,7 @@ class PipelineRuntimeAutomationHealthTest(unittest.TestCase):
         health = derive_automation_health(
             {
                 "runtime_state": "RUNNING",
-                "control": {"active_control_status": "needs_operator"},
+                "control": {"active_control_status": "none"},
                 "autonomy": {"mode": "needs_operator", "reason_code": "approval_required"},
             }
         )
@@ -225,7 +225,7 @@ class PipelineRuntimeAutomationHealthTest(unittest.TestCase):
         health = derive_automation_health(
             {
                 "runtime_state": "RUNNING",
-                "control": {"active_control_status": "needs_operator"},
+                "control": {"active_control_status": "none"},
                 "autonomy": {
                     "mode": "needs_operator",
                     "reason_code": PR_MERGE_GATE_REASON,
@@ -309,6 +309,82 @@ class PipelineRuntimeAutomationHealthTest(unittest.TestCase):
         self.assertEqual(health["automation_reason_code"], "signal_mismatch")
         self.assertEqual(health["automation_next_action"], "verify_followup")
 
+    def test_duplicate_handoff_idle_routes_to_verify_followup(self) -> None:
+        health = derive_automation_health(
+            {
+                "runtime_state": "RUNNING",
+                "control": {"active_control_status": "none"},
+                "turn_state": {
+                    "state": "IDLE",
+                    "reason": "handoff_already_completed",
+                    "active_control_file": "",
+                    "active_control_seq": -1,
+                    "active_lane": "",
+                },
+                "progress": {},
+                "lanes": [{"name": "Codex", "state": "READY", "note": "waiting_next_control"}],
+            }
+        )
+
+        self.assertEqual(health["automation_health"], "attention")
+        self.assertEqual(health["automation_reason_code"], "duplicate_handoff")
+        self.assertEqual(health["automation_incident_family"], "duplicate_handoff")
+        self.assertEqual(health["automation_next_action"], "verify_followup")
+
+    def test_waiting_next_control_idle_routes_to_verify_followup(self) -> None:
+        health = derive_automation_health(
+            {
+                "runtime_state": "RUNNING",
+                "control": {"active_control_status": "none"},
+                "turn_state": {"state": "IDLE", "reason": "startup_turn_idle"},
+                "lanes": [{"name": "Codex", "state": "READY", "note": "waiting_next_control"}],
+            }
+        )
+
+        self.assertEqual(health["automation_health"], "attention")
+        self.assertEqual(health["automation_reason_code"], "waiting_next_control")
+        self.assertEqual(health["automation_next_action"], "verify_followup")
+
+    def test_codex_verify_followup_no_next_control_is_not_ok_continue(self) -> None:
+        health = derive_automation_health(
+            {
+                "runtime_state": "RUNNING",
+                "control": {"active_control_status": "none"},
+                "turn_state": {
+                    "state": "VERIFY_FOLLOWUP",
+                    "reason": "verify_followup_no_next_control",
+                    "active_control_file": "operator_request.md",
+                    "active_control_seq": 1624,
+                    "active_lane": "Codex",
+                },
+                "lanes": [{"name": "Codex", "state": "READY", "note": "followup"}],
+            }
+        )
+
+        self.assertEqual(health["automation_health"], "attention")
+        self.assertEqual(health["automation_reason_code"], "verify_followup_no_next_control")
+        self.assertEqual(health["automation_incident_family"], "operator_retriage_no_next_control")
+        self.assertEqual(health["automation_next_action"], "verify_followup")
+
+    def test_non_degraded_verify_pending_dispatch_wait_is_recovering(self) -> None:
+        health = derive_automation_health(
+            {
+                "runtime_state": "RUNNING",
+                "control": {"active_control_status": "implement"},
+                "active_round": {
+                    "state": "VERIFY_PENDING",
+                    "dispatch_stage": "task_accept_missing",
+                    "degraded_reason": "",
+                },
+                "lanes": [{"name": "Codex", "state": "WORKING", "note": "waiting_task_accept_after_dispatch"}],
+            }
+        )
+
+        self.assertEqual(health["automation_health"], "recovering")
+        self.assertEqual(health["automation_reason_code"], "dispatch_stall")
+        self.assertEqual(health["automation_incident_family"], "dispatch_stall")
+        self.assertEqual(health["automation_next_action"], "retrying")
+
     def test_active_implement_lane_ready_too_long_is_not_silent_ok(self) -> None:
         health = derive_automation_health(
             {
@@ -328,6 +404,24 @@ class PipelineRuntimeAutomationHealthTest(unittest.TestCase):
         self.assertEqual(health["automation_health"], "attention")
         self.assertEqual(health["automation_reason_code"], "implement_active_idle")
         self.assertEqual(health["automation_incident_family"], "idle_release_pending")
+        self.assertEqual(health["automation_next_action"], "retrying")
+
+    def test_active_implement_lane_closed_too_long_is_not_silent_ok(self) -> None:
+        health = derive_automation_health(
+            {
+                "runtime_state": "RUNNING",
+                "control_age_cycles": IMPLEMENT_READY_IDLE_CYCLE_THRESHOLD,
+                "control": {"active_control_status": "implement"},
+                "turn_state": {
+                    "state": "IMPLEMENT_ACTIVE",
+                    "active_lane": "Codex",
+                },
+                "lanes": [{"name": "Codex", "state": "READY", "note": "closed"}],
+            }
+        )
+
+        self.assertEqual(health["automation_health"], "attention")
+        self.assertEqual(health["automation_reason_code"], "implement_active_idle")
         self.assertEqual(health["automation_next_action"], "retrying")
 
     def test_implement_idle_timeout_with_active_handoff_is_recovering(self) -> None:

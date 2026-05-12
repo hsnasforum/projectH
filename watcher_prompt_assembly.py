@@ -181,33 +181,37 @@ DEFAULT_OPERATOR_RETRIAGE_PROMPT = (
     "ACTIVE_CONTROL_SEQ: {stale_control_seq}\n"
     "PENDING_AGE_SEC: {operator_wait_age_sec}\n"
     "REASON: {stale_control_reason}\n"
+    "ADVISORY_DISABLED: {operator_retriage_advisory_disabled}\n"
+    "PUBLISH_HELD: {operator_retriage_publish_held}\n"
     "WORK: {latest_work_path}\n"
     "VERIFY: {latest_verify_path}\n"
     "GOAL:\n"
     "- re-triage the pending or gated operator stop before publishing operator wait\n"
     "- decide whether self-heal / triage / hibernate cleared the real operator-only decision\n"
-    "- then either execute an allowed publish follow-up or write exactly one next control\n"
+    "- hold publish backlog unless explicit publication execution was already approved, then write exactly one next local control\n"
     "READ_FIRST:\n"
     "- {runtime_verify_read_first_doc}\n"
     "- {operator_request_path}\n"
     "- {latest_work_path}\n"
     "- {latest_verify_path}\n"
     "OUTPUTS:\n"
-    "- next control (CONTROL_SEQ: {next_control_seq}): .pipeline/implement_handoff.md [implement] | .pipeline/advisory_request.md [request_open] | .pipeline/operator_request.md [needs_operator]\n"
-    "- for `commit_push_bundle_authorization + internal_only`: perform the scoped commit/push in this verify/handoff round, write a `/work` closeout with commit SHA and push result, then write the next control\n"
-    "- for `pr_creation_gate + gate_24h + release_gate`: create or reuse a draft PR for the pushed branch in this verify/handoff round, record the PR URL in `/work`, then write the next control\n"
+    "- next control (CONTROL_SEQ: {next_control_seq}): {operator_retriage_next_controls}\n"
+    "- for `commit_push_bundle_authorization + internal_only`: hold the publish backlog by default; do not commit or push from this prompt, and write the next safe non-publish local control\n"
+    "- for `pr_creation_gate + gate_24h + release_gate`: hold draft PR creation by default; do not create/reuse a PR from this prompt, and write the next safe non-publish local control\n"
     "- if an older draft PR is still waiting for merge approval, keep that pending merge candidate stable by default; publish the next verified bundle as a stacked child branch/PR with the parent branch as its base, record the parent/child linkage in `/work`, and retarget the child to the repository default base branch after the parent merges\n"
     "- for `pr_merge_gate + internal_only + merge_gate`: keep the PR merge as a pending operator backlog, do not merge it yourself, and write the next safe local control so implementation can continue\n"
     "RULES:\n"
     "- use ROLE_HARNESS and COUNCIL_HARNESS before preserving operator wait\n"
     "- keep `READ_FIRST` to the listed verify-owner root doc only\n"
     "- write exactly one next control\n"
+    "- if ADVISORY_DISABLED is true, do not write `.pipeline/advisory_request.md`; converge to `.pipeline/implement_handoff.md` or a real `.pipeline/operator_request.md` boundary\n"
+    "- if PUBLISH_HELD is true, do not run commit, push, branch publication, PR creation, or merge commands in this prompt\n"
     "- do not hand commit/push/PR work to the implement lane; implement prompts forbid commit, push, branch/PR publish\n"
     "- if you write `.pipeline/implement_handoff.md`, keep its `READ_FIRST` to the implement-owner root doc only\n"
     "- before preserving `.pipeline/operator_request.md`, normalize legacy release-gate headers, including B1 dirty-tree commit authorization labels, into canonical shared-helper metadata: `commit_push_bundle_authorization + internal_only + release_gate`, `pr_creation_gate + gate_24h + release_gate`, or `pr_merge_gate + internal_only + merge_gate`\n"
     "- for any new `.pipeline/operator_request.md`, use canonical shared-helper metadata only; prefer `commit_push_bundle_authorization`, `pr_creation_gate`, or `pr_merge_gate` over ad hoc publish/merge reason labels\n"
     "- operator stop header must include STATUS, CONTROL_SEQ, REASON_CODE, OPERATOR_POLICY, DECISION_CLASS, DECISION_REQUIRED, BASED_ON_WORK, BASED_ON_VERIFY\n"
-    "- prefer .pipeline/advisory_request.md before .pipeline/operator_request.md when the only blocker is next-slice ambiguity\n"
+    "- {operator_retriage_advisory_rule}\n"
     "- only keep STATUS: needs_operator if a real operator-only decision, approval/truth-sync blocker, external publication boundary, or immediate safety stop must block local work right now"
 )
 
@@ -560,11 +564,46 @@ class WatcherPromptAssembler:
         return self._finalize_prompt_text(self.control_recovery_prompt.format(**context))
 
     def format_operator_retriage_prompt(self, marker: Mapping[str, object]) -> str:
+        reason = str(
+            marker.get("source_reason")
+            or marker.get("reason_code")
+            or marker.get("reason")
+            or "operator_wait_idle_retriage"
+        )
+        decision_class = str(marker.get("decision_class") or "")
+        operator_policy = str(marker.get("operator_policy") or "")
+        publish_held = (
+            reason
+            in {
+                "commit_push_bundle_authorization",
+                "pr_creation_gate",
+                "publish_boundary_accumulated_dirty_tree",
+            }
+            or decision_class == "release_gate"
+            or "commit_push_bundle_authorization" in operator_policy
+            or "pr_creation_gate" in operator_policy
+        )
         context = {
             **self.build_runtime_prompt_context(),
             "stale_control_seq": str(marker.get("control_seq") or "none"),
             "stale_control_reason": str(marker.get("reason") or "operator_wait_idle_retriage"),
             "operator_wait_age_sec": str(marker.get("operator_wait_age_sec") or "0"),
+            "operator_retriage_advisory_disabled": (
+                "true" if not bool(self.runtime_controls.get("advisory_enabled", True)) else "false"
+            ),
+            "operator_retriage_publish_held": "true" if bool(marker.get("publish_held", publish_held)) else "false",
+            "operator_retriage_next_controls": (
+                ".pipeline/implement_handoff.md [implement] | .pipeline/operator_request.md [needs_operator]"
+                if not bool(self.runtime_controls.get("advisory_enabled", True))
+                else ".pipeline/implement_handoff.md [implement] | "
+                ".pipeline/advisory_request.md [request_open] | "
+                ".pipeline/operator_request.md [needs_operator]"
+            ),
+            "operator_retriage_advisory_rule": (
+                "do not write .pipeline/advisory_request.md while ADVISORY_DISABLED is true"
+                if not bool(self.runtime_controls.get("advisory_enabled", True))
+                else "prefer .pipeline/advisory_request.md before .pipeline/operator_request.md when the only blocker is next-slice ambiguity"
+            ),
         }
         return self._finalize_prompt_text(self.operator_retriage_prompt.format(**context))
 

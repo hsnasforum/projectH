@@ -1902,9 +1902,18 @@ entity-card 웹 조사 응답에 슬롯별 status 카운트(STRONG/WEAK/CONFLICT
 받아 카운트를 반환하며, entity-card primary 응답 경로에서만 wiring한다.
 회귀 테스트 2개 추가, 166개 전체 통과.
 
+Axis 3: 수렴 벤치마크 전 슬롯 확장 — DONE
+장르/성격, 상태, 이용 형태 슬롯의 UNRESOLVED→STRONG 수렴 경로를 fixture로 추가해
+5개 core entity 슬롯 전체의 benchmark 커버리지를 완성했다.
+회귀 테스트 3개 추가, 169개 전체 통과.
+
+M124 아크 완료 — Axis 1–3 모두 published (PR #125–#126 draft OPEN, Axis 3 대기 중).
+Investigation Observability & Metrics 목표(수렴 benchmark fixture 전 슬롯 커버 +
+runtime quality summary 필드)가 달성됐다. M125로 전환.
+
 ## Next 3 Implementation Priorities
 
-1. **M124 Axis 2 완료**: investigation_quality_summary 필드 추가 (166개 통과). doc-sync 완료. publish bundle 대기 (operator 결정). M124 Axis 3 범위 advisory 결정 대기.
+1. **M124 아크 완전 종료**: Axis 1–3, PR #125–#127 예정. M125 방향 advisory 결정 대기. PR 스택 merge gate는 operator 결정.
 2. **PR 스택 정리**: PR #113–#118 모두 MERGED; 후속 브랜치 base 재조정 및 main 병합 gate 대기.
 3. **장기**: cross-session memory 강화, north star 방향 유지.
 

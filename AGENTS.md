@@ -141,7 +141,8 @@ instead of widening the search by default.
 - `plandoc/`: strategy above the current shipped contract
 - `work/`: Korean implementation closeout notes
 - `verify/`: Korean verification and truth-reconciliation notes
-- `report/`: broader audits and `report/gemini/` advisory logs
+- `report/`: broader audits and advisory logs; `report/gemini/` remains the
+  historical compatibility path until a role-neutral report path is introduced
 - `.pipeline/`: rolling automation control slots and harnesses
 - `.agents/skills/`, `.claude/skills/`: mirrored repo skills
 - `.codex/agents/`, `.claude/agents/`: mirrored helper agents
@@ -232,6 +233,9 @@ Verify/handoff owner:
 - if watcher routes an operator-retriage follow-up, close it by writing exactly
   one newer control slot; returning idle with no control lets watcher escalate
   to advisory with `operator_retriage_no_next_control`
+- when `advisory_enabled=false`, that same no-next-control recovery must return
+  to Codex verify follow-up with `ADVISORY_DISABLED: true` instead of writing
+  `.pipeline/advisory_request.md`
 - handle approved large-bundle publish follow-up in the verify/handoff lane,
   not by handing commit/push/PR creation to implement
 
@@ -246,7 +250,8 @@ Implement owner:
 Advisory owner:
 - compare bounded candidates and recommend one exact next slice, axis switch,
   or one real operator decision
-- write `report/gemini/...md` and `.pipeline/advisory_advice.md`
+- write an advisory log under the current advisory report path and
+  `.pipeline/advisory_advice.md`
 - do not write implement handoffs, operator stops, `/work`, or `/verify`
 
 Publish boundaries:
@@ -256,6 +261,9 @@ Publish boundaries:
 - `commit_push_bundle_authorization + internal_only` and
   `pr_creation_gate + gate_24h + release_gate` are verify/handoff follow-ups
   when already approved; they should not re-ask the operator by default
+- `authorize ... or explicitly hold publication` is a publish candidate, not
+  completed approval; Codex-only recovery holds publication and writes the next
+  safe local control instead of running commit/push/PR
 - `pr_merge_gate`, destructive publication changes, auth/credential repair,
   approval-record/truth-sync blockers, and external publication boundaries stay
   operator-approved boundaries

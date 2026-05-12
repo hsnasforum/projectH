@@ -1,28 +1,26 @@
 {
   "schema_version": 1,
   "selected_agents": [
-    "Claude",
-    "Codex",
-    "Gemini"
+    "Codex"
   ],
   "role_bindings": {
     "implement": "Codex",
-    "verify": "Claude",
-    "advisory": "Gemini"
+    "verify": "Codex",
+    "advisory": ""
   },
   "role_options": {
-    "advisory_enabled": true,
+    "advisory_enabled": false,
     "operator_stop_enabled": true,
-    "session_arbitration_enabled": true
+    "session_arbitration_enabled": false
   },
   "mode_flags": {
-    "single_agent_mode": false,
-    "self_verify_allowed": false,
+    "single_agent_mode": true,
+    "self_verify_allowed": true,
     "self_advisory_allowed": false
   },
   "metadata": {
-    "saved_at": "2026-04-19T10:52:39.943163+00:00",
+    "saved_at": "2026-05-12T03:40:49+00:00",
     "saved_by": "launcher",
-    "source_setup_id": "setup-20260419-195239-7007a0"
+    "source_setup_id": "setup-20260512-codex-single-agent-nonstop"
   }
 }

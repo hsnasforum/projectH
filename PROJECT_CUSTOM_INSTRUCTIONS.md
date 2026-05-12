@@ -128,6 +128,9 @@ Verify/handoff owner:
 - watcher가 operator retriage를 보냈으면 하나의 newer control slot으로
   닫습니다. 아무 control 없이 idle로 돌아가면 watcher가
   `operator_retriage_no_next_control`로 advisory 승격할 수 있습니다.
+- `advisory_enabled=false`인 Codex-only profile에서는 같은 no-next-control
+  복구가 `.pipeline/advisory_request.md`를 쓰지 않고 Codex verify follow-up
+  prompt(`ADVISORY_DISABLED: true`)로 돌아가야 합니다.
 - 승인된 large-bundle publish follow-up은 verify/handoff owner가 처리하거나
   advisory로 넘깁니다. implement lane에 commit/push/PR 생성을 넘기지
   않습니다.
@@ -146,7 +149,9 @@ Implement owner:
 Advisory owner:
 - 후보를 exact slice 1개, axis switch 1개, 또는 operator decision 1개로
   줄입니다.
-- `report/gemini/...md`와 `.pipeline/advisory_advice.md`를 모두 남깁니다.
+- current advisory report path의 advisory log와 `.pipeline/advisory_advice.md`를
+  모두 남깁니다. `report/gemini/`는 role-neutral report path가 생기기 전의
+  historical compatibility path입니다.
 - 최종 implement/operator slot은 직접 쓰지 않습니다.
 
 Publish/merge 경계:
@@ -155,6 +160,9 @@ Publish/merge 경계:
 - `commit_push_bundle_authorization + internal_only`와
   `pr_creation_gate + gate_24h + release_gate`는 이미 승인된 큰 묶음
   follow-up일 때 verify/handoff owner가 auditable하게 처리할 수 있습니다.
+- `authorize ... or explicitly hold publication` 문구는 승인 완료가 아니라
+  publish 후보입니다. Codex-only recovery는 publication을 보류하고 다음
+  safe local control을 써야 하며 commit/push/PR을 실행하지 않습니다.
 - `pr_merge_gate`, destructive publication, auth/credential,
   approval-record/truth-sync blocker, external publication boundary는 operator
   승인 경계로 남깁니다.

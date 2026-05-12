@@ -4,6 +4,7 @@ import re
 import subprocess
 import time
 
+_PASTED_CONTENT_RE = re.compile(r"\[Pasted Content \d+ chars\]")
 _BASE_BUSY_MARKERS = (
     "working (",
     "working for ",
@@ -213,6 +214,20 @@ def pane_text_has_input_cursor(text: str) -> bool:
         if line_looks_like_input_prompt(line):
             return True
     return pane_text_has_gemini_ready_prompt(text)
+
+
+def pane_text_has_unsubmitted_pasted_content(text: str) -> bool:
+    lines = [line.replace("\xa0", " ").strip() for line in str(text or "").splitlines() if line.strip()]
+    if not lines:
+        return False
+    window = lines[-12:]
+    prompt_index = -1
+    for index, line in enumerate(window):
+        if line_looks_like_input_prompt(line):
+            prompt_index = index
+    if prompt_index < 0:
+        return False
+    return any(_PASTED_CONTENT_RE.search(line) for line in window[prompt_index:])
 
 
 def pane_text_has_working_indicator(text: str) -> bool:

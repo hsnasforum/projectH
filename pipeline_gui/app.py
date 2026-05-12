@@ -160,18 +160,21 @@ class PipelineGUI:
         self._home_controller = HomeController(self.project, self._session_name)
         self._setup_refresh_generation = 0
 
+        default_profile = self._setup_controller.default_profile()
+        default_selected = set(default_profile.get("selected_agents") or [])
         self._setup_agent_vars = {
-            name: BooleanVar(value=True) for name in _SETUP_AGENT_ORDER
+            name: BooleanVar(value=name in default_selected) for name in _SETUP_AGENT_ORDER
         }
-        default_bindings = default_role_bindings()
+        default_bindings = dict(default_profile.get("role_bindings") or default_role_bindings())
+        default_flags = dict(default_profile.get("mode_flags") or {})
         self._setup_implement_var = StringVar(value=default_bindings["implement"])
         self._setup_verify_var = StringVar(value=default_bindings["verify"])
         self._setup_advisory_var = StringVar(value=default_bindings["advisory"])
         self._setup_advisory_enabled_var = BooleanVar(value=True)
         self._setup_operator_stop_enabled_var = BooleanVar(value=True)
         self._setup_session_arbitration_var = BooleanVar(value=True)
-        self._setup_self_verify_var = BooleanVar(value=False)
-        self._setup_self_advisory_var = BooleanVar(value=False)
+        self._setup_self_verify_var = BooleanVar(value=bool(default_flags.get("self_verify_allowed")))
+        self._setup_self_advisory_var = BooleanVar(value=bool(default_flags.get("self_advisory_allowed")))
         self._setup_executor_var = StringVar(value="auto")
 
         self._setup_agent_error_var = StringVar(value="")

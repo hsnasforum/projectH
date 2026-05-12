@@ -1,11 +1,11 @@
 {
   "status": "applied",
-  "setup_id": "setup-20260419-195239-7007a0",
+  "setup_id": "setup-20260512-124049-codex-selfverify",
   "schema_version": 1,
-  "finished_at": "2026-04-19T10:52:39.943153+00:00",
-  "approved_preview_fingerprint": "sha256:d2d90b60ad62e238a3bc04c40afe1cd6e6533c59dbcdbd45c2025ff71c0cbbe3",
-  "effective_executor": "Claude",
+  "finished_at": "2026-05-12T03:40:49+00:00",
+  "approved_preview_fingerprint": "sha256:a2e98949bfe841f5dc76bfad5962dd4ae1319ac8c64db516abf63e96a272a344",
+  "effective_executor": "Codex",
   "restart_required": true,
-  "draft_fingerprint": "sha256:c7f68be32534241711a9f30b865ef1bd23989fa4c0beeaa5acdcc03ce192ea18",
+  "draft_fingerprint": "sha256:7dc534cd7d09e277086d17777aa7651a0c16d3ef6668561c91e3d4f39828b105",
   "message": "설정 적용 결과가 도착했습니다."
 }

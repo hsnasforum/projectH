@@ -29,6 +29,16 @@ _SPACE_RE = re.compile(r"\s+")
 _NON_REASON_CODE_RE = re.compile(r"[^a-z0-9_]+")
 _COMMIT_APPROVAL_MARKERS = ("commit", "커밋")
 _PUSH_APPROVAL_MARKERS = ("push", "푸시")
+_PUBLISH_HOLD_CANDIDATE_MARKERS = (
+    "hold publication",
+    "hold publish",
+    "hold the publication",
+    "hold the publish",
+    "publication hold",
+    "publish hold",
+    "explicitly hold",
+    "보류",
+)
 _COMMIT_PUSH_APPROVAL_REASONS = frozenset(
     {"approval_required", COMMIT_PUSH_BUNDLE_AUTHORIZATION_REASON}
 )
@@ -369,6 +379,12 @@ def normalize_reason_code(value: object) -> str:
             return canonical
     if re.match(r"^b[0-9]+_release_gate_commit_authorization_dirty_tree$", text):
         return COMMIT_PUSH_BUNDLE_AUTHORIZATION_REASON
+    if text in {
+        "publish_boundary_accumulated_dirty_tree",
+        "accumulated_dirty_tree_publish_boundary",
+        "dirty_tree_publish_boundary",
+    }:
+        return COMMIT_PUSH_BUNDLE_AUTHORIZATION_REASON
     if re.match(r"^m[0-9]+_commit_push(?:_milestones?)?(?:_doc(?:s)?_sync)?$", text):
         return COMMIT_PUSH_BUNDLE_AUTHORIZATION_REASON
     if re.match(r"^m[0-9]+_(?:pr_creation|draft_pr|create_pr)_gate$", text):
@@ -451,7 +467,11 @@ def normalize_decision_class(value: object) -> str:
         "branch_complete_pending_milestone_transition": "operator_only",
         "publication": "release_gate",
         "publish": "release_gate",
+        "publish_boundary": "release_gate",
+        "publish_bundle_authorization": "release_gate",
+        "publish_bundle_permission_blocked": "release_gate",
         "publish_gate": "release_gate",
+        "publication_boundary": "release_gate",
         "pr_publication": "release_gate",
         "branch_publication": "release_gate",
         "commit_publish_authorization": "release_gate",
@@ -734,6 +754,8 @@ def is_commit_push_approval_stop(
         ]
     )
     if not searchable:
+        return False
+    if any(marker in searchable for marker in _PUBLISH_HOLD_CANDIDATE_MARKERS):
         return False
     return (
         any(marker in searchable for marker in _COMMIT_APPROVAL_MARKERS)

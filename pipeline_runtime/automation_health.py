@@ -56,6 +56,7 @@ VERIFY_FOLLOWUP_REASONS = frozenset({
     "verify_manifest_mismatch",
     "duplicate_handoff",
     "waiting_next_control",
+    "verify_followup_no_next_control",
     "verified_blockers_resolved",
     "pr_merge_completed",
     "pr_merge_head_mismatch",
@@ -70,6 +71,10 @@ RECOVERY_REASONS = frozenset({
     "session_missing",
     "provider_outage",
     "idle_release_pending",
+})
+VERIFY_PENDING_DISPATCH_STALL_STAGES = frozenset({
+    "dispatch_seen_missing",
+    "task_accept_missing",
 })
 
 
@@ -113,7 +118,7 @@ def automation_incident_family(reason_code: object) -> str:
         return "dispatch_stall"
     if reason == "signal_mismatch":
         return "signal_mismatch"
-    if reason == "operator_retriage_no_next_control":
+    if reason in {"operator_retriage_no_next_control", "verify_followup_no_next_control"}:
         return "operator_retriage_no_next_control"
     if reason == "idle_release_pending":
         return "idle_release_pending"
@@ -142,7 +147,7 @@ def _lane_note_reason(status: Mapping[str, Any]) -> str:
         if not isinstance(lane, Mapping):
             continue
         note = _clean(lane.get("note"))
-        if note in {"signal_mismatch", "idle_release_pending"}:
+        if note in {"signal_mismatch", "idle_release_pending", "waiting_next_control"}:
             return note
     return ""
 
@@ -161,6 +166,7 @@ def _active_implement_lane_ready(status: Mapping[str, Any]) -> bool:
             continue
         return _clean(lane.get("state")) == "READY" and _clean(lane.get("note")) in {
             "",
+            "closed",
             "prompt_visible",
         }
     return False
@@ -183,6 +189,25 @@ def _active_round_matches_latest_work(status: Mapping[str, Any]) -> bool:
     normalized_latest = latest_path.lstrip("./")
     normalized_round = round_path.replace("\\", "/").lstrip("./")
     return normalized_round.endswith(normalized_latest)
+
+
+def _active_verify_dispatch_wait_stage(status: Mapping[str, Any]) -> str:
+    active_round = status.get("active_round")
+    if not isinstance(active_round, Mapping):
+        return ""
+    if _clean(active_round.get("state")) != "VERIFY_PENDING":
+        return ""
+    stage = _clean(active_round.get("dispatch_stage"))
+    if stage not in VERIFY_PENDING_DISPATCH_STALL_STAGES:
+        return ""
+    return stage
+
+
+def _active_round_degraded_reason(status: Mapping[str, Any]) -> str:
+    active_round = status.get("active_round")
+    if not isinstance(active_round, Mapping):
+        return ""
+    return _clean(active_round.get("degraded_reason"))
 
 
 def _first_recovery_exhaustion(degraded_reasons: list[str]) -> str:
@@ -322,11 +347,54 @@ def derive_automation_health(status: Mapping[str, Any] | None) -> dict[str, obje
         if _is_real_risk_reason(reason) or _is_pr_boundary_reason(reason):
             action = "pr_boundary" if _is_pr_boundary_reason(reason) else "operator_required"
             return payload(health="needs_operator", reason_code=reason, next_action=action)
+        if reason in VERIFY_FOLLOWUP_REASONS:
+            return payload(health="attention", reason_code=reason, next_action="verify_followup")
+
+    if (
+        runtime_state not in {"STOPPED", "STOPPING", "BROKEN"}
+        and control_status in {"", "none"}
+        and turn_name == "IDLE"
+        and turn_reason in {"handoff_already_completed", "duplicate_handoff"}
+    ):
+        return payload(
+            health="attention",
+            reason_code="duplicate_handoff",
+            next_action="verify_followup",
+        )
+
+    verify_dispatch_wait_stage = _active_verify_dispatch_wait_stage(status)
+    if runtime_state not in {"STOPPED", "STOPPING", "BROKEN"} and verify_dispatch_wait_stage:
+        if degraded_reason == "dispatch_stall" or _active_round_degraded_reason(status) == "dispatch_stall":
+            return payload(
+                health="attention",
+                reason_code="dispatch_stall",
+                next_action="verify_followup",
+            )
+        return payload(
+            health="recovering",
+            reason_code="dispatch_stall",
+            next_action="retrying",
+        )
+
+    if (
+        runtime_state not in {"STOPPED", "STOPPING", "BROKEN"}
+        and turn_name == "VERIFY_FOLLOWUP"
+        and turn_reason in VERIFY_FOLLOWUP_REASONS
+    ):
+        return payload(
+            health="attention",
+            reason_code=turn_reason,
+            next_action="verify_followup",
+        )
 
     note_reason = _lane_note_reason(status)
     if note_reason:
-        action = "retrying" if note_reason == "idle_release_pending" else "verify_followup"
-        health = "recovering" if note_reason == "idle_release_pending" else "attention"
+        if note_reason == "idle_release_pending":
+            action = "retrying"
+            health = "recovering"
+        else:
+            action = "verify_followup"
+            health = "attention"
         return payload(health=health, reason_code=note_reason, next_action=action)
 
     if (

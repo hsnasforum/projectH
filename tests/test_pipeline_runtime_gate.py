@@ -387,10 +387,12 @@ class PipelineRuntimeGateSoakTest(unittest.TestCase):
             self.assertTrue(profile_path.exists())
             self.assertTrue((workspace / "AGENTS.md").exists())
             profile = json.loads(profile_path.read_text(encoding="utf-8"))
+            self.assertEqual(profile["selected_agents"], ["Claude", "Codex"])
             self.assertEqual(
                 profile["role_bindings"],
-                {"implement": "Codex", "verify": "Claude", "advisory": "Gemini"},
+                {"implement": "Codex", "verify": "Codex", "advisory": "Claude"},
             )
+            self.assertTrue(profile["mode_flags"]["self_verify_allowed"])
             self.assertTrue(any((workspace / "work").rglob("*.md")))
             self.assertIn("PIPELINE_RUNTIME_LANE_COMMAND_CODEX", env)
             self.assertEqual(env["PIPELINE_RUNTIME_DISABLE_TOKEN_COLLECTOR"], "1")

@@ -1211,14 +1211,19 @@ def _write_active_profile(
                 if key in {"implement", "verify", "advisory"} and str(value).strip()
             }
         )
+    selected_agents = [
+        name
+        for name in physical_lane_order()
+        if name in {owner for owner in bindings.values() if owner}
+    ]
     payload = build_agent_profile_payload(
-        selected_agents=None,
+        selected_agents=selected_agents,
         role_bindings=bindings,
         advisory_enabled=True,
         operator_stop_enabled=True,
         session_arbitration_enabled=True,
         single_agent_mode=False,
-        self_verify_allowed=False,
+        self_verify_allowed=bindings.get("implement") == bindings.get("verify"),
         self_advisory_allowed=False,
     )
     active_path.write_text(

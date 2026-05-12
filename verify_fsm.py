@@ -17,6 +17,7 @@ from pipeline_runtime.schema import (
     read_json,
     read_pipeline_control_snapshot,
 )
+from pipeline_runtime.lane_surface import pane_text_has_unsubmitted_pasted_content
 from pipeline_runtime.wrapper_events import build_lane_read_models
 
 log = logging.getLogger("watcher_core")
@@ -509,11 +510,29 @@ class StateMachine:
         snapshot = (current_pane or "").rstrip()
         if not snapshot:
             return ""
+        if pane_text_has_unsubmitted_pasted_content(snapshot):
+            return ""
         if "[Pasted Content" in snapshot:
             return snapshot
         if self.pane_text_is_idle(snapshot):
             return ""
         return snapshot
+
+    def _current_pane_is_clearable_pasted_prompt(
+        self,
+        current_pane: str,
+        last_failed_snapshot: str,
+    ) -> bool:
+        if "[Pasted Content" not in str(last_failed_snapshot or ""):
+            return False
+        return pane_text_has_unsubmitted_pasted_content(current_pane)
+
+    def _forget_requeued_failed_dispatch_dedupe(self, job: JobState, slot: str) -> None:
+        if job.last_failed_dispatch_at <= 0.0 or job.last_dispatch_at <= 0.0:
+            return
+        if job.last_failed_dispatch_at < job.last_dispatch_at:
+            return
+        self.dedupe.forget(job.job_id, job.round, job.artifact_hash, slot)
 
     def _build_verify_prompt(self, job: JobState) -> tuple[dict[str, str], str]:
         prompt_context = {
@@ -775,9 +794,17 @@ class StateMachine:
             if job.last_failed_dispatch_snapshot:
                 current_pane = self.capture_pane_text(self.verify_pane_target)
                 current_snapshot = self._failed_dispatch_snapshot_for_pane(current_pane)
-                if (
-                    current_snapshot and current_snapshot == job.last_failed_dispatch_snapshot
-                ) or current_pane.rstrip() == job.last_failed_dispatch_snapshot:
+                clearable_pasted_prompt = self._current_pane_is_clearable_pasted_prompt(
+                    current_pane,
+                    job.last_failed_dispatch_snapshot,
+                )
+                if not clearable_pasted_prompt and (
+                    (
+                        current_snapshot
+                        and current_snapshot == job.last_failed_dispatch_snapshot
+                    )
+                    or current_pane.rstrip() == job.last_failed_dispatch_snapshot
+                ):
                     job.last_failed_dispatch_at = time.time()
                     job.last_failed_dispatch_snapshot = current_snapshot or current_pane.rstrip()
                     job.save(self.state_dir)
@@ -793,6 +820,8 @@ class StateMachine:
                         job.job_id, job.round, job.artifact_hash, slot, "dispatch_backoff_prompt_visible"
                     )
                     return job
+
+        self._forget_requeued_failed_dispatch_dedupe(job, slot)
 
         if self.dedupe.is_duplicate(job.job_id, job.round, job.artifact_hash, slot):
             self.dedupe.mark_suppressed(job.job_id, job.round, job.artifact_hash, slot, "dedupe")

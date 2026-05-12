@@ -2870,8 +2870,6 @@ class WatcherCore:
     def _operator_retriage_no_next_control_marker(self) -> Optional[dict[str, object]]:
         if self._current_turn_state != WatcherTurnState.VERIFY_FOLLOWUP:
             return None
-        if not self._advisory_enabled():
-            return None
         if self._get_pending_advisory_request_mtime() > 0.0 or self._get_pending_advisory_advice_mtime() > 0.0:
             return None
 
@@ -3018,6 +3016,40 @@ class WatcherCore:
             return False
 
         operator_seq = control_seq_value(marker.get("control_seq"), default=-1)
+        if not self._advisory_enabled():
+            payload = {
+                **marker,
+                "advisory_disabled": True,
+                "publish_held": True,
+                "request_control_file": "",
+                "request_control_seq": -1,
+            }
+            operator_sig = str(marker.get("operator_sig") or self._get_path_sig(self.operator_request_path))
+            self._last_operator_retriage_sig = operator_sig
+            self._last_operator_retriage_fingerprint = str(marker.get("fingerprint") or "")
+            self._operator_retriage_started_at = time.time()
+            self._last_operator_recovery_key = ""
+            self._operator_recovery_started_at = 0.0
+            self._clear_implement_blocked_state("operator_retriage_no_next_control")
+            self._log_raw(
+                "operator_retriage_no_next_control",
+                str(self.operator_request_path),
+                "turn_signal",
+                payload,
+            )
+            self._append_runtime_event("operator_retriage_no_next_control", payload)
+            self._transition_turn(
+                WatcherTurnState.VERIFY_FOLLOWUP,
+                "verify_followup_no_next_control",
+                active_control_file="operator_request.md",
+                active_control_seq=operator_seq,
+            )
+            self._notify_verify_operator_retriage(
+                "operator_retriage_no_next_control",
+                payload,
+            )
+            return True
+
         next_control_seq = max(self._get_next_control_seq(), operator_seq + 1)
         request_text = self._render_operator_retriage_advisory_request(
             marker=marker,

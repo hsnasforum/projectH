@@ -17,6 +17,7 @@ from pipeline_runtime.lane_surface import (
     pane_text_has_gemini_activity as _shared_pane_text_has_gemini_activity,
     pane_text_has_input_cursor,
     pane_text_has_input_cursor as _shared_pane_text_has_input_cursor,
+    pane_text_has_unsubmitted_pasted_content,
     pane_text_has_working_indicator as _shared_pane_text_has_working_indicator,
     pane_text_is_idle,
     pane_text_is_idle as _shared_pane_text_is_idle,
@@ -39,6 +40,7 @@ log = logging.getLogger(__name__)
 _DISPATCH_LOCKS_GUARD = threading.Lock()
 _DISPATCH_LOCKS: dict[str, threading.Lock] = {}
 _DISPATCH_LOCK_TIMEOUT_SEC = 30.0
+_STALE_PASTE_BLOCKED_BACKOFF_SEC = 30.0
 
 
 @dataclass(frozen=True)
@@ -88,6 +90,7 @@ class WatcherDispatchQueue:
         self._append_runtime_event = append_runtime_event
         self._get_active_control_signal = get_active_control_signal
         self._is_active_control = is_active_control
+        self.stale_paste_blocked_until: dict[str, float] = {}
 
     def lane_prompt_readiness(self, target: str) -> tuple[bool, str]:
         try:
@@ -95,6 +98,8 @@ class WatcherDispatchQueue:
         except Exception:
             return False, "pane_capture_failed"
         if pane_text_is_idle(snapshot):
+            if pane_text_has_unsubmitted_pasted_content(snapshot):
+                return False, "prompt_contains_pasted_content"
             return True, ""
         if not snapshot.strip():
             return False, "pane_blank"
@@ -138,6 +143,121 @@ class WatcherDispatchQueue:
         }
         self._log_raw("lane_input_deferred", str(path), "turn_signal", payload)
         self._append_runtime_event("lane_input_deferred", payload)
+
+    def emit_stale_pasted_prompt_replaced(
+        self,
+        *,
+        lane: str,
+        lane_id: str,
+        functional_role: str,
+        agent_kind: str,
+        model_alias: str | None,
+        path: Path,
+        reason: str,
+        control_seq: int,
+        notify_kind: str,
+    ) -> None:
+        payload = {
+            "lane": lane,
+            "lane_id": lane_id,
+            "functional_role": functional_role,
+            "agent_kind": agent_kind,
+            "model_alias": model_alias,
+            "lane_role": functional_role,
+            "reason": reason,
+            "recovery_reason": "prompt_contains_pasted_content",
+            "control_file": str(path.name),
+            "control_seq": control_seq,
+            "notify_kind": notify_kind,
+        }
+        self._log_raw("lane_input_stale_pasted_replaced", str(path), "turn_signal", payload)
+        self._append_runtime_event("lane_input_stale_pasted_replaced", payload)
+
+    def emit_stale_paste_blocked(
+        self,
+        *,
+        lane: str,
+        lane_id: str,
+        functional_role: str,
+        agent_kind: str,
+        model_alias: str | None,
+        path: Path,
+        reason: str,
+        control_seq: int,
+        notify_kind: str,
+    ) -> None:
+        payload = {
+            "lane": lane,
+            "lane_id": lane_id,
+            "functional_role": functional_role,
+            "agent_kind": agent_kind,
+            "model_alias": model_alias,
+            "lane_role": functional_role,
+            "reason": reason,
+            "recovery_reason": "prompt_contains_pasted_content",
+            "defer_reason": "codex_stale_paste_blocked",
+            "backoff_sec": _STALE_PASTE_BLOCKED_BACKOFF_SEC,
+            "control_file": str(path.name),
+            "control_seq": control_seq,
+            "notify_kind": notify_kind,
+        }
+        self._log_raw("codex_stale_paste_blocked", str(path), "turn_signal", payload)
+        self._append_runtime_event("codex_stale_paste_blocked", payload)
+
+    def _stale_paste_backoff_active(self, key: str) -> bool:
+        until = self.stale_paste_blocked_until.get(key, 0.0)
+        if until <= 0.0:
+            return False
+        if time.time() < until:
+            return True
+        self.stale_paste_blocked_until.pop(key, None)
+        return False
+
+    def _codex_paste_still_blocked(self, intent: DispatchIntent) -> bool:
+        if intent.pane_type != "codex":
+            return False
+        try:
+            snapshot = self._capture_pane_text(intent.target)
+        except Exception:
+            return False
+        return pane_text_has_unsubmitted_pasted_content(snapshot)
+
+    def _defer_stale_paste_blocked(
+        self,
+        intent: DispatchIntent,
+        *,
+        lane: str,
+        from_pending: bool,
+    ) -> None:
+        if not from_pending:
+            self.pending_notifications[intent.pending_key] = self._pending_record(intent)
+        self.stale_paste_blocked_until[intent.pending_key] = (
+            time.time() + _STALE_PASTE_BLOCKED_BACKOFF_SEC
+        )
+        self.emit_stale_paste_blocked(
+            lane=lane,
+            lane_id=intent.lane_id,
+            functional_role=intent.functional_role or intent.lane_role,
+            agent_kind=intent.agent_kind,
+            model_alias=intent.model_alias,
+            path=intent.prompt_path,
+            reason=intent.reason,
+            control_seq=intent.control_seq,
+            notify_kind=intent.notify_kind,
+        )
+        self.emit_lane_input_deferred(
+            key=intent.pending_key,
+            lane=lane,
+            lane_id=intent.lane_id,
+            functional_role=intent.functional_role or intent.lane_role,
+            agent_kind=intent.agent_kind,
+            model_alias=intent.model_alias,
+            path=intent.prompt_path,
+            reason=intent.reason,
+            defer_reason="codex_stale_paste_blocked",
+            control_seq=intent.control_seq,
+            notify_kind=intent.notify_kind,
+        )
 
     def _pending_record(self, intent: DispatchIntent) -> dict[str, object]:
         return {
@@ -194,6 +314,68 @@ class WatcherDispatchQueue:
     def dispatch(self, intent: DispatchIntent, *, from_pending: bool = False) -> bool:
         ready, defer_reason = self.lane_prompt_readiness(intent.target)
         if not ready:
+            if defer_reason == "prompt_contains_pasted_content":
+                lane = self._role_owner(intent.functional_role or intent.lane_role) or intent.lane_role
+                if self._stale_paste_backoff_active(intent.pending_key):
+                    if not from_pending:
+                        self.pending_notifications[intent.pending_key] = self._pending_record(intent)
+                    self.emit_lane_input_deferred(
+                        key=intent.pending_key,
+                        lane=lane,
+                        lane_id=intent.lane_id,
+                        functional_role=intent.functional_role or intent.lane_role,
+                        agent_kind=intent.agent_kind,
+                        model_alias=intent.model_alias,
+                        path=intent.prompt_path,
+                        reason=intent.reason,
+                        defer_reason="codex_stale_paste_backoff",
+                        control_seq=intent.control_seq,
+                        notify_kind=intent.notify_kind,
+                    )
+                    return False
+                self.emit_stale_pasted_prompt_replaced(
+                    lane=lane,
+                    lane_id=intent.lane_id,
+                    functional_role=intent.functional_role or intent.lane_role,
+                    agent_kind=intent.agent_kind,
+                    model_alias=intent.model_alias,
+                    path=intent.prompt_path,
+                    reason=intent.reason,
+                    control_seq=intent.control_seq,
+                    notify_kind=intent.notify_kind,
+                )
+                ok = self._send_keys(intent.target, intent.prompt, intent.pane_type)
+                if ok:
+                    if self._codex_paste_still_blocked(intent):
+                        self._defer_stale_paste_blocked(intent, lane=lane, from_pending=from_pending)
+                        return False
+                    self.pending_notifications.pop(intent.pending_key, None)
+                    self.last_lane_input_defer_at.pop(intent.pending_key, None)
+                    self.stale_paste_blocked_until.pop(intent.pending_key, None)
+                    return True
+                if not from_pending:
+                    self.pending_notifications[intent.pending_key] = self._pending_record(intent)
+                try:
+                    snapshot = self._capture_pane_text(intent.target)
+                except Exception:
+                    snapshot = ""
+                if intent.pane_type == "codex" and pane_text_has_unsubmitted_pasted_content(snapshot):
+                    self._defer_stale_paste_blocked(intent, lane=lane, from_pending=from_pending)
+                    return False
+                self.emit_lane_input_deferred(
+                    key=intent.pending_key,
+                    lane=lane,
+                    lane_id=intent.lane_id,
+                    functional_role=intent.functional_role or intent.lane_role,
+                    agent_kind=intent.agent_kind,
+                    model_alias=intent.model_alias,
+                    path=intent.prompt_path,
+                    reason=intent.reason,
+                    defer_reason="dispatch_window_blocked",
+                    control_seq=intent.control_seq,
+                    notify_kind=intent.notify_kind,
+                )
+                return False
             self.pending_notifications[intent.pending_key] = self._pending_record(intent)
             self.emit_lane_input_deferred(
                 key=intent.pending_key,
@@ -212,15 +394,24 @@ class WatcherDispatchQueue:
 
         ok = self._send_keys(intent.target, intent.prompt, intent.pane_type)
         if ok:
+            lane = self._role_owner(intent.functional_role or intent.lane_role) or intent.lane_role
+            if self._codex_paste_still_blocked(intent):
+                self._defer_stale_paste_blocked(intent, lane=lane, from_pending=from_pending)
+                return False
             self.pending_notifications.pop(intent.pending_key, None)
             self.last_lane_input_defer_at.pop(intent.pending_key, None)
+            self.stale_paste_blocked_until.pop(intent.pending_key, None)
             return True
 
         if not from_pending:
             self.pending_notifications[intent.pending_key] = self._pending_record(intent)
+        lane = self._role_owner(intent.functional_role or intent.lane_role) or intent.lane_role
+        if self._codex_paste_still_blocked(intent):
+            self._defer_stale_paste_blocked(intent, lane=lane, from_pending=from_pending)
+            return False
         self.emit_lane_input_deferred(
             key=intent.pending_key,
-            lane=self._role_owner(intent.functional_role or intent.lane_role) or intent.lane_role,
+            lane=lane,
             lane_id=intent.lane_id,
             functional_role=intent.functional_role or intent.lane_role,
             agent_kind=intent.agent_kind,
@@ -543,6 +734,44 @@ def _clear_prompt_input_line(pane_target: str) -> None:
     time.sleep(0.1)
 
 
+def _text_has_pasted_content_marker(text: str) -> bool:
+    return "[Pasted Content " in str(text or "")
+
+
+def _clear_codex_prompt_input(pane_target: str) -> bool:
+    """Clear Codex prompt input, including stale bracketed paste blocks."""
+    snapshot = _shared_capture_pane_text(pane_target)
+    had_pasted_marker = pane_text_has_unsubmitted_pasted_content(snapshot)
+    if had_pasted_marker:
+        subprocess.run(
+            ["tmux", "send-keys", "-t", pane_target, "C-c"],
+            check=True,
+            capture_output=True,
+        )
+        time.sleep(0.2)
+    _clear_prompt_input_line(pane_target)
+    if had_pasted_marker:
+        subprocess.run(
+            ["tmux", "send-keys", "-t", pane_target, "C-l"],
+            check=True,
+            capture_output=True,
+        )
+        _shared_wait_for_pane_settle(
+            pane_target,
+            timeout_sec=2.0,
+            quiet_sec=0.4,
+            poll_sec=0.2,
+        )
+        cleared_snapshot = _shared_capture_pane_text(pane_target)
+        if (
+            pane_text_has_unsubmitted_pasted_content(cleared_snapshot)
+            or _text_has_pasted_content_marker(cleared_snapshot)
+        ):
+            log.info("codex stale pasted prompt remained after hard clear")
+            return False
+    return True
+
+
 def _dispatch_lock_for(pane_target: str) -> threading.Lock:
     with _DISPATCH_LOCKS_GUARD:
         lock = _DISPATCH_LOCKS.get(pane_target)
@@ -560,7 +789,7 @@ def tmux_send_keys(
 ) -> bool:
     """Send a prompt to a tmux pane.
 
-    pane_type: "codex" — paste-buffer + Enter retry with working-indicator check
+    pane_type: "codex" — paste-buffer + single Enter with working-indicator check
                "claude" — paste-buffer + Enter retry
                "gemini" — paste-buffer + Enter retry
     """
@@ -606,35 +835,48 @@ def _dispatch_codex(pane_target: str, command: str) -> bool:
     Always paste-buffer into the running session — never re-launch codex.
     """
     log.info("dispatching codex prompt: chars=%d", len(command))
-    _clear_prompt_input_line(pane_target)
+    if not _clear_codex_prompt_input(pane_target):
+        return False
     subprocess.run(["tmux", "set-buffer", command], check=True, capture_output=True)
     subprocess.run(["tmux", "paste-buffer", "-t", pane_target], check=True, capture_output=True)
     pasted_snapshot = _shared_capture_pane_text(pane_target)
-    time.sleep(1.0)
-    for attempt in range(3):
+    time.sleep(2.0)
+    snapshot = ""
+    for attempt in range(2):
         subprocess.run(["tmux", "send-keys", "-t", pane_target, "Enter"], check=True, capture_output=True)
         time.sleep(1.5)
         snapshot = _shared_capture_pane_text(pane_target)
-        if not _shared_pane_text_has_input_cursor(snapshot):
-            log.info("codex prompt consumed: attempt %d", attempt + 1)
-            deadline = time.time() + 6.0
-            while time.time() < deadline:
-                if _pane_has_working_indicator(pane_target):
-                    log.info("codex working indicator detected")
-                    return True
-                current_snapshot = _shared_capture_pane_text(pane_target)
-                if current_snapshot != snapshot and _shared_pane_text_has_codex_activity(current_snapshot):
-                    log.info("codex response activity detected after consume: attempt %d", attempt + 1)
-                    return True
-                time.sleep(0.5)
-            log.info(
-                "codex dispatch consumed without immediate confirmation: defer acceptance to wrapper events"
-            )
-            return True
-        if snapshot != pasted_snapshot and _shared_pane_text_has_codex_activity(snapshot):
-            log.info("codex response activity detected: attempt %d", attempt + 1)
-            return True
-    log.info("codex prompt still visible or unconfirmed after retries")
+        if not pane_text_has_unsubmitted_pasted_content(snapshot):
+            break
+        if attempt == 0:
+            log.info("codex pasted prompt still visible after first submit; retrying Enter once")
+            time.sleep(2.0)
+            continue
+        log.info("codex pasted prompt still visible after submit retry")
+        return False
+    if not _shared_pane_text_has_input_cursor(snapshot):
+        log.info("codex prompt consumed")
+        deadline = time.time() + 6.0
+        while time.time() < deadline:
+            if _pane_has_working_indicator(pane_target):
+                log.info("codex working indicator detected")
+                return True
+            current_snapshot = _shared_capture_pane_text(pane_target)
+            if pane_text_has_unsubmitted_pasted_content(current_snapshot):
+                log.info("codex pasted prompt remained visible while waiting for confirmation")
+                return False
+            if current_snapshot != snapshot and _shared_pane_text_has_codex_activity(current_snapshot):
+                log.info("codex response activity detected after consume")
+                return True
+            time.sleep(0.5)
+        log.info(
+            "codex dispatch consumed without immediate confirmation: defer acceptance to wrapper events"
+        )
+        return True
+    if snapshot != pasted_snapshot and _shared_pane_text_has_codex_activity(snapshot):
+        log.info("codex response activity detected")
+        return True
+    log.info("codex prompt still visible or unconfirmed after single submit")
     return False
 
 

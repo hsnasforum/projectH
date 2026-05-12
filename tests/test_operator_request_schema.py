@@ -153,6 +153,24 @@ class OperatorRequestHeaderSchemaTests(unittest.TestCase):
                 }
             )
         )
+        self.assertFalse(
+            is_commit_push_approval_stop(
+                {
+                    "status": "needs_operator",
+                    "reason_code": "publish_boundary_accumulated_dirty_tree",
+                    "decision_required": (
+                        "Authorize verify/handoff to commit, push, and open a draft PR; "
+                        "or explicitly hold publication."
+                    ),
+                },
+                control_text=(
+                    "OPERATOR_POLICY: commit_push_bundle_authorization\n"
+                    "DECISION_CLASS: publish_bundle_authorization\n"
+                    "DECISION_REQUIRED: Authorize verify/handoff to commit, push, "
+                    "and open a draft PR; or explicitly hold publication.\n"
+                ),
+            )
+        )
 
     def test_shared_stale_operator_evaluator_requires_verified_allowed_work(self) -> None:
         marker = evaluate_stale_operator_control(
@@ -244,6 +262,50 @@ class OperatorRequestHeaderSchemaTests(unittest.TestCase):
         self.assertEqual(decision["operator_policy"], "internal_only")
         self.assertEqual(decision["decision_class"], "release_gate")
         self.assertFalse(decision["operator_eligible"])
+
+    def test_accumulated_dirty_tree_publish_boundary_reuses_commit_push_followup(self) -> None:
+        self.assertEqual(
+            normalize_reason_code("publish_boundary_accumulated_dirty_tree"),
+            COMMIT_PUSH_BUNDLE_AUTHORIZATION_REASON,
+        )
+        self.assertEqual(normalize_operator_policy("commit_push_bundle_authorization"), "internal_only")
+        self.assertEqual(normalize_decision_class("publish_bundle_authorization"), "release_gate")
+
+        validated = validate_operator_request_headers(
+            control_seq=1624,
+            reason_code="publish_boundary_accumulated_dirty_tree",
+            operator_policy="commit_push_bundle_authorization",
+            decision_class="publish_bundle_authorization",
+            decision_required="authorize publish or explicitly hold publication",
+            based_on_work="work/5/12/2026-05-12-example.md",
+            based_on_verify="verify/5/12/2026-05-12-example.md",
+        )
+        self.assertEqual(validated["reason_code"], COMMIT_PUSH_BUNDLE_AUTHORIZATION_REASON)
+        self.assertEqual(validated["operator_policy"], "internal_only")
+        self.assertEqual(validated["decision_class"], "release_gate")
+
+        decision = classify_operator_candidate(
+            "STATUS: needs_operator\n"
+            "REASON_CODE: publish_boundary_accumulated_dirty_tree\n"
+            "OPERATOR_POLICY: commit_push_bundle_authorization\n"
+            "DECISION_CLASS: publish_bundle_authorization\n"
+            "DECISION_REQUIRED: authorize publish or explicitly hold publication\n",
+            control_meta={
+                "status": "needs_operator",
+                "reason_code": "publish_boundary_accumulated_dirty_tree",
+                "operator_policy": "commit_push_bundle_authorization",
+                "decision_class": "publish_bundle_authorization",
+                "decision_required": "authorize publish or explicitly hold publication",
+            },
+            idle_stable=True,
+            now_ts=1_000.0,
+        )
+
+        self.assertEqual(decision["reason_code"], COMMIT_PUSH_BUNDLE_AUTHORIZATION_REASON)
+        self.assertEqual(decision["mode"], "triage")
+        self.assertEqual(decision["routed_to"], "verify_followup")
+        self.assertEqual(decision["operator_policy"], "internal_only")
+        self.assertEqual(decision["decision_class"], "release_gate")
 
     def test_pr_creation_gate_routes_to_verify_publish_followup(self) -> None:
         self.assertIn(PR_CREATION_GATE_REASON, SUPPORTED_REASON_CODES)

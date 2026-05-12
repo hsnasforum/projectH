@@ -38,6 +38,7 @@ from core.web_claims import (
     CORE_ENTITY_SLOTS,
     TRUSTED_CLAIM_SOURCE_ROLES,
     ClaimRecord,
+    compute_investigation_quality_summary,
     merge_claim_records,
     summarize_slot_coverage,
 )
@@ -96,6 +97,7 @@ class AgentResponse:
     summary_chunks: list[dict[str, Any]] = field(default_factory=list)
     claim_coverage: list[dict[str, Any]] = field(default_factory=list)
     claim_coverage_progress_summary: str | None = None
+    investigation_quality_summary: dict[str, int] | None = None
     web_search_record_path: str | None = None
     artifact_id: str | None = None
     artifact_kind: str | None = None
@@ -3904,8 +3906,40 @@ class AgentLoop:
         slot: str,
         status: str,
         primary_claim: ClaimRecord | None,
+        competing_claim: ClaimRecord | None = None,
     ) -> list[str]:
         compact_value = " ".join(str(getattr(primary_claim, "value", "") or "").split()).strip().rstrip(".")
+        competing_value = " ".join(str(getattr(competing_claim, "value", "") or "").split()).strip().rstrip(".")
+        if status == CoverageStatus.CONFLICT and compact_value and competing_value:
+            query_map: dict[str, list[str]] = {
+                "개발": [
+                    f"{query} {compact_value} 개발사 공식",
+                    f"{query} {competing_value} 개발사 공식",
+                    f"{query} 개발사 정확한 정보",
+                ],
+                "서비스/배급": [
+                    f"{query} {compact_value} 서비스 공식",
+                    f"{query} {competing_value} 서비스 공식",
+                    f"{query} 서비스 정확한 운영",
+                ],
+                "장르/성격": [
+                    f"{query} {compact_value} 장르 위키",
+                    f"{query} {competing_value} 장르 위키",
+                    f"{query} 정확한 장르 소개",
+                ],
+                "상태": [
+                    f"{query} {compact_value} 공식 출시",
+                    f"{query} {competing_value} 공식",
+                    f"{query} 정확한 출시 상태",
+                ],
+                "이용 형태": [
+                    f"{query} {compact_value} 플랫폼 공식",
+                    f"{query} {competing_value} 플랫폼 공식",
+                    f"{query} 정확한 플랫폼",
+                ],
+            }
+            return query_map.get(slot, [])
+
         if status in {CoverageStatus.UNRESOLVED, CoverageStatus.WEAK, CoverageStatus.CONFLICT} and compact_value:
             query_map: dict[str, list[str]] = {
                 "개발": [f"{query} {compact_value} 개발사 공식", f"{query} {compact_value} 개발사 위키"],
@@ -3913,6 +3947,16 @@ class AgentLoop:
                 "장르/성격": [f"{query} {compact_value} 장르 위키", f"{query} {compact_value} 소개"],
                 "상태": [f"{query} {compact_value} 공식", f"{query} {compact_value} 출시 상태"],
                 "이용 형태": [f"{query} {compact_value} 플랫폼 공식", f"{query} {compact_value} 플랫폼"],
+            }
+            return query_map.get(slot, [])
+
+        if status == CoverageStatus.UNRESOLVED:
+            query_map = {
+                "개발": [f"{query} 공식 사이트", f"{query} 개발사 나무위키", f"{query} 개발사 위키"],
+                "서비스/배급": [f"{query} 공식 서비스", f"{query} 서비스 나무위키", f"{query} 배급사 공식"],
+                "장르/성격": [f"{query} 나무위키", f"{query} 위키 장르", f"{query} 소개 공식"],
+                "상태": [f"{query} 공식 출시", f"{query} 나무위키 상태", f"{query} 서비스 종료 공식"],
+                "이용 형태": [f"{query} 공식 플랫폼", f"{query} 나무위키 플랫폼", f"{query} 플랫폼 공식"],
             }
             return query_map.get(slot, [])
 
@@ -3947,11 +3991,13 @@ class AgentLoop:
         )
         coverage = summarize_slot_coverage(claim_records, slots=CORE_ENTITY_SLOTS)
         strong_slots = {slot for slot, item in coverage.items() if item.status == CoverageStatus.STRONG}
+        unresolved_slots = {slot for slot, item in coverage.items() if item.status == CoverageStatus.UNRESOLVED}
         has_distribution_or_access = bool({"서비스/배급", "이용 형태"} & strong_slots)
         if (
             len(strong_slots) >= 4
             and {"개발", "장르/성격"} <= strong_slots
             and has_distribution_or_access
+            and not unresolved_slots
         ):
             return []
 
@@ -4008,6 +4054,7 @@ class AgentLoop:
                 slot=label,
                 status=slot_coverage.status,
                 primary_claim=slot_coverage.primary_claim,
+                competing_claim=slot_coverage.competing_claim,
             )
             prior_probe_count = prior_slot_probe_counts.get(label, 0)
             source_role = (
@@ -6463,7 +6510,7 @@ class AgentLoop:
                     answer_mode=effective_answer_mode,
                     freshness_risk=freshness_risk,
                     ranked_sources=ranked_sources,
-                    max_items=3,
+                    max_items=5,
                 )
                 second_pass_queries = self._build_entity_second_pass_queries(
                     query=query,
@@ -6572,6 +6619,13 @@ class AgentLoop:
                 current_claim_coverage=claim_coverage,
                 query=progress_query or query,
             )
+        investigation_quality_summary: dict[str, int] | None = None
+        if (
+            effective_answer_mode == AnswerMode.ENTITY_CARD
+            and intent_kind == SearchIntentKind.EXTERNAL_FACT
+            and query_profile == "entity"
+        ):
+            investigation_quality_summary = compute_investigation_quality_summary(entity_core_coverage)
         summary_text = self._summarize_web_search_results(
             query=query,
             intent_kind=intent_kind,
@@ -6662,6 +6716,7 @@ class AgentLoop:
             ),
             claim_coverage=claim_coverage,
             claim_coverage_progress_summary=claim_coverage_progress_summary,
+            investigation_quality_summary=investigation_quality_summary,
             response_origin=response_origin,
             web_search_record_path=record_path,
         )

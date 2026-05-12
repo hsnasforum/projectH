@@ -3404,6 +3404,54 @@ class SmokeTest(unittest.TestCase):
         self.assertEqual(after_coverage["서비스/배급"].status, CoverageStatus.STRONG)
         self.assertIsNone(after_coverage["서비스/배급"].competing_claim)
 
+    def test_m124_compute_investigation_quality_summary_counts_correctly(self) -> None:
+        from core.contracts import CoverageStatus, SourceRole
+        from core.web_claims import (
+            ClaimRecord,
+            SlotCoverage,
+            compute_investigation_quality_summary,
+        )
+
+        strong_claim = ClaimRecord(
+            slot="개발",
+            value="A사",
+            source_url="https://official.example.com/developer",
+            source_title="개발 공식",
+            source_role=SourceRole.OFFICIAL,
+        )
+        coverage = {
+            "개발": SlotCoverage(slot="개발", status=CoverageStatus.STRONG, primary_claim=strong_claim),
+            "서비스/배급": SlotCoverage(slot="서비스/배급", status=CoverageStatus.STRONG),
+            "장르/성격": SlotCoverage(slot="장르/성격", status=CoverageStatus.WEAK),
+            "상태": SlotCoverage(slot="상태", status=CoverageStatus.UNRESOLVED),
+            "이용 형태": SlotCoverage(slot="이용 형태", status=CoverageStatus.MISSING),
+        }
+
+        summary = compute_investigation_quality_summary(coverage)
+
+        self.assertEqual(summary[CoverageStatus.STRONG], 2)
+        self.assertEqual(summary[CoverageStatus.WEAK], 1)
+        self.assertEqual(summary[CoverageStatus.UNRESOLVED], 1)
+        self.assertEqual(summary[CoverageStatus.MISSING], 1)
+        self.assertEqual(summary[CoverageStatus.CONFLICT], 0)
+
+    def test_m124_compute_investigation_quality_summary_all_strong(self) -> None:
+        from core.contracts import CoverageStatus
+        from core.web_claims import SlotCoverage, compute_investigation_quality_summary
+
+        coverage = {
+            slot: SlotCoverage(slot=slot, status=CoverageStatus.STRONG)
+            for slot in ("개발", "서비스/배급", "장르/성격", "상태", "이용 형태")
+        }
+
+        summary = compute_investigation_quality_summary(coverage)
+
+        self.assertEqual(summary[CoverageStatus.STRONG], 5)
+        self.assertEqual(
+            sum(count for status, count in summary.items() if status != CoverageStatus.STRONG),
+            0,
+        )
+
     def test_claims_summarize_slot_coverage_prefers_official_over_wiki_when_support_ties(self) -> None:
         from core.contracts import SourceRole
         from core.web_claims import (

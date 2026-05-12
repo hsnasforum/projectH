@@ -38,6 +38,7 @@ from core.web_claims import (
     CORE_ENTITY_SLOTS,
     TRUSTED_CLAIM_SOURCE_ROLES,
     ClaimRecord,
+    compute_investigation_quality_summary,
     merge_claim_records,
     summarize_slot_coverage,
 )
@@ -96,6 +97,7 @@ class AgentResponse:
     summary_chunks: list[dict[str, Any]] = field(default_factory=list)
     claim_coverage: list[dict[str, Any]] = field(default_factory=list)
     claim_coverage_progress_summary: str | None = None
+    investigation_quality_summary: dict[str, int] | None = None
     web_search_record_path: str | None = None
     artifact_id: str | None = None
     artifact_kind: str | None = None
@@ -6617,6 +6619,13 @@ class AgentLoop:
                 current_claim_coverage=claim_coverage,
                 query=progress_query or query,
             )
+        investigation_quality_summary: dict[str, int] | None = None
+        if (
+            effective_answer_mode == AnswerMode.ENTITY_CARD
+            and intent_kind == SearchIntentKind.EXTERNAL_FACT
+            and query_profile == "entity"
+        ):
+            investigation_quality_summary = compute_investigation_quality_summary(entity_core_coverage)
         summary_text = self._summarize_web_search_results(
             query=query,
             intent_kind=intent_kind,
@@ -6707,6 +6716,7 @@ class AgentLoop:
             ),
             claim_coverage=claim_coverage,
             claim_coverage_progress_summary=claim_coverage_progress_summary,
+            investigation_quality_summary=investigation_quality_summary,
             response_origin=response_origin,
             web_search_record_path=record_path,
         )

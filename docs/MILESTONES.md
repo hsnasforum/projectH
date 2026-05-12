@@ -1883,9 +1883,28 @@ CONFLICT 상태 슬롯의 second-pass probe가 primary claim만 재확인하던 
 슬롯별 크로스-검증 쿼리를 반환한다. 기존 CONFLICT fallback 경로는 유지된다.
 회귀 테스트 2개 추가, 162개 전체 통과.
 
+M123 아크 완료 — Axis 1–3 모두 published (PR #122–#124 draft OPEN).
+second-pass 품질 개선의 핵심 gap(이른 반환 억제 / UNRESOLVED 무값 probe 강화 /
+CONFLICT 크로스-검증 쿼리)이 닫혔다. M124로 전환.
+
+## M124 Investigation Observability & Metrics
+
+Axis 1: UNRESOLVED/CONFLICT 슬롯 수렴 벤치마크 fixture — DONE
+M123 Axis 1–3의 개선(이른 반환 억제 / 공식 probe / 크로스-검증)이 슬롯 status를
+STRONG으로 수렴시키는 경로를 `summarize_slot_coverage()` 직접 호출 fixture로 고정했다.
+UNRESOLVED→STRONG(공식 출처 2개 추가)과 CONFLICT→STRONG(경쟁 claim 신뢰 감소) 두 경로 검증.
+회귀 테스트 2개 추가, 164개 전체 통과.
+
+Axis 2: investigation_quality_summary 필드 추가 — DONE
+entity-card 웹 조사 응답에 슬롯별 status 카운트(STRONG/WEAK/CONFLICT/UNRESOLVED/MISSING)를
+`AgentResponse.investigation_quality_summary`로 노출했다.
+`core/web_claims.py`의 `compute_investigation_quality_summary()` 헬퍼가 커버리지 dict를
+받아 카운트를 반환하며, entity-card primary 응답 경로에서만 wiring한다.
+회귀 테스트 2개 추가, 166개 전체 통과.
+
 ## Next 3 Implementation Priorities
 
-1. **M123 Axis 3 완료**: CONFLICT 슬롯 크로스-검증 쿼리 강화 완료. doc-sync 완료. publish bundle 대기 (operator 결정). M123 아크 종료 또는 Axis 4 범위 advisory 결정 대기.
+1. **M124 Axis 2 완료**: investigation_quality_summary 필드 추가 (166개 통과). doc-sync 완료. publish bundle 대기 (operator 결정). M124 Axis 3 범위 advisory 결정 대기.
 2. **PR 스택 정리**: PR #113–#118 모두 MERGED; 후속 브랜치 base 재조정 및 main 병합 gate 대기.
 3. **장기**: cross-session memory 강화, north star 방향 유지.
 

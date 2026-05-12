@@ -158,6 +158,9 @@
 144. M123 Axis 1: UNRESOLVED early-return suppression completed 2026-05-08 — `_build_entity_second_pass_queries()` now computes `unresolved_slots` and guards early return with `and not unresolved_slots`; prevents skipping second-pass when UNRESOLVED slots remain even if STRONG slot count is sufficient; 2 regression tests added; 158 tests pass.
 145. M123 Axis 2: UNRESOLVED 무값 슬롯 공식 출처 탐색 강화 completed 2026-05-08 — `_build_entity_slot_probe_queries()`에서 UNRESOLVED + 값 없음 조건에 슬롯별 공식/나무위키 probe 쿼리 반환 추가; second-pass `_select_ranked_web_sources` max_items 3→5 확장; 회귀 테스트 2개 추가(160개 통과).
 146. M123 Axis 3: CONFLICT 슬롯 크로스-검증 쿼리 completed 2026-05-12 — `SlotCoverage.competing_claim` 필드 추가 + `summarize_slot_coverage()` CONFLICT 시 경쟁 claim 보존; `_build_entity_slot_probe_queries()` CONFLICT+competing_value 크로스-검증 분기 추가; 호출부 `competing_claim` 전달 연결; 회귀 테스트 2개 추가(162개 통과).
+147. M123 아크 종료 completed 2026-05-12 — Axis 1(UNRESOLVED early-return 억제), Axis 2(무값 슬롯 공식 probe + max_items 3→5), Axis 3(CONFLICT 크로스-검증 쿼리) 모두 published (PR #122–#124 draft OPEN); M124 Investigation Observability & Metrics 아크로 전환.
+148. M124 Axis 1: UNRESOLVED/CONFLICT 수렴 벤치마크 fixture completed 2026-05-12 — `summarize_slot_coverage()` 직접 호출로 UNRESOLVED→STRONG(공식 출처 2개 추가)과 CONFLICT→STRONG(경쟁 claim 신뢰 감소) 수렴 경로 검증; 회귀 테스트 2개 추가(164개 통과).
+149. M124 Axis 2: investigation_quality_summary 필드 추가 completed 2026-05-12 — `compute_investigation_quality_summary()` 헬퍼(core/web_claims.py) + `AgentResponse.investigation_quality_summary` 필드 + entity-card primary 응답 경로 wiring; 회귀 테스트 2개 추가(166개 통과).
 
 ## Current Phase In Progress
 

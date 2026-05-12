@@ -229,3 +229,19 @@ def summarize_slot_coverage(
             competing_claim=competing,
         )
     return coverage
+
+
+def compute_investigation_quality_summary(
+    coverage: dict[str, SlotCoverage],
+) -> dict[str, int]:
+    counts: dict[str, int] = {
+        CoverageStatus.STRONG: 0,
+        CoverageStatus.WEAK: 0,
+        CoverageStatus.CONFLICT: 0,
+        CoverageStatus.UNRESOLVED: 0,
+        CoverageStatus.MISSING: 0,
+    }
+    for item in coverage.values():
+        if item.status in counts:
+            counts[item.status] += 1
+    return counts

@@ -131,7 +131,8 @@ TRUSTED_SOURCE_ROLES = frozenset({
 class CoverageStatus(StrEnum):
     STRONG = "strong"
     CONFLICT = "conflict"
-    WEAK = "weak"
+    UNRESOLVED = "unresolved"  # 신뢰 소스 0개 — 완전 미해결
+    WEAK = "weak"  # 신뢰 소스 1개 — 부분 증거
     MISSING = "missing"
 
 

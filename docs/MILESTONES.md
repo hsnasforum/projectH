@@ -1821,10 +1821,91 @@ Axis 2: injection correction demotion badge — DONE
 변경하고 `교정률 R% 초과 - 신뢰도 자동 강등됨` tooltip을 추가했다.
 E2E smoke가 배지 텍스트, title 속성, amber class를 검증했다.
 
+## M121 watcher self-restart lease reclamation
+
+Axis 1: watcher lease reclamation before self-restart — DONE
+`PaneLease.archive_for_restart()`를 `watcher_state.py`에 추가해, slot lock이 있으면
+`locks/archive/<slot>.lock.stale-<timestamp>`로 보존 이동하고, lock이 없으면 no-op `True`를
+반환하게 했다. archive 디렉터리 생성 또는 rename 실패 시 `False`를 반환하고 warning log를 남긴다.
+`RuntimeSupervisor._maybe_restart_watcher_for_source_change()`가 `_terminate_pid_file()` 직전에
+`slot_verify`, `slot_implement`, `slot_advisory`, `slot_followup` 4개 slot lock을 archive한다.
+`PaneLeaseOwnerPidWiringTest`에 active lease 보존 이동, lock 없음 no-op, archive 후 TTL 이전 acquire
+성공 회귀 테스트 3개를 추가했다. (10개 전체 통과)
+
+## M122 entity-card 웹 조사 품질 개선
+
+Axis 1: trust-gated multi-source agreement — DONE
+`_entity_source_fact_agreement_score()`에서 `trust_score_by_index`가 없거나
+trust score 4 미만 peer만 있는 label은 agreement score에 기여하지 않도록 했다.
+agreement score의 다중 peer 보너스와 label 폭 보너스는 trust score ≥ 4 peer가 있는
+label/peer만 기준으로 계산한다.
+`summarize_slot_coverage()`의 STRONG 조건을 `trusted_source_count >= 2`로 단순화해
+raw support_count가 비신뢰 소스를 포함해도 STRONG을 만들지 못하게 했다.
+회귀 테스트 2개(mixed-trust WEAK/STRONG/CONFLICT, low-trust peer 기여 없음)를
+`tests/test_smoke.py`에 추가했다. (152개 전체 통과)
+
+Axis 2: UNRESOLVED status separation + second-pass probe targeting — DONE
+`CoverageStatus.UNRESOLVED`를 추가해 신뢰 소스 0개 슬롯(완전 미해결)을 신뢰 소스 1개
+슬롯(WEAK)과 명시적으로 분리했다. `summarize_slot_coverage()`가 `trusted_count == 0`일 때
+UNRESOLVED를 반환하고, `_build_entity_second_pass_queries()`에서 UNRESOLVED 슬롯을
+probe-first + 2-query boost 대상으로 지정한다. 기존 `trusted_source_count == 0`
+워크어라운드를 명시 상태로 교체하고, `status_priority`, compact-value 확인 쿼리,
+`prefer_probe_first`, `max_queries_for_slot` 5곳을 업데이트했다.
+회귀 테스트 3개 추가 + 2개 rename으로 총 155개 통과.
+
+Axis 3: UNRESOLVED display/hint 전파 — DONE
+`_claim_coverage_status_label()`이 `CoverageStatus.UNRESOLVED`를 `미해결`로 표시하고,
+`_claim_coverage_status_rank()`이 UNRESOLVED를 rank 0으로 명시한다.
+`_build_claim_coverage_progress_summary()`의 unresolved slot 집합에 UNRESOLVED를 포함해
+값은 있으나 신뢰 출처가 없는 슬롯을 progress summary에서 누락하지 않게 했다.
+`_annotate_claim_coverage_progress()`는 rank/label 호출자이므로 자동으로 UNRESOLVED를 처리한다.
+회귀 테스트 3개 추가로 155 + 1 = 156개 통과.
+
+## M123 entity-card 웹 조사 품질 개선 (2차)
+
+Axis 1: UNRESOLVED 슬롯 존재 시 second-pass 이른 반환 억제 — DONE
+M122 Axis 2에서 추가된 `CoverageStatus.UNRESOLVED`가 `_build_entity_second_pass_queries()`의
+이른 반환 조건에 반영되지 않아, STRONG 슬롯이 충분하면 UNRESOLVED 슬롯이 남아 있어도 second-pass를
+건너뛰는 gap이 있었다. `unresolved_slots` 집합을 계산하고 이른 반환 조건에 `and not unresolved_slots`를
+추가해 UNRESOLVED 슬롯이 남은 경우 second-pass 보강 쿼리가 항상 생성되도록 했다.
+회귀 테스트 2개(UNRESOLVED 슬롯 존재 시 비억제, STRONG만 충분 시 기존 억제 유지) 추가로 158개 통과.
+
+Axis 2: UNRESOLVED 무값 슬롯 공식 출처 탐색 강화 — DONE
+trusted 출처가 없고 값도 비어 있는 UNRESOLVED 슬롯에 대해 공통 fallback 쿼리 대신
+슬롯별 공식/나무위키 probe 쿼리를 반환하도록 `_build_entity_slot_probe_queries()`를 확장했다.
+second-pass 루프의 `_select_ranked_web_sources` max_items를 3에서 5로 늘려 조사 대상 출처
+범위를 확장했다. 회귀 테스트 2개 추가, 160개 전체 통과.
+
+Axis 3: CONFLICT 슬롯 크로스-검증 쿼리 — DONE
+CONFLICT 상태 슬롯의 second-pass probe가 primary claim만 재확인하던 한계를 극복했다.
+`SlotCoverage`에 `competing_claim` 필드를 추가해 경쟁 신뢰 출처의 claim을 보존하고,
+`_build_entity_slot_probe_queries()`에서 primary/competing 값을 모두 포함한
+슬롯별 크로스-검증 쿼리를 반환한다. 기존 CONFLICT fallback 경로는 유지된다.
+회귀 테스트 2개 추가, 162개 전체 통과.
+
+M123 아크 완료 — Axis 1–3 모두 published (PR #122–#124 draft OPEN).
+second-pass 품질 개선의 핵심 gap(이른 반환 억제 / UNRESOLVED 무값 probe 강화 /
+CONFLICT 크로스-검증 쿼리)이 닫혔다. M124로 전환.
+
+## M124 Investigation Observability & Metrics
+
+Axis 1: UNRESOLVED/CONFLICT 슬롯 수렴 벤치마크 fixture — DONE
+M123 Axis 1–3의 개선(이른 반환 억제 / 공식 probe / 크로스-검증)이 슬롯 status를
+STRONG으로 수렴시키는 경로를 `summarize_slot_coverage()` 직접 호출 fixture로 고정했다.
+UNRESOLVED→STRONG(공식 출처 2개 추가)과 CONFLICT→STRONG(경쟁 claim 신뢰 감소) 두 경로 검증.
+회귀 테스트 2개 추가, 164개 전체 통과.
+
+Axis 2: investigation_quality_summary 필드 추가 — DONE
+entity-card 웹 조사 응답에 슬롯별 status 카운트(STRONG/WEAK/CONFLICT/UNRESOLVED/MISSING)를
+`AgentResponse.investigation_quality_summary`로 노출했다.
+`core/web_claims.py`의 `compute_investigation_quality_summary()` 헬퍼가 커버리지 dict를
+받아 카운트를 반환하며, entity-card primary 응답 경로에서만 wiring한다.
+회귀 테스트 2개 추가, 166개 전체 통과.
+
 ## Next 3 Implementation Priorities
 
-1. **PR 머지 백로그**: PR #91–#111 — 모두 draft, `pr_merge_gate` operator 승인 대기.
-2. **M117 완료**: Axis 1+2 docs sync 완료 — commit/push/PR 대기.
+1. **M124 Axis 2 완료**: investigation_quality_summary 필드 추가 (166개 통과). doc-sync 완료. publish bundle 대기 (operator 결정). M124 Axis 3 범위 advisory 결정 대기.
+2. **PR 스택 정리**: PR #113–#118 모두 MERGED; 후속 브랜치 base 재조정 및 main 병합 gate 대기.
 3. **장기**: cross-session memory 강화, north star 방향 유지.
 
 ## Do Not Pull Forward

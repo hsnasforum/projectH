@@ -3404,6 +3404,102 @@ class SmokeTest(unittest.TestCase):
         self.assertEqual(after_coverage["서비스/배급"].status, CoverageStatus.STRONG)
         self.assertIsNone(after_coverage["서비스/배급"].competing_claim)
 
+    def test_m124_genre_slot_converges_to_strong_with_official_source(self) -> None:
+        from core.contracts import CoverageStatus, SourceRole
+        from core.web_claims import ClaimRecord, summarize_slot_coverage
+
+        unresolved_genre = ClaimRecord(
+            slot="장르/성격",
+            value="RPG",
+            source_url="https://blog.example.com/genre",
+            source_title="장르 블로그",
+            source_role=SourceRole.BLOG,
+            support_count=1,
+            supporting_sources=(),
+        )
+        trusted_genre = ClaimRecord(
+            slot="장르/성격",
+            value="RPG",
+            source_url="https://official.example.com/genre",
+            source_title="장르 공식",
+            source_role=SourceRole.OFFICIAL,
+            support_count=1,
+            supporting_sources=(
+                ("https://official.example.com/genre", "장르 공식", SourceRole.OFFICIAL),
+                ("https://wiki.example.com/genre", "장르 위키", SourceRole.WIKI),
+            ),
+        )
+
+        before_coverage = summarize_slot_coverage([unresolved_genre], slots=("장르/성격",))
+        after_coverage = summarize_slot_coverage([trusted_genre], slots=("장르/성격",))
+
+        self.assertEqual(before_coverage["장르/성격"].status, CoverageStatus.UNRESOLVED)
+        self.assertEqual(after_coverage["장르/성격"].status, CoverageStatus.STRONG)
+
+    def test_m124_status_slot_converges_to_strong_with_official_source(self) -> None:
+        from core.contracts import CoverageStatus, SourceRole
+        from core.web_claims import ClaimRecord, summarize_slot_coverage
+
+        unresolved_status = ClaimRecord(
+            slot="상태",
+            value="서비스 중",
+            source_url="https://blog.example.com/status",
+            source_title="상태 블로그",
+            source_role=SourceRole.BLOG,
+            support_count=1,
+            supporting_sources=(),
+        )
+        trusted_status = ClaimRecord(
+            slot="상태",
+            value="서비스 중",
+            source_url="https://official.example.com/status",
+            source_title="상태 공식",
+            source_role=SourceRole.OFFICIAL,
+            support_count=1,
+            supporting_sources=(
+                ("https://official.example.com/status", "상태 공식", SourceRole.OFFICIAL),
+                ("https://service.example.com/status", "상태 서비스", SourceRole.OFFICIAL),
+            ),
+        )
+
+        before_coverage = summarize_slot_coverage([unresolved_status], slots=("상태",))
+        after_coverage = summarize_slot_coverage([trusted_status], slots=("상태",))
+
+        self.assertEqual(before_coverage["상태"].status, CoverageStatus.UNRESOLVED)
+        self.assertEqual(after_coverage["상태"].status, CoverageStatus.STRONG)
+
+    def test_m124_platform_slot_converges_to_strong_with_official_source(self) -> None:
+        from core.contracts import CoverageStatus, SourceRole
+        from core.web_claims import ClaimRecord, summarize_slot_coverage
+
+        unresolved_platform = ClaimRecord(
+            slot="이용 형태",
+            value="PC",
+            source_url="https://blog.example.com/platform",
+            source_title="이용 형태 블로그",
+            source_role=SourceRole.BLOG,
+            support_count=1,
+            supporting_sources=(),
+        )
+        trusted_platform = ClaimRecord(
+            slot="이용 형태",
+            value="PC",
+            source_url="https://official.example.com/platform",
+            source_title="이용 형태 공식",
+            source_role=SourceRole.OFFICIAL,
+            support_count=1,
+            supporting_sources=(
+                ("https://official.example.com/platform", "이용 형태 공식", SourceRole.OFFICIAL),
+                ("https://wiki.example.com/platform", "이용 형태 위키", SourceRole.WIKI),
+            ),
+        )
+
+        before_coverage = summarize_slot_coverage([unresolved_platform], slots=("이용 형태",))
+        after_coverage = summarize_slot_coverage([trusted_platform], slots=("이용 형태",))
+
+        self.assertEqual(before_coverage["이용 형태"].status, CoverageStatus.UNRESOLVED)
+        self.assertEqual(after_coverage["이용 형태"].status, CoverageStatus.STRONG)
+
     def test_m124_compute_investigation_quality_summary_counts_correctly(self) -> None:
         from core.contracts import CoverageStatus, SourceRole
         from core.web_claims import (

@@ -55,8 +55,8 @@ _LANE_SPEC_BY_NAME: dict[str, PhysicalLaneSpec] = {
 
 _DEFAULT_ROLE_BINDINGS: dict[str, str] = {
     "implement": "Codex",
-    "verify": "Claude",
-    "advisory": "Gemini",
+    "verify": "Codex",
+    "advisory": "Claude",
 }
 
 _LEGACY_ROLE_BINDINGS: dict[str, str] = {

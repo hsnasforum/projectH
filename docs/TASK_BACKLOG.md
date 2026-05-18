@@ -161,6 +161,8 @@
 147. M123 아크 종료 completed 2026-05-12 — Axis 1(UNRESOLVED early-return 억제), Axis 2(무값 슬롯 공식 probe + max_items 3→5), Axis 3(CONFLICT 크로스-검증 쿼리) 모두 published (PR #122–#124 draft OPEN); M124 Investigation Observability & Metrics 아크로 전환.
 148. M124 Axis 1: UNRESOLVED/CONFLICT 수렴 벤치마크 fixture completed 2026-05-12 — `summarize_slot_coverage()` 직접 호출로 UNRESOLVED→STRONG(공식 출처 2개 추가)과 CONFLICT→STRONG(경쟁 claim 신뢰 감소) 수렴 경로 검증; 회귀 테스트 2개 추가(164개 통과).
 149. M124 Axis 2: investigation_quality_summary 필드 추가 completed 2026-05-12 — `compute_investigation_quality_summary()` 헬퍼(core/web_claims.py) + `AgentResponse.investigation_quality_summary` 필드 + entity-card primary 응답 경로 wiring; 회귀 테스트 2개 추가(166개 통과).
+150. M124 Axis 3: 수렴 벤치마크 전 슬롯 확장 completed 2026-05-12 — 장르/성격·상태·이용 형태 슬롯 UNRESOLVED→STRONG 수렴 fixture 추가; 5개 core entity 슬롯 전체 커버 완성; 회귀 테스트 3개 추가(169개 통과).
+151. M124 아크 종료 completed 2026-05-12 — Axis 1(수렴 benchmark Axis 1–2 슬롯), Axis 2(investigation_quality_summary), Axis 3(benchmark 전 슬롯 확장) 모두 완료; M125 방향 advisory 결정 대기.
 
 ## Current Phase In Progress
 

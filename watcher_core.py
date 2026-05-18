@@ -621,6 +621,7 @@ class WatcherCore:
             repo_relative=self._repo_relative,
             get_path_sha256=self._get_path_sha256,
             extract_changed_file_paths_from_round_note=self._extract_changed_file_paths_from_round_note,
+            runtime_status_summary=self._runtime_prompt_status_summary,
         )
 
         self.sm = StateMachine(
@@ -664,6 +665,10 @@ class WatcherCore:
                 prompt,
                 dry_run,
                 pane_type=pane_type,
+            ),
+            clear_failed_dispatch_input=lambda target, reason: watcher_dispatch.clear_codex_failed_dispatch_input(
+                target,
+                reason,
             ),
             dry_run=self.dry_run,
             pipeline_dir=self.pipeline_dir,
@@ -1172,6 +1177,63 @@ class WatcherCore:
         tmp_path.write_text(json.dumps(data, ensure_ascii=False, indent=2))
         tmp_path.replace(self.run_status_path)
         self._write_current_run_pointer()
+
+    # ------------------------------------------------------------------
+    def _runtime_prompt_status_summary(self) -> str:
+        status = read_json(self.run_status_path)
+        if isinstance(status, dict):
+            runtime_state = str(status.get("runtime_state") or "RUNNING").strip() or "RUNNING"
+            automation_health = str(status.get("automation_health") or "ok").strip() or "ok"
+            next_action = str(status.get("automation_next_action") or "continue").strip() or "continue"
+            raw_control = status.get("control")
+            raw_turn_state = status.get("turn_state")
+            raw_active_round = status.get("active_round")
+            control = dict(raw_control) if isinstance(raw_control, dict) else {}
+            turn_state = dict(raw_turn_state) if isinstance(raw_turn_state, dict) else {}
+            active_round = dict(raw_active_round) if isinstance(raw_active_round, dict) else {}
+            control_file = str(control.get("active_control_file") or "none").strip() or "none"
+            control_seq = control_seq_value(control.get("active_control_seq"), default=-1)
+            control_status = str(control.get("active_control_status") or "none").strip() or "none"
+            active_round_status = str(
+                active_round.get("status")
+                or active_round.get("state")
+                or "none"
+            ).strip() or "none"
+            dispatch_stage = str(active_round.get("dispatch_stage") or "").strip()
+            return "\n".join(
+                [
+                    f"- source: watcher status {self._repo_relative(self.run_status_path)}",
+                    f"- run_id: {self.run_id}",
+                    f"- runtime_state: {runtime_state}",
+                    f"- automation_health: {automation_health}",
+                    f"- automation_next_action: {next_action}",
+                    f"- active_control: {control_file}#{control_seq} {control_status}",
+                    f"- turn_state: {str(turn_state.get('state') or raw_turn_state or self._current_turn_state.value)}",
+                    f"- active_round: {active_round_status}{(' dispatch_stage=' + dispatch_stage) if dispatch_stage else ''}",
+                    "- lane_local_runtime_commands: non_authoritative_for_tmux_session_access_when_conflicting",
+                ]
+            )
+        active_control = self._get_active_control_signal()
+        if active_control is not None:
+            control_file = f".pipeline/{active_control.path.name}"
+            control_seq = active_control.control_seq
+            control_status = active_control.status
+        else:
+            control_file = "none"
+            control_seq = -1
+            control_status = "none"
+        return "\n".join(
+            [
+                "- source: watcher memory fallback",
+                f"- run_id: {self.run_id}",
+                "- runtime_state: RUNNING",
+                "- automation_health: ok",
+                "- automation_next_action: continue",
+                f"- active_control: {control_file}#{control_seq} {control_status}",
+                f"- turn_state: {self._current_turn_state.value}",
+                "- lane_local_runtime_commands: non_authoritative_for_tmux_session_access_when_conflicting",
+            ]
+        )
 
     # ------------------------------------------------------------------
     def _transition_turn(
@@ -2969,8 +3031,6 @@ class WatcherCore:
     def _operator_retriage_no_next_control_marker(self) -> Optional[dict[str, object]]:
         if self._current_turn_state != WatcherTurnState.VERIFY_FOLLOWUP:
             return None
-        if not self._advisory_enabled():
-            return None
         if self._get_pending_advisory_request_mtime() > 0.0 or self._get_pending_advisory_advice_mtime() > 0.0:
             return None
 
@@ -3117,6 +3177,40 @@ class WatcherCore:
             return False
 
         operator_seq = control_seq_value(marker.get("control_seq"), default=-1)
+        if not self._advisory_enabled():
+            payload = {
+                **marker,
+                "advisory_disabled": True,
+                "publish_held": True,
+                "request_control_file": "",
+                "request_control_seq": -1,
+            }
+            operator_sig = str(marker.get("operator_sig") or self._get_path_sig(self.operator_request_path))
+            self._last_operator_retriage_sig = operator_sig
+            self._last_operator_retriage_fingerprint = str(marker.get("fingerprint") or "")
+            self._operator_retriage_started_at = time.time()
+            self._last_operator_recovery_key = ""
+            self._operator_recovery_started_at = 0.0
+            self._clear_implement_blocked_state("operator_retriage_no_next_control")
+            self._log_raw(
+                "operator_retriage_no_next_control",
+                str(self.operator_request_path),
+                "turn_signal",
+                payload,
+            )
+            self._append_runtime_event("operator_retriage_no_next_control", payload)
+            self._transition_turn(
+                WatcherTurnState.VERIFY_FOLLOWUP,
+                "verify_followup_no_next_control",
+                active_control_file="operator_request.md",
+                active_control_seq=operator_seq,
+            )
+            self._notify_verify_operator_retriage(
+                "operator_retriage_no_next_control",
+                payload,
+            )
+            return True
+
         next_control_seq = max(self._get_next_control_seq(), operator_seq + 1)
         request_text = self._render_operator_retriage_advisory_request(
             marker=marker,

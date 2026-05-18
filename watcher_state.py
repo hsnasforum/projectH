@@ -246,7 +246,12 @@ class DedupeGuard:
         if self.dispatch_log.exists():
             for line in self.dispatch_log.read_text().splitlines():
                 try:
-                    self._seen.add(json.loads(line)["key"])
+                    entry = json.loads(line)
+                    key = entry["key"]
+                    if entry.get("event") == "forget":
+                        self._seen.discard(key)
+                    else:
+                        self._seen.add(key)
                 except (json.JSONDecodeError, KeyError):
                     pass
 
@@ -288,6 +293,14 @@ class DedupeGuard:
     def forget(self, job_id: str, round_: int, artifact_hash: str, target_slot: str) -> None:
         key = self._make_key(job_id, round_, artifact_hash, target_slot)
         self._seen.discard(key)
+        self.events_dir.mkdir(parents=True, exist_ok=True)
+        entry = {
+            "event": "forget", "key": key, "job_id": job_id,
+            "round": round_, "artifact_hash": artifact_hash,
+            "target_slot": target_slot, "at": time.time(),
+        }
+        with self.dispatch_log.open("a") as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
 
 class ManifestCollector:

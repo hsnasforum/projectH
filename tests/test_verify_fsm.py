@@ -283,6 +283,34 @@ class VerifyFsmSnapshotCloseTest(unittest.TestCase):
             self.assertEqual(result.verify_result, "")
             self.assertEqual(result.verify_manifest_path, "")
 
+    def test_verify_outputs_close_when_codex_idle_without_task_done_after_grace(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            machine = _make_machine(
+                root,
+                pipeline_dir=root / ".pipeline",
+                feedback_sig_builder=lambda job: ("ignored-control", "new-verify"),
+                verify_receipt_builder=_receipt_builder(root),
+            )
+            machine.verify_incomplete_idle_retry_sec = 5.0
+            job = _running_job(root, dispatch_control_seq=9)
+            job.done_dispatch_id = ""
+            job.done_at = 0.0
+            job.done_deadline_at = time.time() + 120.0
+            job.last_pane_snapshot = "ready>"
+            job.last_activity_at = time.time() - 10.0
+
+            with patch(
+                "verify_fsm.read_pipeline_control_snapshot",
+                return_value={"active": {"control_seq": 10}},
+            ):
+                result = machine.step_verify_close_chain(job)
+
+            self.assertEqual(result.status, JobStatus.VERIFY_DONE)
+            self.assertEqual(result.done_dispatch_id, job.dispatch_id)
+            self.assertEqual(result.verify_result, "passed_by_feedback")
+            self.assertTrue(result.verify_manifest_path)
+
     def test_verify_close_chain_no_change_same_seq(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -302,6 +330,38 @@ class VerifyFsmSnapshotCloseTest(unittest.TestCase):
 
             self.assertEqual(result.status, JobStatus.VERIFY_RUNNING)
             self.assertEqual(result.verify_result, "")
+
+    def test_verify_accept_wait_extends_while_codex_lane_is_busy(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            machine = _make_machine(
+                root,
+                pipeline_dir=root / ".pipeline",
+                feedback_sig_builder=lambda job: ("same-control", "same-verify"),
+                verify_receipt_builder=lambda job: ("", 0.0),
+            )
+            job = _running_job(root, dispatch_control_seq=10)
+            job.accepted_dispatch_id = ""
+            job.accepted_at = 0.0
+            job.done_dispatch_id = ""
+            job.done_at = 0.0
+            job.done_deadline_at = 0.0
+            job.seen_dispatch_id = job.dispatch_id
+            job.accept_deadline_at = time.time() - 1.0
+            old_deadline = job.accept_deadline_at
+            machine.capture_pane_text = lambda target: "• Working (12s • esc to interrupt)\n"
+            machine.pane_text_has_busy_indicator = lambda text: True
+
+            with patch(
+                "verify_fsm.read_pipeline_control_snapshot",
+                return_value={"active": {"control_seq": 10}},
+            ):
+                result = machine.step_verify_close_chain(job)
+
+            self.assertEqual(result.status, JobStatus.VERIFY_RUNNING)
+            self.assertEqual(result.accepted_dispatch_id, "")
+            self.assertGreater(result.accept_deadline_at, old_deadline)
+            self.assertEqual(result.lane_note, "waiting_task_accept_lane_busy")
 
     def test_verify_close_chain_fallback_no_pipeline_dir(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

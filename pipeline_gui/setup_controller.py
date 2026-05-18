@@ -86,14 +86,20 @@ class SetupController:
         }
 
     def default_profile(self) -> dict[str, object]:
+        default_bindings = default_role_bindings()
+        default_agents = [
+            name
+            for name in self.agent_order
+            if name in {owner for owner in default_bindings.values() if owner}
+        ]
         payload = build_agent_profile_payload(
-            selected_agents=list(self.agent_order),
-            role_bindings=default_role_bindings(),
+            selected_agents=default_agents,
+            role_bindings=default_bindings,
             advisory_enabled=True,
             operator_stop_enabled=True,
             session_arbitration_enabled=True,
             single_agent_mode=False,
-            self_verify_allowed=False,
+            self_verify_allowed=True,
             self_advisory_allowed=False,
         )
         payload["executor_override"] = "auto"

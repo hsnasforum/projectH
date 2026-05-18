@@ -435,10 +435,20 @@ function activeWorkLaneName(data = runtimeStateStore.data) {
   return role ? currentRoleOwners(data)[role] || '' : '';
 }
 
-function effectiveLaneState(_agentName, lane) {
+function activeRoundLaneName(data = runtimeStateStore.data) {
+  const round = (data && data.active_round) || {};
+  const roundState = String(round.state || '').trim().toUpperCase();
+  const role = ACTIVE_ROUND_ROLE_BY_STATE[roundState] || '';
+  return role ? currentRoleOwners(data)[role] || '' : '';
+}
+
+function effectiveLaneState(agentName, lane, data = runtimeStateStore.data) {
   const rawState = String((lane || {}).state || 'off').toLowerCase();
-  // Lane state is the runtime truth. turn_state can stay active while a lane is
-  // idle/ready after a closeout, so it must not upgrade visible state to working.
+  const activeRoundLane = activeRoundLaneName(data);
+  if (activeRoundLane === agentName && rawState === 'ready') return 'working';
+  // Lane state is still the default runtime truth. turn_state can stay active
+  // while a lane is idle/ready after a closeout, so it must not upgrade visible
+  // state to working.
   return rawState || 'off';
 }
 

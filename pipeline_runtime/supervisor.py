@@ -629,6 +629,25 @@ class RuntimeSupervisor:
             "active_lane": self._prompt_owner("verify"),
         }
 
+    def _surface_turn_state_for_duplicate_control(
+        self,
+        turn_state: dict[str, Any] | None,
+        duplicate_control: dict[str, Any] | None,
+    ) -> dict[str, Any] | None:
+        if duplicate_control is None:
+            return turn_state if isinstance(turn_state, dict) else None
+        current = dict(turn_state or {})
+        return {
+            "state": "IDLE",
+            "legacy_state": "IDLE",
+            "entered_at": float(current.get("entered_at") or time.time()),
+            "reason": str(duplicate_control.get("reason") or "duplicate_handoff"),
+            "active_control_file": "",
+            "active_control_seq": -1,
+            "active_role": "",
+            "active_lane": "",
+        }
+
     def _duplicate_control_marker(self, control: dict[str, Any]) -> dict[str, Any] | None:
         snapshot = active_control_snapshot_from_status(control)
         if str(snapshot.get("control_status") or "") != "implement":
@@ -1054,6 +1073,54 @@ class RuntimeSupervisor:
             turn_state=turn_state,
             active_round=active_round,
         )
+
+    def _latest_work_is_verified_by_artifacts(self, artifacts: dict[str, Any] | None) -> bool:
+        if not isinstance(artifacts, dict):
+            return False
+        latest_work = artifacts.get("latest_work")
+        latest_verify = artifacts.get("latest_verify")
+        if not isinstance(latest_work, dict) or not isinstance(latest_verify, dict):
+            return False
+        work_path = str(latest_work.get("path") or "").strip()
+        verify_path = str(latest_verify.get("path") or "").strip()
+        return bool(work_path and work_path != "—" and verify_path and verify_path != "—")
+
+    def _active_round_matches_artifact_path(self, active_round: dict[str, Any] | None, work_path: str) -> bool:
+        if not active_round:
+            return False
+        normalized_round = self._normalize_artifact_path(active_round.get("artifact_path"))
+        normalized_work = str(work_path or "").replace("\\", "/").lstrip("./").strip()
+        if not normalized_round or not normalized_work or normalized_work == "—":
+            return False
+        return normalized_round == normalized_work or normalized_round.endswith(f"/{normalized_work}")
+
+    def _suppress_stale_active_round_after_verified_latest_work(
+        self,
+        *,
+        turn_state: dict[str, Any] | None,
+        active_round: dict[str, Any] | None,
+        control: dict[str, Any] | None,
+        artifacts: dict[str, Any] | None,
+    ) -> bool:
+        if not active_round:
+            return False
+        if str((control or {}).get("active_control_status") or "none") != "none":
+            return False
+        turn_name = canonical_turn_state_name(
+            (turn_state or {}).get("state"),
+            legacy_state=(turn_state or {}).get("legacy_state"),
+        )
+        if turn_name != "IDLE":
+            return False
+        if str((turn_state or {}).get("reason") or "") not in {"handoff_already_completed", "duplicate_handoff"}:
+            return False
+        if str(active_round.get("state") or "") not in {"VERIFY_PENDING", "VERIFYING", "RECEIPT_PENDING"}:
+            return False
+        if not self._latest_work_is_verified_by_artifacts(artifacts):
+            return False
+        latest_work = ((artifacts or {}).get("latest_work") or {}) if isinstance(artifacts, dict) else {}
+        work_path = str((latest_work or {}).get("path") or "")
+        return not self._active_round_matches_artifact_path(active_round, work_path)
 
     def _job_matches_active_round(
         self,
@@ -1859,9 +1926,24 @@ class RuntimeSupervisor:
             stale_operator_control,
             operator_gate,
         )
+        status_turn_state = self._surface_turn_state_for_duplicate_control(
+            status_turn_state,
+            duplicate_control,
+        )
+        artifacts = self._build_artifacts(job_states=job_states)
+        suppress_active_round = self._suppress_active_round_for_turn(
+            turn_state=status_turn_state,
+            active_round=active_round,
+        ) or self._suppress_stale_active_round_after_verified_latest_work(
+            turn_state=status_turn_state,
+            active_round=active_round,
+            control=control_block,
+            artifacts=artifacts,
+        )
+        surfaced_active_round = None if suppress_active_round else active_round
         active_lane = self._active_lane_for_runtime(
             status_turn_state,
-            active_round,
+            surfaced_active_round,
             control=control_block,
             last_receipt=last_receipt,
             duplicate_control=duplicate_control,
@@ -1869,16 +1951,11 @@ class RuntimeSupervisor:
         )
         self._write_task_hints(
             active_lane=active_lane,
-            active_round=active_round,
+            active_round=surfaced_active_round,
             turn_state=status_turn_state,
             control=control_block,
             duplicate_control=duplicate_control,
         )
-        suppress_active_round = self._suppress_active_round_for_turn(
-            turn_state=status_turn_state,
-            active_round=active_round,
-        )
-        surfaced_active_round = None if suppress_active_round else active_round
         lanes, lane_models = self._build_lane_statuses(
             wrapper_models=wrapper_models,
             active_lane=active_lane,
@@ -1901,7 +1978,6 @@ class RuntimeSupervisor:
                 }
                 for lane in lanes
             ]
-        artifacts = self._build_artifacts(job_states=job_states)
         lane_configs = self.runtime_lane_configs or build_lane_configs(
             enabled_lanes=self.enabled_lanes,
             role_owners=self.role_owners,

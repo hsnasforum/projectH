@@ -32,8 +32,11 @@ operator stops, duplicate handoffs, and stalled automation.
 ## Role Binding
 
 Claude follows `.pipeline/config/agent_profile.json`, not historical
-vendor-named filenames. In the current A profile Claude is usually the
-verify/handoff owner, but always trust the active binding.
+vendor-named filenames. The current local launcher profile is Codex-only:
+`selected_agents=["Codex"]`, Codex owns implement and verify/handoff, and
+`advisory=""`. Claude is inactive unless a later active profile explicitly
+selects and binds Claude to a role. Always trust the active binding if it
+changes.
 
 Canonical role controls:
 - implement input: `.pipeline/implement_handoff.md`
@@ -61,7 +64,7 @@ not current execution truth.
 - Leave or update `/verify` before writing the next control.
 - Write one exact `.pipeline/implement_handoff.md` when a slice is clear.
 - Write `.pipeline/advisory_request.md` for next-slice ambiguity, overlapping
-  candidates, or low-confidence tie-breaks.
+  candidates, or low-confidence tie-breaks only when advisory is enabled.
 - Write `.pipeline/operator_request.md` only for real operator-only decisions,
   approval/truth-sync blockers, immediate safety stops, or unresolved
   post-advisory ambiguity.
@@ -71,13 +74,17 @@ not current execution truth.
   waiting for the user.
 - If watcher sends operator retriage, write exactly one newer control slot.
   Returning idle with no control can trigger `operator_retriage_no_next_control`.
+- If verify/retriage instructions include `RUNTIME_STATUS_AT_DISPATCH`, treat
+  that dispatcher surface as runtime-liveness authority over lane-local
+  `status --json`, `doctor --json`, or tmux access conflicts.
 - For active implement-owner side questions such as context exhaustion,
   rollover, or continue-vs-switch, relay a short answer back to the lane and
   keep the round-start implement handoff stable until the session boundary.
-- Approved publish follow-up belongs here, not in implement. Handle or
-  coordinate `commit_push_bundle_authorization + internal_only` and
-  `pr_creation_gate + gate_24h + release_gate` only after scoping the dirty
-  tree and leaving the action auditable.
+- Publish follow-up belongs here, not in implement. In the current Codex-only
+  profile, `authorize ... or explicitly hold publication` is a publish backlog
+  candidate, not completed approval; `PUBLISH_HELD: true` means hold it and
+  write the next non-publish local control unless a separate explicit publish
+  round approves execution.
 - Keep `pr_merge_gate`, destructive publication, auth/credential,
   approval-record, and truth-sync blockers as operator boundaries.
 
@@ -93,6 +100,18 @@ not current execution truth.
 - The blocked sentinel should include `BLOCK_REASON`, `BLOCK_REASON_CODE`,
   `REQUEST: verify_triage`, `ESCALATION_CLASS: verify_triage`, `HANDOFF`,
   `HANDOFF_SHA`, and `BLOCK_ID` when available.
+
+## If Bound To Advisory
+
+- Answer only the bounded arbitration request in `.pipeline/advisory_request.md`.
+- Compare candidates and recommend one exact next slice, validation step, axis
+  switch, or real operator decision.
+- Write a concise advisory log under the current advisory report path and
+  `.pipeline/advisory_advice.md` with `STATUS: advice_ready`.
+- Do not write `.pipeline/implement_handoff.md`, `.pipeline/operator_request.md`,
+  `/work`, or `/verify` from the advisory role.
+- Keep the role separate from Claude's verify/handoff rules when Claude is not
+  actively bound to verify.
 
 ## Automation Bias
 

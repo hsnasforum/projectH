@@ -17,6 +17,7 @@ from pipeline_runtime.schema import (
     read_json,
     read_pipeline_control_snapshot,
 )
+from pipeline_runtime.lane_surface import pane_text_has_unsubmitted_pasted_content
 from pipeline_runtime.wrapper_events import build_lane_read_models
 
 log = logging.getLogger("watcher_core")
@@ -229,6 +230,7 @@ class StateMachine:
         pane_text_is_idle: Callable[[str], bool],
         normalize_prompt_text: Callable[[str], str],
         send_keys: Callable[[str, str, bool, str], bool],
+        clear_failed_dispatch_input: Optional[Callable[[str, str], bool]] = None,
         dry_run: bool = False,
         pipeline_dir: Optional[Path] = None,
     ) -> None:
@@ -259,6 +261,7 @@ class StateMachine:
         self.pane_text_is_idle = pane_text_is_idle
         self.normalize_prompt_text = normalize_prompt_text
         self.send_keys = send_keys
+        self.clear_failed_dispatch_input = clear_failed_dispatch_input
         self.dry_run = dry_run
         self.pipeline_dir = pipeline_dir
 
@@ -509,11 +512,43 @@ class StateMachine:
         snapshot = (current_pane or "").rstrip()
         if not snapshot:
             return ""
+        if pane_text_has_unsubmitted_pasted_content(snapshot):
+            return ""
         if "[Pasted Content" in snapshot:
             return snapshot
         if self.pane_text_is_idle(snapshot):
             return ""
         return snapshot
+
+    def _current_pane_is_clearable_pasted_prompt(
+        self,
+        current_pane: str,
+        last_failed_snapshot: str,
+    ) -> bool:
+        if "[Pasted Content" not in str(last_failed_snapshot or ""):
+            return False
+        return pane_text_has_unsubmitted_pasted_content(current_pane)
+
+    def _clear_failed_dispatch_input_if_possible(self, job: JobState, slot: str, reason: str) -> bool:
+        if self.clear_failed_dispatch_input is None:
+            return False
+        if self.verify_pane_type != "codex":
+            return False
+        if not self.clear_failed_dispatch_input(self.verify_pane_target, reason):
+            return False
+        job.last_failed_dispatch_at = 0.0
+        job.last_failed_dispatch_snapshot = ""
+        job.lane_note = "cleared_failed_dispatch_prompt"
+        job.save(self.state_dir)
+        self.dedupe.forget(job.job_id, job.round, job.artifact_hash, slot)
+        return True
+
+    def _forget_requeued_failed_dispatch_dedupe(self, job: JobState, slot: str) -> None:
+        if job.last_failed_dispatch_at <= 0.0 or job.last_dispatch_at <= 0.0:
+            return
+        if job.last_failed_dispatch_at < job.last_dispatch_at:
+            return
+        self.dedupe.forget(job.job_id, job.round, job.artifact_hash, slot)
 
     def _build_verify_prompt(self, job: JobState) -> tuple[dict[str, str], str]:
         prompt_context = {
@@ -775,9 +810,35 @@ class StateMachine:
             if job.last_failed_dispatch_snapshot:
                 current_pane = self.capture_pane_text(self.verify_pane_target)
                 current_snapshot = self._failed_dispatch_snapshot_for_pane(current_pane)
-                if (
-                    current_snapshot and current_snapshot == job.last_failed_dispatch_snapshot
-                ) or current_pane.rstrip() == job.last_failed_dispatch_snapshot:
+                clearable_pasted_prompt = self._current_pane_is_clearable_pasted_prompt(
+                    current_pane,
+                    job.last_failed_dispatch_snapshot,
+                )
+                cleared_failed_dispatch_prompt = False
+                if self._pane_contains_prompt_markers(current_pane, prompt):
+                    if self._clear_failed_dispatch_input_if_possible(
+                        job,
+                        slot,
+                        "dispatch_backoff_prompt_visible",
+                    ):
+                        cleared_failed_dispatch_prompt = True
+                        current_pane = ""
+                        current_snapshot = ""
+                    else:
+                        job.last_failed_dispatch_at = time.time()
+                        job.last_failed_dispatch_snapshot = current_snapshot or current_pane.rstrip()
+                        job.save(self.state_dir)
+                        self.dedupe.mark_suppressed(
+                            job.job_id, job.round, job.artifact_hash, slot, "dispatch_backoff_prompt_visible"
+                        )
+                        return job
+                if not cleared_failed_dispatch_prompt and not clearable_pasted_prompt and (
+                    (
+                        current_snapshot
+                        and current_snapshot == job.last_failed_dispatch_snapshot
+                    )
+                    or current_pane.rstrip() == job.last_failed_dispatch_snapshot
+                ):
                     job.last_failed_dispatch_at = time.time()
                     job.last_failed_dispatch_snapshot = current_snapshot or current_pane.rstrip()
                     job.save(self.state_dir)
@@ -785,14 +846,8 @@ class StateMachine:
                         job.job_id, job.round, job.artifact_hash, slot, "dispatch_backoff_same_snapshot"
                     )
                     return job
-                if self._pane_contains_prompt_markers(current_pane, prompt):
-                    job.last_failed_dispatch_at = time.time()
-                    job.last_failed_dispatch_snapshot = current_snapshot or current_pane.rstrip()
-                    job.save(self.state_dir)
-                    self.dedupe.mark_suppressed(
-                        job.job_id, job.round, job.artifact_hash, slot, "dispatch_backoff_prompt_visible"
-                    )
-                    return job
+
+        self._forget_requeued_failed_dispatch_dedupe(job, slot)
 
         if self.dedupe.is_duplicate(job.job_id, job.round, job.artifact_hash, slot):
             self.dedupe.mark_suppressed(job.job_id, job.round, job.artifact_hash, slot, "dedupe")
@@ -973,6 +1028,17 @@ class StateMachine:
                 return job
 
             if waiting_for_accept:
+                if still_busy:
+                    # Codex can show a prompt while the current task is still
+                    # running. Keep the same dispatch alive until the lane
+                    # becomes idle or the wrapper emits TASK_ACCEPTED.
+                    extended_accept_deadline = now_value + self.verify_accept_deadline_sec
+                    if extended_accept_deadline > (job.accept_deadline_at + 1.0):
+                        job.accept_deadline_at = extended_accept_deadline
+                    job.last_activity_at = now_value
+                    job.lane_note = "waiting_task_accept_lane_busy"
+                    job.save(self.state_dir)
+                    return job
                 if job.accept_deadline_at > 0.0 and now_value >= job.accept_deadline_at:
                     log.warning(
                         "verify accept deadline exceeded: job=%s total=%.0fs deadline=%.0fs",
@@ -1017,6 +1083,25 @@ class StateMachine:
                         job.last_pane_snapshot = current_pane
                         job.save(self.state_dir)
                     return job
+                idle_done_grace = min(self.verify_incomplete_idle_retry_sec, self.verify_done_deadline_sec)
+                if outputs_complete and codex_idle and (now_value - last_activity) >= idle_done_grace:
+                    log.warning(
+                        "verify outputs closed and codex idle before TASK_DONE; inferring task done after idle grace: job=%s idle=%.0fs total=%.0fs",
+                        job.job_id,
+                        now_value - last_activity,
+                        elapsed,
+                    )
+                    self._mark_task_done_from_completed_outputs(
+                        job,
+                        current_pane=current_pane,
+                        reason=(
+                            "inferred TASK_DONE from current-round verify receipt + control close "
+                            f"after {idle_done_grace:.0f}s idle grace"
+                        ),
+                    )
+                    waiting_for_done = False
+                    waiting_for_receipt_close = False
+                    close_chain_done = True
                 if job.done_deadline_at > 0.0 and now_value >= job.done_deadline_at:
                     if outputs_complete and codex_idle:
                         log.warning(

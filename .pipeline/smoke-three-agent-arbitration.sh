@@ -256,6 +256,7 @@ from pipeline_runtime.lane_catalog import (
     build_agent_profile_payload,
     default_role_bindings,
     legacy_role_bindings,
+    physical_lane_order,
 )
 
 project_root = Path(os.environ["PROJECT_ROOT"])
@@ -291,15 +292,20 @@ if bindings_override_raw:
 
 smoke_profile_path = base_dir / ".pipeline" / "config" / "agent_profile.json"
 smoke_profile_path.parent.mkdir(parents=True, exist_ok=True)
+selected_agents = [
+    name
+    for name in physical_lane_order()
+    if name in {owner for owner in bindings.values() if owner}
+]
 smoke_payload = build_agent_profile_payload(
-    selected_agents=None,
+    selected_agents=selected_agents,
     role_bindings=bindings,
     advisory_enabled=True,
     operator_stop_enabled=True,
     session_arbitration_enabled=True,
     single_agent_mode=False,
-    self_verify_allowed=False,
-    self_advisory_allowed=False,
+    self_verify_allowed=bindings.get("implement") == bindings.get("verify"),
+    self_advisory_allowed=bindings.get("advisory") in {bindings.get("implement"), bindings.get("verify")},
 )
 smoke_profile_path.write_text(
     json.dumps(smoke_payload, ensure_ascii=False, indent=2),
@@ -335,6 +341,16 @@ tmux new-session -d -s "$SESSION" -c "$PROJECT_ROOT" "exec \"$CLAUDE_BIN\" --dan
 CLAUDE_PANE="$(tmux display-message -t "$SESSION:0.0" -p '#{pane_id}')"
 CODEX_PANE="$(tmux split-window -P -F '#{pane_id}' -h -t "$SESSION:0" -c "$PROJECT_ROOT" "exec \"$CODEX_BIN\" --ask-for-approval never --disable apps")"
 GEMINI_PANE="$(tmux split-window -P -F '#{pane_id}' -v -t "$CODEX_PANE" -c "$PROJECT_ROOT" "exec \"$GEMINI_BIN\" --approval-mode auto_edit")"
+case "$ADVISORY_OWNER" in
+    Claude) ADVISORY_PANE="$CLAUDE_PANE" ;;
+    Codex) ADVISORY_PANE="$CODEX_PANE" ;;
+    *) ADVISORY_PANE="$GEMINI_PANE" ;;
+esac
+case "$VERIFY_OWNER" in
+    Claude) VERIFY_PANE="$CLAUDE_PANE" ;;
+    Codex) VERIFY_PANE="$CODEX_PANE" ;;
+    *) VERIFY_PANE="$GEMINI_PANE" ;;
+esac
 
 wait_for_cli_ready "$CLAUDE_PANE" 25 || true
 wait_for_cli_ready "$CODEX_PANE" 25 || true
@@ -362,22 +378,22 @@ python3 "$SCRIPT_DIR/watcher_core.py" \
 WATCHER_PID="$!"
 
 if ! wait_for_status "$GEMINI_ADVICE" "advice_ready" "$TIMEOUT_SEC"; then
-    echo "Gemini advice slot timed out: $GEMINI_ADVICE" >&2
+    echo "Advisory advice slot timed out: $GEMINI_ADVICE owner=$ADVISORY_OWNER" >&2
     echo "watcher log: $WATCHER_LOG" >&2
-    tmux capture-pane -pt "$GEMINI_PANE" -S -80 >&2 || true
+    tmux capture-pane -pt "$ADVISORY_PANE" -S -80 >&2 || true
     exit 1
 fi
 
 ADVICE_SEQ="$(read_header_value "$GEMINI_ADVICE" "CONTROL_SEQ" 2>/dev/null || true)"
 if [ "$ADVICE_SEQ" != "$EXPECTED_NEXT_SEQ" ]; then
-    echo "Gemini advice CONTROL_SEQ mismatch: expected $EXPECTED_NEXT_SEQ got ${ADVICE_SEQ:-missing}" >&2
+    echo "Advisory advice CONTROL_SEQ mismatch: expected $EXPECTED_NEXT_SEQ got ${ADVICE_SEQ:-missing}" >&2
     echo "watcher log: $WATCHER_LOG" >&2
     cat "$GEMINI_ADVICE" >&2 || true
     exit 1
 fi
 
 if ! find "$REPORT_DIR" -maxdepth 1 -type f -name '*.md' | grep -q .; then
-    echo "Gemini report log missing under $REPORT_DIR" >&2
+    echo "Advisory report log missing under $REPORT_DIR" >&2
     echo "watcher log: $WATCHER_LOG" >&2
     exit 1
 fi
@@ -385,7 +401,7 @@ fi
 if ! wait_for_final_slot "$TIMEOUT_SEC"; then
     echo "Verify follow-up timed out: expected claude_handoff or operator_request" >&2
     echo "watcher log: $WATCHER_LOG" >&2
-    tmux capture-pane -pt "$CODEX_PANE" -S -80 >&2 || true
+    tmux capture-pane -pt "$VERIFY_PANE" -S -80 >&2 || true
     exit 1
 fi
 
@@ -429,7 +445,7 @@ echo "topology: $SMOKE_TOPOLOGY_RESOLVED"
 echo "base_dir: $BASE_DIR"
 echo "smoke_profile: $SMOKE_PROFILE_PATH"
 echo "watcher_log: $WATCHER_LOG"
-echo "gemini_advice: $GEMINI_ADVICE"
+echo "advisory_advice: $GEMINI_ADVICE"
 echo "claude_handoff: $CLAUDE_HANDOFF"
 echo "operator_request: $OPERATOR_REQUEST"
 echo "report_dir: $REPORT_DIR"

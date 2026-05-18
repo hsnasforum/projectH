@@ -23,6 +23,12 @@ const rejectedVerdictNotePath = path.join(noteDir, "rejected-verdict-note.md");
 const correctedBridgeNotePath = path.join(repoRoot, "data", "notes", "long-summary-fixture-summary.md");
 const middleSignal = "중간 섹션 핵심 결정은 승인 기반 저장을 유지하는 것입니다.";
 const shortFixturePath = path.join(fixtureDir, "short-aggregate-fixture.md");
+const mockSummaryPrefixPattern = /\[모의 요약(?:, 선호 \d+건 반영)?\]/;
+const mockSummaryPrefixSource = "\\[모의 요약(?:, 선호 \\d+건 반영)?\\]";
+
+function escapeRegExp(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
 
 function buildSessionId(prefix) {
   return `pw-${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
@@ -231,7 +237,7 @@ test("브라우저 폴더 선택으로도 문서 검색이 됩니다", async ({ 
   await page.getByTestId("submit-request").click();
 
   await expect(page.getByTestId("response-text")).toBeVisible();
-  await expect(page.getByTestId("response-text")).toContainText("[모의 요약]");
+  await expect(page.getByTestId("response-text")).toContainText(mockSummaryPrefixPattern);
   await expect(page.locator("#response-quick-meta-text")).toContainText("선택 결과 요약");
   await expect(page.locator("#response-quick-meta-text")).toContainText("출처 2개");
   await expect(page.locator("#response-quick-meta-text")).not.toContainText(/출처\s+budget-plan\.md/);
@@ -335,7 +341,7 @@ test("검색만 응답은 transcript에서 preview cards만 보이고 본문 텍
   await page.locator("#search-only").uncheck();
   await page.getByTestId("submit-request").click();
   await expect(page.getByTestId("response-text")).toBeVisible();
-  await expect(page.getByTestId("response-text")).toContainText("[모의 요약]");
+  await expect(page.getByTestId("response-text")).toContainText(mockSummaryPrefixPattern);
   await expect(page.getByTestId("response-search-preview")).toBeVisible();
   await expect(page.locator("#transcript .message-when").first()).toHaveText(/오[전후]\s\d{1,2}:\d{2}/);
   await expect(page.locator("#transcript .message-when").last()).toHaveText(/오[전후]\s\d{1,2}:\d{2}/);
@@ -437,15 +443,16 @@ test("내용 거절은 approval을 유지하고 나중 explicit save로 supersed
   await expect(approvalBox.locator('[data-testid="response-content-reject"]')).toHaveCount(0);
   const initialVerdictStatus = "저장 승인 거절과는 별도입니다. 이 버튼을 누르면 grounded-brief 원문 응답에 내용 거절을 즉시 기록합니다. 이미 열린 저장 승인 카드는 그대로 유지되며 자동 취소되지 않습니다.";
   await expect(page.locator("#response-content-verdict-status")).toHaveText(initialVerdictStatus);
-  const expectedNotePreview = [
-    `# ${path.basename(longFixturePath)} 요약`,
+  const expectedSummaryTail = `${middleSignal} 추가로 로컬 우선 구조를 유지합니다. 마무리 설명 문장입니다. 마무리 설명 문장입니다. 마무리 설명 문장입니다. 마무리 설명 문장입니다. 마무리 설명 문장입니다. 마무리 설명 문장입니다. 마 긴 요약 문서 도입 설명 문장입니다. 도입 설명 문장입니다. 도입 설명 문장입니다. 도입 설명 문장입니다. 도입 설명 문장입니다. 도입 설명 문장입니다. 도입 설명 문장입니다.`;
+  const expectedNotePreviewPattern = new RegExp([
+    `^# ${escapeRegExp(path.basename(longFixturePath))} 요약`,
     "",
-    `원본 파일: ${longFixturePath}`,
+    `원본 파일: ${escapeRegExp(longFixturePath)}`,
     "",
     "## 요약",
-    `[모의 요약] ${middleSignal} 추가로 로컬 우선 구조를 유지합니다. 마무리 설명 문장입니다. 마무리 설명 문장입니다. 마무리 설명 문장입니다. 마무리 설명 문장입니다. 마무리 설명 문장입니다. 마무리 설명 문장입니다. 마 긴 요약 문서 도입 설명 문장입니다. 도입 설명 문장입니다. 도입 설명 문장입니다. 도입 설명 문장입니다. 도입 설명 문장입니다. 도입 설명 문장입니다. 도입 설명 문장입니다. `,
-  ].join("\n");
-  await expect(page.locator("#approval-preview")).toHaveText(expectedNotePreview);
+    `${mockSummaryPrefixSource} ${escapeRegExp(expectedSummaryTail)}$`,
+  ].join("\\n"));
+  await expect(page.locator("#approval-preview")).toHaveText(expectedNotePreviewPattern);
 
   const originalApprovalPreview = (await page.locator("#approval-preview").textContent()) || "";
 
@@ -14154,8 +14161,8 @@ test("preference auto activation notice appears in PreferencePanel after correct
   await expect(assistantMessage).toBeVisible({ timeout: 10_000 });
 
   await assistantMessage.hover();
-  await page.getByTitle("수정").click();
-  await page.getByDisplayValue("원본 응답입니다.").fill("수정된 응답입니다.");
+  await page.getByTitle(/^수정$/).click();
+  await page.locator("main textarea:not([placeholder])").fill("수정된 응답입니다.");
   await page.getByRole("button", { name: /교정 제출/ }).click();
 
   const notice = page.getByTestId("preference-auto-activated-notice");
@@ -14400,7 +14407,9 @@ test("reviewed-memory loop: 활성화된 선호가 PreferencePanel 이번 응답
   page.once("dialog", async (dialog) => {
     await dialog.accept("");
   });
-  await page.getByRole("button", { name: "활성화" }).click();
+  const preferenceCard = page.locator(`#pref-card-${preferenceId}`);
+  await expect(preferenceCard).toBeVisible();
+  await preferenceCard.getByRole("button", { name: "활성화" }).click();
   await expect(page.getByText("신뢰도 높음").first()).toBeVisible({ timeout: 10_000 });
 
   await page.getByRole("button", { name: /설정/ }).click();

@@ -9,7 +9,10 @@
 ## 역할
 
 Gemini는 active `role_bindings.advisory`에 바인딩된 경우에만 advisory
-owner로 동작합니다. 현재 A profile에서는 보통 `advisory=Gemini`입니다.
+owner로 동작합니다. 현재 로컬 launcher profile은 Codex-only
+(`selected_agents=["Codex"]`, `advisory=""`, `advisory_enabled=false`)이므로,
+Gemini는 다시 선택되고 advisory에 바인딩될 때만 이 파일을 실행 role
+memory로 봅니다.
 
 Gemini가 하는 일:
 - verify/handoff owner가 exact next slice를 확신하지 못할 때 후보를 비교

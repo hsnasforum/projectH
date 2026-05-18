@@ -12,15 +12,16 @@ from storage.json_store_base import read_json
 
 
 class PipelineGuiSetupControllerTest(unittest.TestCase):
-    def test_default_profile_uses_catalog_driven_swapped_role_bindings(self) -> None:
+    def test_default_profile_uses_codex_self_verify_with_claude_advisory(self) -> None:
         controller = SetupController(Path("/tmp/projectH"))
         payload = controller.default_profile()
 
-        self.assertEqual(payload["selected_agents"], ["Claude", "Codex", "Gemini"])
+        self.assertEqual(payload["selected_agents"], ["Claude", "Codex"])
         self.assertEqual(
             payload["role_bindings"],
-            {"implement": "Codex", "verify": "Claude", "advisory": "Gemini"},
+            {"implement": "Codex", "verify": "Codex", "advisory": "Claude"},
         )
+        self.assertTrue(payload["mode_flags"]["self_verify_allowed"])
 
     def test_preview_matches_current_uses_setup_id_and_draft_fingerprint(self) -> None:
         preview = {

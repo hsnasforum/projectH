@@ -13,7 +13,6 @@ from pipeline_gui.setup_controller import SetupController
 from pipeline_gui.setup_executor import FaultInjectingSetupExecutorAdapter, LocalSetupExecutorAdapter
 from pipeline_gui.setup_models import SetupActionState
 from pipeline_gui.setup_profile import build_last_applied_record
-from pipeline_runtime.lane_catalog import default_role_bindings
 from storage.json_store_base import read_json
 
 
@@ -115,16 +114,19 @@ def _make_setup_gui(project: Path, *, adapter=None) -> PipelineGUI:
         executor_adapter=gui._setup_executor_adapter,
     )
     gui._home_controller = HomeController(project, gui._session_name)
-    gui._setup_agent_vars = {name: _Var(True) for name in ("Claude", "Codex", "Gemini")}
-    default_bindings = default_role_bindings()
+    default_profile = gui._setup_controller.default_profile()
+    default_selected = set(default_profile["selected_agents"])
+    gui._setup_agent_vars = {name: _Var(name in default_selected) for name in ("Claude", "Codex", "Gemini")}
+    default_bindings = dict(default_profile["role_bindings"])
+    default_flags = dict(default_profile["mode_flags"])
     gui._setup_implement_var = _Var(default_bindings["implement"])
     gui._setup_verify_var = _Var(default_bindings["verify"])
     gui._setup_advisory_var = _Var(default_bindings["advisory"])
     gui._setup_advisory_enabled_var = _Var(True)
     gui._setup_operator_stop_enabled_var = _Var(True)
     gui._setup_session_arbitration_var = _Var(True)
-    gui._setup_self_verify_var = _Var(False)
-    gui._setup_self_advisory_var = _Var(False)
+    gui._setup_self_verify_var = _Var(bool(default_flags["self_verify_allowed"]))
+    gui._setup_self_advisory_var = _Var(bool(default_flags["self_advisory_allowed"]))
     gui._setup_executor_var = _Var("auto")
     gui._setup_agent_error_var = _Var("")
     gui._setup_implement_error_var = _Var("")

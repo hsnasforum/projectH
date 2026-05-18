@@ -1242,6 +1242,58 @@ context window가 상당히 차 있어 새 세션에서 이어가시는 것을 �
 
 
 class WatcherPromptAssemblyTest(unittest.TestCase):
+    def test_verify_prompt_context_includes_runtime_dispatch_surface(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            watch_dir = root / "work"
+            base_dir = root / ".pipeline"
+            watch_dir.mkdir(parents=True, exist_ok=True)
+            base_dir.mkdir(parents=True, exist_ok=True)
+            _write_active_profile(
+                root,
+                {
+                    "schema_version": 1,
+                    "selected_agents": ["Codex"],
+                    "role_bindings": {"implement": "Codex", "verify": "Codex", "advisory": ""},
+                    "role_options": {
+                        "advisory_enabled": False,
+                        "operator_stop_enabled": True,
+                        "session_arbitration_enabled": False,
+                    },
+                    "mode_flags": {
+                        "single_agent_mode": True,
+                        "self_verify_allowed": True,
+                        "self_advisory_allowed": False,
+                    },
+                },
+            )
+            work_note = watch_dir / "2026-05-18-runtime-recovery.md"
+            work_note.write_text("## 변경 파일\n- watcher_prompt_assembly.py\n", encoding="utf-8")
+
+            core = watcher_core.WatcherCore(
+                {
+                    "watch_dir": str(watch_dir),
+                    "base_dir": str(base_dir),
+                    "repo_root": str(root),
+                    "dry_run": True,
+                }
+            )
+
+            prompt = core.sm.normalize_prompt_text(
+                core.sm.verify_prompt_template.format(
+                    **core.prompt_assembler.build_verify_prompt_context(str(work_note))
+                )
+            )
+
+            self.assertIn("ADVISORY_ENABLED: false", prompt)
+            self.assertIn("RUNTIME_STATUS_AT_DISPATCH:", prompt)
+            self.assertIn("runtime_state: RUNNING", prompt)
+            self.assertIn("lane_local_runtime_commands: non_authoritative", prompt)
+            self.assertIn(".pipeline/implement_handoff.md [implement] | .pipeline/operator_request.md [needs_operator]", prompt)
+            self.assertNotIn(".pipeline/advisory_request.md [request_open]", prompt)
+            self.assertIn("do not write .pipeline/advisory_request.md", prompt)
+            self.assertIn("tmux_socket_operation_not_permitted", prompt)
+
     def test_claude_dispatch_spec_carries_notify_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -1456,7 +1508,9 @@ class WatcherPromptAssemblyTest(unittest.TestCase):
             )
 
             self.assertIn("commit_push_bundle_authorization + internal_only", prompt)
-            self.assertIn("perform the scoped commit/push in this verify/handoff round", prompt)
+            self.assertIn("commit_push_bundle_authorization + internal_only + release_gate", prompt)
+            self.assertIn("PUBLISH_HELD: true", prompt)
+            self.assertIn("hold the publish backlog by default", prompt)
             self.assertIn("do not hand commit/push/PR work to the implement lane", prompt)
 
     def test_pr_creation_gate_routes_to_verify_owner_publish_followup(self) -> None:
@@ -1497,7 +1551,8 @@ class WatcherPromptAssemblyTest(unittest.TestCase):
 
             prompt = core.prompt_assembler.format_operator_retriage_prompt(marker or {})
             self.assertIn("pr_creation_gate + gate_24h + release_gate", prompt)
-            self.assertIn("create or reuse a draft PR", prompt)
+            self.assertIn("PUBLISH_HELD: true", prompt)
+            self.assertIn("hold draft PR creation by default", prompt)
             self.assertIn("stacked child branch/PR", prompt)
 
     def test_next_direction_after_launcher_close_routes_to_verify_followup(self) -> None:
@@ -1581,6 +1636,7 @@ class WatcherPromptAssemblyTest(unittest.TestCase):
 
             prompt = core.prompt_assembler.format_operator_retriage_prompt(marker or {})
             self.assertIn("commit_push_bundle_authorization + internal_only + release_gate", prompt)
+            self.assertIn("hold the publish backlog by default", prompt)
             self.assertIn("pr_creation_gate + gate_24h + release_gate", prompt)
             self.assertIn("do not hand commit/push/PR work to the implement lane", prompt)
 
@@ -2796,7 +2852,309 @@ class PaneLeaseOwnerPidWiringTest(unittest.TestCase):
             self.assertEqual(lock_data["job_id"], "job-2")
 
 
+class DedupeGuardPersistenceTest(unittest.TestCase):
+    def test_forget_survives_guard_reload(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            events_dir = Path(tmp) / "events"
+            guard = watcher_state.DedupeGuard(events_dir)
+
+            guard.mark_dispatch("job-1", 1, "hash-1", "slot_verify", "%1", False)
+            self.assertTrue(guard.is_duplicate("job-1", 1, "hash-1", "slot_verify"))
+
+            guard.forget("job-1", 1, "hash-1", "slot_verify")
+            self.assertFalse(guard.is_duplicate("job-1", 1, "hash-1", "slot_verify"))
+
+            reloaded = watcher_state.DedupeGuard(events_dir)
+            self.assertFalse(reloaded.is_duplicate("job-1", 1, "hash-1", "slot_verify"))
+
+
 class WatcherDispatchQueueControlMismatchTest(unittest.TestCase):
+    def test_new_control_dispatch_replaces_stale_codex_pasted_content(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            prompt_path = root / ".pipeline" / "implement_handoff.md"
+            prompt_path.parent.mkdir(parents=True, exist_ok=True)
+            prompt_path.write_text("STATUS: implement\nCONTROL_SEQ: 78\n", encoding="utf-8")
+            send_prompt = mock.Mock(return_value=True)
+            append_runtime_event = mock.Mock()
+            queue = watcher_dispatch.WatcherDispatchQueue(
+                lane_input_defer_cooldown_sec=0.0,
+                capture_pane_text=mock.Mock(
+                    side_effect=[
+                        "› [Pasted Content 1024 chars]\n",
+                        "processing view without prompt\n",
+                    ]
+                ),
+                send_keys=send_prompt,
+                get_path_sig=lambda path: path.read_text(encoding="utf-8") if path.exists() else "",
+                role_owner=lambda role: {"implement": "Codex"}.get(role, role),
+                log_raw=mock.Mock(),
+                append_runtime_event=append_runtime_event,
+                get_active_control_signal=mock.Mock(return_value=None),
+                is_active_control=mock.Mock(return_value=True),
+            )
+
+            ok = queue.dispatch(
+                watcher_dispatch.DispatchIntent(
+                    pending_key="codex_implement:implement_handoff:78",
+                    notify_kind="implement_handoff",
+                    lane_role="implement",
+                    functional_role="implement",
+                    lane_id="codex_implement",
+                    agent_kind="codex",
+                    model_alias=None,
+                    reason="implement_handoff_updated",
+                    prompt="prompt 78",
+                    prompt_path=prompt_path,
+                    target="codex-pane",
+                    pane_type="codex",
+                    control_seq=78,
+                    expected_status="implement",
+                    expected_control_path="implement_handoff.md",
+                    expected_control_slot="implement_handoff",
+                    expected_control_seq=78,
+                    require_active_control=True,
+                )
+            )
+
+            self.assertTrue(ok)
+            send_prompt.assert_called_once_with("codex-pane", "prompt 78", "codex")
+            self.assertNotIn("codex_implement:implement_handoff:78", queue.pending_notifications)
+            append_runtime_event.assert_called_once()
+            event_name, payload = append_runtime_event.call_args.args
+            self.assertEqual(event_name, "lane_input_stale_pasted_replaced")
+            self.assertEqual(payload["recovery_reason"], "prompt_contains_pasted_content")
+            self.assertEqual(payload["control_seq"], 78)
+
+    def test_flush_pending_replaces_codex_pasted_content_when_still_unsubmitted(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            prompt_path = root / ".pipeline" / "advisory_advice.md"
+            prompt_path.parent.mkdir(parents=True, exist_ok=True)
+            prompt_path.write_text("STATUS: advice_ready\nCONTROL_SEQ: 77\n", encoding="utf-8")
+            active_control = ControlSignal(
+                kind="advisory_advice",
+                path=prompt_path,
+                status="advice_ready",
+                mtime=77.0,
+                sig="sig-77",
+                control_seq=77,
+                slot_id="advisory_advice",
+                canonical_file="advisory_advice.md",
+            )
+            send_prompt = mock.Mock(return_value=True)
+            append_runtime_event = mock.Mock()
+            queue = watcher_dispatch.WatcherDispatchQueue(
+                lane_input_defer_cooldown_sec=0.0,
+                capture_pane_text=mock.Mock(
+                    side_effect=[
+                        (
+                            "› [Pasted Content 1024 chars]\n"
+                            "  [Pasted Content 1024 chars] #2\n"
+                            "  [Pasted Content 1024 chars] #3 .pipeline/advisory_request.md\n"
+                        ),
+                        "processing view without prompt\n",
+                    ]
+                ),
+                send_keys=send_prompt,
+                get_path_sig=lambda path: path.read_text(encoding="utf-8") if path.exists() else "",
+                role_owner=lambda role: {"verify": "Codex"}.get(role, role),
+                log_raw=mock.Mock(),
+                append_runtime_event=append_runtime_event,
+                get_active_control_signal=mock.Mock(return_value=active_control),
+                is_active_control=mock.Mock(return_value=True),
+            )
+            queue.pending_notifications = {
+                "codex_verify:advisory_advice_followup:77": {
+                    "notify_kind": "advisory_advice_followup",
+                    "lane_role": "verify",
+                    "functional_role": "verify",
+                    "lane_id": "codex_verify",
+                    "agent_kind": "codex",
+                    "reason": "advisory_advice_updated",
+                    "prompt": "prompt 77",
+                    "prompt_path": str(prompt_path),
+                    "target": "codex-pane",
+                    "pane_type": "codex",
+                    "control_seq": 77,
+                    "expected_status": "advice_ready",
+                    "expected_control_path": "advisory_advice.md",
+                    "expected_control_slot": "advisory_advice",
+                    "expected_control_seq": 77,
+                    "require_active_control": False,
+                    "sig": "",
+                }
+            }
+
+            queue.flush_pending()
+
+            send_prompt.assert_called_once_with("codex-pane", "prompt 77", "codex")
+            self.assertNotIn("codex_verify:advisory_advice_followup:77", queue.pending_notifications)
+            event_name, payload = append_runtime_event.call_args.args
+            self.assertEqual(event_name, "lane_input_stale_pasted_replaced")
+            self.assertEqual(payload["recovery_reason"], "prompt_contains_pasted_content")
+
+    def test_stale_codex_paste_blocked_does_not_repaste_during_backoff(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            prompt_path = root / ".pipeline" / "operator_request.md"
+            prompt_path.parent.mkdir(parents=True, exist_ok=True)
+            prompt_path.write_text("STATUS: needs_operator\nCONTROL_SEQ: 1624\n", encoding="utf-8")
+            send_prompt = mock.Mock(return_value=False)
+            append_runtime_event = mock.Mock()
+            capture = mock.Mock(return_value="› [Pasted Content 2048 chars]\n")
+            active_control = ControlSignal(
+                kind="operator",
+                path=prompt_path,
+                status="needs_operator",
+                mtime=1624.0,
+                sig="sig-1624",
+                control_seq=1624,
+                slot_id="operator_request",
+                canonical_file="operator_request.md",
+            )
+            queue = watcher_dispatch.WatcherDispatchQueue(
+                lane_input_defer_cooldown_sec=0.0,
+                capture_pane_text=capture,
+                send_keys=send_prompt,
+                get_path_sig=lambda path: path.read_text(encoding="utf-8") if path.exists() else "",
+                role_owner=lambda role: {"verify": "Codex"}.get(role, role),
+                log_raw=mock.Mock(),
+                append_runtime_event=append_runtime_event,
+                get_active_control_signal=mock.Mock(return_value=active_control),
+                is_active_control=mock.Mock(return_value=True),
+            )
+            intent = watcher_dispatch.DispatchIntent(
+                pending_key="codex_verify:verify_operator_retriage:1624",
+                notify_kind="verify_operator_retriage",
+                lane_role="verify",
+                functional_role="verify",
+                lane_id="codex_verify",
+                agent_kind="codex",
+                model_alias=None,
+                reason="operator_retriage_no_next_control",
+                prompt="prompt 1624",
+                prompt_path=prompt_path,
+                target="codex-pane",
+                pane_type="codex",
+                control_seq=1624,
+                expected_status="needs_operator",
+                expected_control_path="operator_request.md",
+                expected_control_slot="operator_request",
+                expected_control_seq=1624,
+            )
+
+            self.assertFalse(queue.dispatch(intent))
+            queue.flush_pending()
+
+            send_prompt.assert_called_once_with("codex-pane", "prompt 1624", "codex")
+            self.assertIn("codex_verify:verify_operator_retriage:1624", queue.pending_notifications)
+            event_names = [call.args[0] for call in append_runtime_event.call_args_list]
+            self.assertIn("lane_input_stale_pasted_replaced", event_names)
+            self.assertIn("codex_stale_paste_blocked", event_names)
+            self.assertIn("lane_input_deferred", event_names)
+
+    def test_codex_send_success_with_remaining_paste_marker_is_blocked(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            prompt_path = root / ".pipeline" / "operator_request.md"
+            prompt_path.parent.mkdir(parents=True, exist_ok=True)
+            prompt_path.write_text("STATUS: needs_operator\nCONTROL_SEQ: 1627\n", encoding="utf-8")
+            send_prompt = mock.Mock(return_value=True)
+            append_runtime_event = mock.Mock()
+            queue = watcher_dispatch.WatcherDispatchQueue(
+                lane_input_defer_cooldown_sec=0.0,
+                capture_pane_text=mock.Mock(
+                    side_effect=[
+                        "› [Pasted Content 1024 chars]\n",
+                        "› [Pasted Content 1024 chars][Pasted Content 2048 chars]\n",
+                    ]
+                ),
+                send_keys=send_prompt,
+                get_path_sig=lambda path: path.read_text(encoding="utf-8") if path.exists() else "",
+                role_owner=lambda role: {"verify": "Codex"}.get(role, role),
+                log_raw=mock.Mock(),
+                append_runtime_event=append_runtime_event,
+                get_active_control_signal=mock.Mock(return_value=None),
+                is_active_control=mock.Mock(return_value=True),
+            )
+            intent = watcher_dispatch.DispatchIntent(
+                pending_key="codex_verify:verify_operator_retriage:1627",
+                notify_kind="verify_operator_retriage",
+                lane_role="verify",
+                functional_role="verify",
+                lane_id="codex_verify",
+                agent_kind="codex",
+                model_alias=None,
+                reason="startup_turn_operator_gated",
+                prompt="prompt 1627",
+                prompt_path=prompt_path,
+                target="codex-pane",
+                pane_type="codex",
+                control_seq=1627,
+            )
+
+            self.assertFalse(queue.dispatch(intent))
+
+            send_prompt.assert_called_once_with("codex-pane", "prompt 1627", "codex")
+            self.assertIn("codex_verify:verify_operator_retriage:1627", queue.pending_notifications)
+            event_names = [call.args[0] for call in append_runtime_event.call_args_list]
+            self.assertIn("lane_input_stale_pasted_replaced", event_names)
+            self.assertIn("codex_stale_paste_blocked", event_names)
+
+    def test_ready_codex_send_failure_with_remaining_paste_marker_is_blocked(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            prompt_path = root / ".pipeline" / "operator_request.md"
+            prompt_path.parent.mkdir(parents=True, exist_ok=True)
+            prompt_path.write_text("STATUS: needs_operator\nCONTROL_SEQ: 1627\n", encoding="utf-8")
+            send_prompt = mock.Mock(return_value=False)
+            append_runtime_event = mock.Mock()
+            queue = watcher_dispatch.WatcherDispatchQueue(
+                lane_input_defer_cooldown_sec=0.0,
+                capture_pane_text=mock.Mock(
+                    side_effect=[
+                        "› \n",
+                        "› [Pasted Content 2048 chars][Pasted Content 1024 chars]\n",
+                    ]
+                ),
+                send_keys=send_prompt,
+                get_path_sig=lambda path: path.read_text(encoding="utf-8") if path.exists() else "",
+                role_owner=lambda role: {"verify": "Codex"}.get(role, role),
+                log_raw=mock.Mock(),
+                append_runtime_event=append_runtime_event,
+                get_active_control_signal=mock.Mock(return_value=None),
+                is_active_control=mock.Mock(return_value=True),
+            )
+            intent = watcher_dispatch.DispatchIntent(
+                pending_key="codex_verify:verify_operator_retriage:1627",
+                notify_kind="verify_operator_retriage",
+                lane_role="verify",
+                functional_role="verify",
+                lane_id="codex_verify",
+                agent_kind="codex",
+                model_alias=None,
+                reason="startup_turn_operator_gated",
+                prompt="prompt 1627",
+                prompt_path=prompt_path,
+                target="codex-pane",
+                pane_type="codex",
+                control_seq=1627,
+            )
+
+            self.assertFalse(queue.dispatch(intent))
+
+            send_prompt.assert_called_once_with("codex-pane", "prompt 1627", "codex")
+            self.assertIn("codex_verify:verify_operator_retriage:1627", queue.pending_notifications)
+            event_names = [call.args[0] for call in append_runtime_event.call_args_list]
+            self.assertIn("codex_stale_paste_blocked", event_names)
+            deferred_payloads = [
+                call.args[1]
+                for call in append_runtime_event.call_args_list
+                if call.args[0] == "lane_input_deferred"
+            ]
+            self.assertEqual(deferred_payloads[-1]["defer_reason"], "codex_stale_paste_blocked")
+
     def test_flush_pending_rechecks_active_control_for_each_pending(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -3109,6 +3467,127 @@ class WatcherDispatchQueueControlMismatchTest(unittest.TestCase):
             self.assertEqual(payload["reason"], "control_mismatch")
             self.assertEqual(payload["reason_code"], "signal_mismatch")
             append_runtime_event.assert_called_once_with("lane_input_deferred_dropped", payload)
+
+    def test_signal_mismatch_keeps_pending_when_dispatch_seen_races_before_lane_working(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            base_dir = root / ".pipeline"
+            run_dir = base_dir / "runs" / "run-1"
+            wrapper_dir = run_dir / "wrapper-events"
+            prompt_path = base_dir / "implement_handoff.md"
+            prompt_path.parent.mkdir(parents=True, exist_ok=True)
+            wrapper_dir.mkdir(parents=True, exist_ok=True)
+            prompt_path.write_text("STATUS: implement\nCONTROL_SEQ: 236\n", encoding="utf-8")
+            (base_dir / "current_run.json").write_text(
+                json.dumps(
+                    {
+                        "run_id": "run-1",
+                        "events_path": ".pipeline/runs/run-1/events.jsonl",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (run_dir / "events.jsonl").write_text(
+                json.dumps(
+                    {
+                        "seq": 236,
+                        "ts": "2026-04-20T14:27:43.555105Z",
+                        "run_id": "run-1",
+                        "event_type": "lane_working",
+                        "source": "supervisor",
+                        "payload": {
+                            "lane": "Claude",
+                            "state": "WORKING",
+                        },
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            (wrapper_dir / "claude.jsonl").write_text(
+                "\n".join(
+                    [
+                        json.dumps(
+                            {
+                                "ts": "2026-04-20T14:27:43.540105Z",
+                                "lane": "Claude",
+                                "event_type": "DISPATCH_SEEN",
+                                "source": "wrapper",
+                                "payload": {
+                                    "job_id": "ctrl-236",
+                                    "dispatch_id": "seq-236",
+                                    "control_seq": 236,
+                                    "attempt": 1,
+                                },
+                            },
+                            ensure_ascii=False,
+                        ),
+                        json.dumps(
+                            {
+                                "ts": "2026-04-20T14:27:44.000105Z",
+                                "lane": "Claude",
+                                "event_type": "HEARTBEAT",
+                                "source": "wrapper",
+                                "payload": {"pid": 818464},
+                            },
+                            ensure_ascii=False,
+                        ),
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            active_control = ControlSignal(
+                kind="claude_handoff",
+                path=prompt_path,
+                status="implement",
+                mtime=236.0,
+                sig="sig-236",
+                control_seq=236,
+            )
+            send_prompt = mock.Mock(return_value=True)
+            log_raw = mock.Mock()
+            append_runtime_event = mock.Mock()
+            queue = watcher_dispatch.WatcherDispatchQueue(
+                lane_input_defer_cooldown_sec=0.0,
+                capture_pane_text=mock.Mock(return_value="❯ \n  ⏵⏵ bypass permissions on\n"),
+                send_keys=send_prompt,
+                get_path_sig=lambda path: path.read_text(encoding="utf-8") if path.exists() else "",
+                role_owner=lambda role: {"implement": "Claude"}.get(role, role),
+                log_raw=log_raw,
+                append_runtime_event=append_runtime_event,
+                get_active_control_signal=mock.Mock(return_value=active_control),
+                is_active_control=mock.Mock(return_value=True),
+            )
+            queue.pending_notifications = {
+                "claude_implement:implement_handoff:236": {
+                    "notify_kind": "claude_handoff",
+                    "lane_role": "implement",
+                    "functional_role": "implement",
+                    "lane_id": "claude_implement",
+                    "agent_kind": "claude",
+                    "reason": "handoff_dispatch",
+                    "prompt": "prompt 236",
+                    "prompt_path": str(prompt_path),
+                    "target": "claude-pane",
+                    "pane_type": "claude",
+                    "control_seq": 236,
+                    "expected_status": "implement",
+                    "expected_control_path": "implement_handoff.md",
+                    "expected_control_seq": 236,
+                    "require_active_control": False,
+                    "sig": "",
+                }
+            }
+
+            queue.flush_pending()
+
+            send_prompt.assert_called_once_with("claude-pane", "prompt 236", "claude")
+            self.assertEqual(queue.pending_notifications, {})
+            log_raw.assert_not_called()
+            append_runtime_event.assert_not_called()
 
     def test_signal_mismatch_does_not_drop_verify_followup_pending(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -4331,6 +4810,42 @@ class TurnResolutionTest(unittest.TestCase):
             self.assertEqual(marker["reason"], COMMIT_PUSH_BUNDLE_AUTHORIZATION_REASON)
             self.assertEqual(marker["mode"], "triage")
             self.assertEqual(marker["routed_to"], "verify_followup")
+            self.assertEqual(core._resolve_turn(), "verify_followup")
+
+    def test_accumulated_dirty_tree_publish_boundary_routes_to_verify_followup(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo, _remote = _init_repo_with_commit_push(root)
+            watch_dir = repo / "work"
+            base_dir = repo / ".pipeline"
+            watch_dir.mkdir(parents=True, exist_ok=True)
+            (repo / "dirty-source.txt").write_text("dirty\n", encoding="utf-8")
+            _write_commit_push_operator_request(
+                base_dir,
+                seq=1624,
+                reason_code="publish_boundary_accumulated_dirty_tree",
+                operator_policy="commit_push_bundle_authorization",
+                decision_class="publish_bundle_authorization",
+            )
+
+            core = watcher_core.WatcherCore(
+                {
+                    "watch_dir": str(watch_dir),
+                    "base_dir": str(base_dir),
+                    "repo_root": str(repo),
+                    "dry_run": True,
+                }
+            )
+
+            self.assertIsNone(core._operator_control_recovery_marker())
+            marker = core._operator_gate_marker()
+            self.assertIsNotNone(marker)
+            assert marker is not None
+            self.assertEqual(marker["reason"], COMMIT_PUSH_BUNDLE_AUTHORIZATION_REASON)
+            self.assertEqual(marker["mode"], "triage")
+            self.assertEqual(marker["routed_to"], "verify_followup")
+            self.assertEqual(marker["operator_policy"], "internal_only")
+            self.assertEqual(marker["decision_class"], "release_gate")
             self.assertEqual(core._resolve_turn(), "verify_followup")
 
     def test_commit_push_operator_request_without_upstream_stays_operator_turn(self) -> None:
@@ -5849,6 +6364,103 @@ class RollingSignalTransitionTest(unittest.TestCase):
             self.assertIn("SUPERSEDES: .pipeline/operator_request.md CONTROL_SEQ 31", request_text)
             raw_text = (base_dir / "logs" / "experimental" / "raw.jsonl").read_text(encoding="utf-8")
             self.assertIn("operator_retriage_no_next_control", raw_text)
+
+    def test_operator_retriage_no_next_control_advisory_disabled_returns_to_verify(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            watch_dir = root / "work"
+            base_dir = root / ".pipeline"
+            watch_dir.mkdir(parents=True, exist_ok=True)
+            base_dir.mkdir(parents=True, exist_ok=True)
+            _write_active_profile(
+                root,
+                {
+                    "schema_version": 1,
+                    "selected_agents": ["Codex"],
+                    "role_bindings": {"implement": "Codex", "verify": "Codex", "advisory": ""},
+                    "role_options": {
+                        "advisory_enabled": False,
+                        "operator_stop_enabled": True,
+                        "session_arbitration_enabled": False,
+                    },
+                    "mode_flags": {
+                        "single_agent_mode": True,
+                        "self_verify_allowed": True,
+                        "self_advisory_allowed": False,
+                    },
+                },
+            )
+
+            operator_path = base_dir / "operator_request.md"
+            operator_path.write_text(
+                "\n".join(
+                    [
+                        "STATUS: needs_operator",
+                        "CONTROL_SEQ: 1624",
+                        "REASON_CODE: publish_boundary_accumulated_dirty_tree",
+                        "OPERATOR_POLICY: commit_push_bundle_authorization",
+                        "DECISION_CLASS: publish_bundle_authorization",
+                        (
+                            "DECISION_REQUIRED: Authorize verify/handoff to commit, push, "
+                            "and open a draft PR; or explicitly hold publication."
+                        ),
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            core = watcher_core.WatcherCore(
+                {
+                    "watch_dir": str(watch_dir),
+                    "base_dir": str(base_dir),
+                    "repo_root": str(root),
+                    "dry_run": True,
+                    "operator_retriage_no_control_sec": 0,
+                }
+            )
+            marker = core._operator_gate_marker()
+            self.assertIsNotNone(marker)
+            core._last_operator_retriage_sig = core._get_path_sig(operator_path)
+            core._last_operator_retriage_fingerprint = str((marker or {}).get("fingerprint") or "")
+            core._operator_retriage_started_at = time.time() - 10.0
+            core._transition_turn(
+                WatcherTurnState.VERIFY_FOLLOWUP,
+                "test_setup_operator_retriage",
+                active_control_file="operator_request.md",
+                active_control_seq=1624,
+            )
+
+            with (
+                mock.patch.object(
+                    core.dispatch_queue,
+                    "lane_prompt_readiness",
+                    return_value=(True, ""),
+                ),
+                mock.patch.object(core, "_notify_verify_operator_retriage") as notify,
+                mock.patch.object(core, "_notify_advisory_owner") as advisory_notify,
+            ):
+                promoted = core._promote_operator_retriage_no_next_control()
+
+            self.assertTrue(promoted)
+            advisory_notify.assert_not_called()
+            notify.assert_called_once()
+            reason, payload = notify.call_args.args
+            self.assertEqual(reason, "operator_retriage_no_next_control")
+            self.assertTrue(payload["advisory_disabled"])
+            self.assertTrue(payload["publish_held"])
+            prompt = core.prompt_assembler.format_operator_retriage_prompt(payload)
+            self.assertIn("ADVISORY_DISABLED: true", prompt)
+            self.assertIn("PUBLISH_HELD: true", prompt)
+            self.assertIn("do not write `.pipeline/advisory_request.md`", prompt)
+            self.assertNotIn(".pipeline/advisory_request.md [request_open]", prompt)
+            self.assertFalse((base_dir / "advisory_request.md").exists())
+            self.assertEqual(core._current_turn_state, WatcherTurnState.VERIFY_FOLLOWUP)
+            turn_state = json.loads((base_dir / "state" / "turn_state.json").read_text(encoding="utf-8"))
+            self.assertEqual(turn_state["reason"], "verify_followup_no_next_control")
+            self.assertEqual(core._turn_active_control_seq, 1624)
+            raw_text = (base_dir / "logs" / "experimental" / "raw.jsonl").read_text(encoding="utf-8")
+            self.assertIn("operator_retriage_no_next_control", raw_text)
+            self.assertIn("advisory_disabled", raw_text)
 
     def test_inactive_advisory_busy_preempts_operator_retriage_promotion(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -9052,9 +9664,63 @@ class VerifyCompletionContractTest(unittest.TestCase):
 
 
 class CodexDispatchConfirmationTest(unittest.TestCase):
+    def test_codex_literal_fallback_prompt_wraps_complete_instruction_body(self) -> None:
+        command = "ROLE: verify\r\nGOAL:\n- preserve this\nNUL:\x00removed"
+
+        prompt = watcher_dispatch._codex_literal_fallback_prompt(command)
+
+        prefix = (
+            "Follow this pipeline instruction. Decode the following JSON string as the "
+            "complete instruction body, preserving escaped newline characters: "
+        )
+        self.assertTrue(prompt.startswith(prefix))
+        encoded_body = prompt[len(prefix):]
+        self.assertEqual(json.loads(encoded_body), "ROLE: verify\nGOAL:\n- preserve this\nNUL:removed")
+        self.assertIn("\\n", encoded_body)
+        self.assertNotIn("\x00", prompt)
+
+    def test_text_has_codex_literal_fallback_prompt_only_for_visible_input(self) -> None:
+        prompt = watcher_dispatch._codex_literal_fallback_prompt("ROLE: verify\nGOAL:\n- run")
+
+        self.assertTrue(watcher_dispatch._text_has_codex_literal_fallback_prompt(f"› {prompt}"))
+        self.assertFalse(
+            watcher_dispatch._text_has_codex_literal_fallback_prompt(
+                f"• previous assistant output\n{prompt}\n• completed"
+            )
+        )
+
+    def test_dispatch_codex_literal_fallback_clears_visible_prompt_after_submit_retry_failure(self) -> None:
+        literal_prompt = watcher_dispatch._codex_literal_fallback_prompt("ROLE: verify")
+        snapshots = iter([
+            "›",
+            f"› {literal_prompt}",
+            f"› {literal_prompt}",
+            f"› {literal_prompt}",
+            f"› {literal_prompt}",
+            "›",
+        ])
+        run_calls: list[list[str]] = []
+
+        def _run(cmd, **kwargs):
+            run_calls.append(list(cmd))
+            return mock.Mock(stdout="", stderr=b"")
+
+        with mock.patch("watcher_dispatch.subprocess.run", side_effect=_run), \
+             mock.patch("watcher_dispatch._shared_capture_pane_text", side_effect=lambda _pane: next(snapshots)), \
+             mock.patch("watcher_dispatch._shared_wait_for_pane_settle", return_value=True), \
+             mock.patch("watcher_dispatch._shared_pane_text_has_codex_activity", return_value=False), \
+             mock.patch("watcher_dispatch.time.sleep", return_value=None):
+            result = watcher_dispatch._dispatch_codex_literal_fallback("%1", "ROLE: verify")
+
+        self.assertFalse(result)
+        self.assertIn(["tmux", "send-keys", "-t", "%1", "Enter"], run_calls)
+        self.assertIn(["tmux", "send-keys", "-t", "%1", "C-m"], run_calls)
+        self.assertIn(["tmux", "send-keys", "-t", "%1", "C-l"], run_calls)
+
     def test_dispatch_codex_clears_existing_prompt_input_before_paste(self) -> None:
         snapshots = iter([
             "› stale draft",
+            "› prompt pasted",
             "processing view without prompt",
         ])
         run_calls: list[list[str]] = []
@@ -9073,9 +9739,58 @@ class CodexDispatchConfirmationTest(unittest.TestCase):
         self.assertGreaterEqual(len(run_calls), 3)
         self.assertEqual(run_calls[0], ["tmux", "send-keys", "-t", "%1", "C-u"])
 
+    def test_dispatch_codex_cancels_stale_pasted_prompt_before_paste(self) -> None:
+        snapshots = iter([
+            "› [Pasted Content 1024 chars]",
+            "›",
+            "› prompt pasted",
+            "processing view without prompt",
+        ])
+        run_calls: list[list[str]] = []
+
+        def _run(cmd, **kwargs):
+            run_calls.append(list(cmd))
+            return mock.Mock(stdout="", stderr=b"")
+
+        with mock.patch("watcher_dispatch.subprocess.run", side_effect=_run), \
+             mock.patch("watcher_dispatch._shared_capture_pane_text", side_effect=lambda _pane: next(snapshots)), \
+             mock.patch("watcher_dispatch._shared_wait_for_pane_settle", return_value=True), \
+             mock.patch("watcher_dispatch._pane_has_working_indicator", return_value=True), \
+             mock.patch("watcher_dispatch.time.sleep", return_value=None):
+            result = watcher_dispatch._dispatch_codex("%1", "ROLE: verify")
+
+        self.assertTrue(result)
+        self.assertEqual(run_calls[0], ["tmux", "send-keys", "-t", "%1", "C-c"])
+        self.assertEqual(run_calls[1], ["tmux", "send-keys", "-t", "%1", "C-u"])
+
+    def test_dispatch_codex_returns_false_when_hard_clear_leaves_pasted_prompt(self) -> None:
+        snapshots = iter([
+            "› [Pasted Content 1024 chars]stale prompt",
+            "› [Pasted Content 1024 chars]stale prompt",
+        ])
+        run_calls: list[list[str]] = []
+
+        def _run(cmd, **kwargs):
+            run_calls.append(list(cmd))
+            return mock.Mock(stdout="", stderr=b"")
+
+        with mock.patch("watcher_dispatch.subprocess.run", side_effect=_run), \
+             mock.patch("watcher_dispatch._shared_capture_pane_text", side_effect=lambda _pane: next(snapshots)), \
+             mock.patch("watcher_dispatch._shared_wait_for_pane_settle", return_value=True), \
+             mock.patch("watcher_dispatch.time.sleep", return_value=None):
+            result = watcher_dispatch._dispatch_codex("%1", "ROLE: verify")
+
+        self.assertFalse(result)
+        self.assertEqual(run_calls[0], ["tmux", "send-keys", "-t", "%1", "C-c"])
+        self.assertEqual(run_calls[1], ["tmux", "send-keys", "-t", "%1", "C-u"])
+        self.assertNotIn(["tmux", "set-buffer", "ROLE: verify"], run_calls)
+        enter_calls = [call for call in run_calls if call == ["tmux", "send-keys", "-t", "%1", "Enter"]]
+        self.assertEqual(len(enter_calls), 0)
+
     def test_dispatch_codex_returns_true_when_prompt_is_consumed_without_immediate_confirmation(self) -> None:
         snapshots = itertools.chain(
             [
+                "›",
                 "› prompt pasted",
                 "processing view without prompt",
             ],
@@ -9094,18 +9809,82 @@ class CodexDispatchConfirmationTest(unittest.TestCase):
 
     def test_dispatch_codex_returns_false_when_prompt_never_consumes(self) -> None:
         snapshots = itertools.repeat("› prompt pasted")
+        run_calls: list[list[str]] = []
 
-        with mock.patch("watcher_dispatch.subprocess.run") as run_mock, \
+        def _run(cmd, **kwargs):
+            run_calls.append(list(cmd))
+            return mock.Mock(stdout="", stderr=b"")
+
+        with mock.patch("watcher_dispatch.subprocess.run", side_effect=_run), \
              mock.patch("watcher_dispatch._shared_capture_pane_text", side_effect=lambda _pane: next(snapshots)), \
              mock.patch("watcher_dispatch._shared_pane_text_has_codex_activity", return_value=False), \
              mock.patch("watcher_dispatch.time.sleep", return_value=None):
             result = watcher_dispatch._dispatch_codex("%1", "ROLE: verify")
 
         self.assertFalse(result)
-        self.assertGreaterEqual(run_mock.call_count, 3)
+        enter_calls = [call for call in run_calls if call == ["tmux", "send-keys", "-t", "%1", "Enter"]]
+        self.assertEqual(len(enter_calls), 1)
+
+    def test_dispatch_codex_returns_false_when_pasted_prompt_remains_after_enter(self) -> None:
+        snapshots = iter([
+            "› [Pasted Content 1024 chars]stale prompt",
+            "›",
+            "› [Pasted Content 1024 chars]ROLE: verify",
+            "• previous activity\n› [Pasted Content 1024 chars]ROLE: verify",
+            "• previous activity\n› [Pasted Content 1024 chars]ROLE: verify",
+            "• previous activity\n› [Pasted Content 1024 chars]ROLE: verify",
+            "• previous activity\n›",
+        ])
+        run_calls: list[list[str]] = []
+
+        def _run(cmd, **kwargs):
+            run_calls.append(list(cmd))
+            return mock.Mock(stdout="", stderr=b"")
+
+        with mock.patch("watcher_dispatch.subprocess.run", side_effect=_run), \
+             mock.patch("watcher_dispatch._shared_capture_pane_text", side_effect=lambda _pane: next(snapshots)), \
+             mock.patch("watcher_dispatch._shared_wait_for_pane_settle", return_value=True), \
+             mock.patch("watcher_dispatch._dispatch_codex_literal_fallback", return_value=False) as fallback, \
+             mock.patch("watcher_dispatch.time.sleep", return_value=None):
+            result = watcher_dispatch._dispatch_codex("%1", "ROLE: verify")
+
+        self.assertFalse(result)
+        self.assertEqual(run_calls[0], ["tmux", "send-keys", "-t", "%1", "C-c"])
+        self.assertEqual(run_calls[1], ["tmux", "send-keys", "-t", "%1", "C-u"])
+        enter_calls = [call for call in run_calls if call == ["tmux", "send-keys", "-t", "%1", "Enter"]]
+        c_j_calls = [call for call in run_calls if call == ["tmux", "send-keys", "-t", "%1", "C-j"]]
+        self.assertEqual(len(enter_calls), 1)
+        self.assertEqual(len(c_j_calls), 1)
+        fallback.assert_called_once_with("%1", "ROLE: verify")
+
+    def test_dispatch_codex_retries_enter_once_when_pasted_prompt_lingers(self) -> None:
+        snapshots = iter([
+            "›",
+            "› [Pasted Content 1024 chars]ROLE: verify",
+            "› [Pasted Content 1024 chars]ROLE: verify",
+            "processing view without prompt",
+        ])
+        run_calls: list[list[str]] = []
+
+        def _run(cmd, **kwargs):
+            run_calls.append(list(cmd))
+            return mock.Mock(stdout="", stderr=b"")
+
+        with mock.patch("watcher_dispatch.subprocess.run", side_effect=_run), \
+             mock.patch("watcher_dispatch._shared_capture_pane_text", side_effect=lambda _pane: next(snapshots)), \
+             mock.patch("watcher_dispatch._pane_has_working_indicator", return_value=True), \
+             mock.patch("watcher_dispatch.time.sleep", return_value=None):
+            result = watcher_dispatch._dispatch_codex("%1", "ROLE: verify")
+
+        self.assertTrue(result)
+        enter_calls = [call for call in run_calls if call == ["tmux", "send-keys", "-t", "%1", "Enter"]]
+        c_j_calls = [call for call in run_calls if call == ["tmux", "send-keys", "-t", "%1", "C-j"]]
+        self.assertEqual(len(enter_calls), 1)
+        self.assertEqual(len(c_j_calls), 1)
 
     def test_dispatch_codex_returns_true_when_working_indicator_appears(self) -> None:
         snapshots = iter([
+            "›",
             "› prompt pasted",
             "processing view without prompt",
         ])
@@ -9466,7 +10245,7 @@ class VerifyPendingBackoffTest(unittest.TestCase):
 
             self.assertEqual(job.status, JobStatus.VERIFY_PENDING)
 
-    def test_failed_dispatch_visible_prompt_skips_retry_after_backoff(self) -> None:
+    def test_failed_dispatch_visible_prompt_clears_and_retries_after_backoff(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             watch_dir = root / "work"
@@ -9501,16 +10280,16 @@ class VerifyPendingBackoffTest(unittest.TestCase):
                     "* Blanching...",
                 ]
             )
-            previous_failed_at = job.last_failed_dispatch_at
-
-            with mock.patch.object(core.lease, "acquire", side_effect=AssertionError("lease should not be acquired")), \
-                 mock.patch.object(core.sm, "send_keys", side_effect=AssertionError("dispatch should not run")), \
+            with mock.patch("watcher_dispatch.clear_codex_failed_dispatch_input", return_value=True) as clear_input, \
+                 mock.patch.object(core.sm, "send_keys", return_value=True) as send_keys, \
                  mock.patch.object(core.sm, "capture_pane_text", return_value=visible_prompt):
                 job = core.sm._handle_verify_pending(job)
 
-            self.assertEqual(job.status, JobStatus.VERIFY_PENDING)
-            self.assertGreater(job.last_failed_dispatch_at, previous_failed_at)
-            self.assertEqual(job.last_failed_dispatch_snapshot, visible_prompt.rstrip())
+            self.assertEqual(job.status, JobStatus.VERIFY_RUNNING)
+            self.assertEqual(job.last_failed_dispatch_at, 0.0)
+            self.assertEqual(job.last_failed_dispatch_snapshot, "")
+            clear_input.assert_called_once_with("codex-pane", "dispatch_backoff_prompt_visible")
+            send_keys.assert_called_once()
 
     def test_dispatch_stall_pasted_content_snapshot_skips_retry_after_backoff(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -9598,6 +10377,115 @@ class VerifyPendingBackoffTest(unittest.TestCase):
                 job = core.sm._handle_verify_pending(job)
 
             self.assertEqual(job.status, JobStatus.VERIFY_PENDING)
+
+    def test_dispatch_stall_unsubmitted_pasted_prompt_retries_after_backoff(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            watch_dir = root / "work"
+            base_dir = root / ".pipeline"
+            watch_dir.mkdir(parents=True, exist_ok=True)
+            base_dir.mkdir(parents=True, exist_ok=True)
+            _write_active_profile(root)
+
+            work_note = watch_dir / "2026-04-10-slice.md"
+            _write_work_note(work_note, ["watcher_dispatch.py"])
+            job = JobState.from_artifact("job-pasted-prompt-retry", str(work_note))
+            job.status = JobStatus.VERIFY_PENDING
+            job.artifact_hash = "hash-1"
+            job.last_failed_dispatch_at = time.time() - 30
+            job.last_failed_dispatch_snapshot = "› [Pasted Content 1024 chars]ROLE: followup"
+
+            core = watcher_core.WatcherCore(
+                {
+                    "watch_dir": str(watch_dir),
+                    "base_dir": str(base_dir),
+                    "repo_root": str(root),
+                    "dry_run": True,
+                    "verify_pane_target": "codex-pane",
+                }
+            )
+
+            stale_prompt_line = "› [Pasted Content 1024 chars]ROLE: followup"
+
+            with mock.patch("watcher_dispatch.tmux_send_keys", return_value=True) as send_keys, \
+                 mock.patch("watcher_core._shared_capture_pane_text", return_value=stale_prompt_line):
+                job = core.sm._handle_verify_pending(job)
+
+            self.assertEqual(job.status, JobStatus.VERIFY_RUNNING)
+            self.assertEqual(job.last_failed_dispatch_snapshot, "")
+            send_keys.assert_called_once()
+
+    def test_requeued_failed_dispatch_forgets_dedupe_after_restart(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            watch_dir = root / "work"
+            base_dir = root / ".pipeline"
+            watch_dir.mkdir(parents=True, exist_ok=True)
+            base_dir.mkdir(parents=True, exist_ok=True)
+            _write_active_profile(root)
+
+            work_note = watch_dir / "2026-04-10-slice.md"
+            _write_work_note(work_note, ["watcher_dispatch.py"])
+            job = JobState.from_artifact("job-requeued-dedupe", str(work_note))
+            job.status = JobStatus.VERIFY_PENDING
+            job.artifact_hash = "hash-1"
+            job.last_dispatch_at = time.time() - 60
+            job.last_failed_dispatch_at = time.time() - 30
+            job.last_failed_dispatch_snapshot = "› [Pasted Content 1024 chars]ROLE: followup"
+
+            first_core = watcher_core.WatcherCore(
+                {
+                    "watch_dir": str(watch_dir),
+                    "base_dir": str(base_dir),
+                    "repo_root": str(root),
+                    "dry_run": True,
+                    "verify_pane_target": "codex-pane",
+                }
+            )
+            first_core.dedupe.mark_dispatch(
+                job.job_id,
+                job.round,
+                job.artifact_hash,
+                "slot_verify",
+                "codex-pane",
+                False,
+            )
+
+            reloaded_core = watcher_core.WatcherCore(
+                {
+                    "watch_dir": str(watch_dir),
+                    "base_dir": str(base_dir),
+                    "repo_root": str(root),
+                    "dry_run": True,
+                    "verify_pane_target": "codex-pane",
+                }
+            )
+            self.assertTrue(
+                reloaded_core.dedupe.is_duplicate(
+                    job.job_id,
+                    job.round,
+                    job.artifact_hash,
+                    "slot_verify",
+                )
+            )
+
+            stale_prompt_line = "› [Pasted Content 1024 chars]ROLE: followup"
+
+            with mock.patch("watcher_dispatch.tmux_send_keys", return_value=True) as send_keys, \
+                 mock.patch("watcher_core._shared_capture_pane_text", return_value=stale_prompt_line):
+                job = reloaded_core.sm._handle_verify_pending(job)
+
+            self.assertEqual(job.status, JobStatus.VERIFY_RUNNING)
+            dispatch_events = [
+                json.loads(line)
+                for line in (base_dir / "logs" / "experimental" / "dispatch.jsonl")
+                .read_text(encoding="utf-8")
+                .splitlines()
+                if line.strip()
+            ]
+            self.assertEqual(dispatch_events[-2]["event"], "forget")
+            self.assertEqual(dispatch_events[-1]["event"], "dispatch")
+            send_keys.assert_called_once()
 
 
 if __name__ == "__main__":

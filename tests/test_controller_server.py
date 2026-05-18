@@ -414,14 +414,23 @@ class ControllerServerLaunchGateTests(unittest.TestCase):
     def test_cozy_agent_state_uses_lane_state_as_runtime_truth(self) -> None:
         controller_dir = Path(__file__).resolve().parents[1] / "controller"
         cozy_js = (controller_dir / "js" / "cozy.js").read_text(encoding="utf-8")
-        start = cozy_js.index("function effectiveLaneState")
-        end = cozy_js.index("\n}\n\nfunction zoneKeyForRole", start)
-        helper = cozy_js[start:end]
+        active_round_start = cozy_js.index("function activeRoundLaneName")
+        active_round_end = cozy_js.index("\n}\n\nfunction effectiveLaneState", active_round_start)
+        active_round_helper = cozy_js[active_round_start:active_round_end]
+        lane_state_start = cozy_js.index("function effectiveLaneState")
+        lane_state_end = cozy_js.index("\n}\n\nfunction zoneKeyForRole", lane_state_start)
+        lane_state_helper = cozy_js[lane_state_start:lane_state_end]
 
-        self.assertIn("Lane state is the runtime truth", helper)
-        self.assertIn("return rawState || 'off';", helper)
-        self.assertNotIn("activeWorkLaneName", helper)
-        self.assertNotIn("? 'working'", helper)
+        self.assertIn("ACTIVE_ROUND_ROLE_BY_STATE[roundState]", active_round_helper)
+        self.assertIn("currentRoleOwners(data)[role]", active_round_helper)
+        self.assertIn("activeRoundLaneName(data)", lane_state_helper)
+        self.assertIn("activeRoundLane === agentName && rawState === 'ready'", lane_state_helper)
+        self.assertIn("return 'working';", lane_state_helper)
+        self.assertIn("Lane state is still the default runtime truth", lane_state_helper)
+        self.assertIn("turn_state can stay active", lane_state_helper)
+        self.assertIn("return rawState || 'off';", lane_state_helper)
+        self.assertNotIn("activeWorkLaneName", lane_state_helper)
+        self.assertNotIn("? 'working'", lane_state_helper)
 
     def test_runtime_capture_tail_requires_lane(self) -> None:
         data, status = controller_server.runtime_capture_tail(lane=None)

@@ -196,7 +196,7 @@ DEFAULT_OPERATOR_RETRIAGE_PROMPT = (
     "- {latest_verify_path}\n"
     "OUTPUTS:\n"
     "- next control (CONTROL_SEQ: {next_control_seq}): {operator_retriage_next_controls}\n"
-    "- for `commit_push_bundle_authorization + internal_only`: hold the publish backlog by default; do not commit or push from this prompt, and write the next safe non-publish local control\n"
+    "- for `commit_push_bundle_authorization + internal_only` or `commit_push_bundle_authorization + internal_only + release_gate`: hold the publish backlog by default; do not commit or push from this prompt, and write the next safe non-publish local control\n"
     "- for `pr_creation_gate + gate_24h + release_gate`: hold draft PR creation by default; do not create/reuse a PR from this prompt, and write the next safe non-publish local control\n"
     "- if an older draft PR is still waiting for merge approval, keep that pending merge candidate stable by default; publish the next verified bundle as a stacked child branch/PR with the parent branch as its base, record the parent/child linkage in `/work`, and retarget the child to the repository default base branch after the parent merges\n"
     "- for `pr_merge_gate + internal_only + merge_gate`: keep the PR merge as a pending operator backlog, do not merge it yourself, and write the next safe local control so implementation can continue\n"
@@ -262,6 +262,9 @@ DEFAULT_VERIFY_PROMPT_TEMPLATE = (
     "WORK: {latest_work_path}\n"
     "VERIFY: {latest_verify_path}\n"
     "NEXT_CONTROL_SEQ: {next_control_seq}\n"
+    "ADVISORY_ENABLED: {runtime_advisory_enabled}\n"
+    "RUNTIME_STATUS_AT_DISPATCH:\n"
+    "{runtime_status_at_dispatch}\n"
     "GOAL:\n"
     "- verify the latest `/work`, update `/verify`, then write exactly one next control\n"
     "SCOPE_HINT:\n"
@@ -272,15 +275,21 @@ DEFAULT_VERIFY_PROMPT_TEMPLATE = (
     "- {latest_verify_path}\n"
     "OUTPUTS:\n"
     "- /verify note first\n"
-    "- next control (CONTROL_SEQ: {next_control_seq}): .pipeline/implement_handoff.md [implement] | .pipeline/advisory_request.md [request_open] | .pipeline/operator_request.md [needs_operator]\n"
+    "- next control (CONTROL_SEQ: {next_control_seq}): {verify_next_control_options}\n"
     "RULES:\n"
     "- use ROLE_HARNESS and COUNCIL_HARNESS for role boundaries and convergence; latest `/work` and `/verify` remain truth\n"
     "- keep `READ_FIRST` to the listed verify-owner root doc only\n"
     "- choose one exact next slice or one exact operator decision\n"
+    "- {verify_advisory_rule}\n"
+    "- use RUNTIME_STATUS_AT_DISPATCH as the authoritative dispatcher surface for runtime liveness; lane-local `status --json`, `doctor --json`, and `tmux` commands are non-authoritative for tmux/session access when they conflict with it\n"
     "- do not route commit/push/PR publish work to `.pipeline/implement_handoff.md`; keep it in verify/handoff or advisory because implement prompts forbid commit, push, branch/PR publish\n"
     "- if you write `.pipeline/implement_handoff.md`, keep its `READ_FIRST` to the implement-owner root doc only\n"
+    "- if a lane-local `status --json`, `doctor --json`, or `tmux` command reports `STOPPED`, `operator_required`, `tmux_session`, or `Operation not permitted` while RUNTIME_STATUS_AT_DISPATCH shows a running/recovered pipeline, treat it as a lane-local access mismatch; do not write `.pipeline/operator_request.md` with `tmux_socket_operation_not_permitted`, `runtime_start_environment_boundary`, or `slice_ambiguity` from that evidence alone\n"
+    "- if controller Playwright webServer startup fails with socket permission denial, do not write another `.pipeline/operator_request.md`; record `local_socket_guard_auto_held` in `/verify`, do not claim controller-smoke pass/release readiness, then choose the next safe local `.pipeline/implement_handoff.md`\n"
+    "- if local full-smoke guard external-check evidence reports `local_socket_guard_auto_held`, do not reissue the same full-smoke handoff or claim release-ready/full-smoke-pass; write `/verify` that the local full smoke is environment-held, then choose the next safe local slice\n"
+    "- if runtime liveness remains uncertain after a lane-local conflict, record the conflict as residual risk in `/verify` and write the next safe local `.pipeline/implement_handoff.md`; use `.pipeline/operator_request.md` only for a real operator-only boundary that blocks local work now\n"
     "- operator stop header must include STATUS, CONTROL_SEQ, REASON_CODE, OPERATOR_POLICY, DECISION_CLASS, DECISION_REQUIRED, BASED_ON_WORK, BASED_ON_VERIFY\n"
-    "- for next-slice ambiguity / overlap / low-confidence prioritization, open .pipeline/advisory_request.md before .pipeline/operator_request.md\n"
+    "- {verify_ambiguity_rule}\n"
     "- skip Gemini only for a real operator-only decision, approval/truth-sync, immediate safety, or unavailable/inconclusive Gemini\n"
     "- after 3+ same-day same-family docs-only truth-sync rounds, choose one bounded docs bundle or escalate"
 )
@@ -340,6 +349,7 @@ class WatcherPromptAssembler:
         repo_relative: Callable[[Optional[Path]], str],
         get_path_sha256: Callable[[Path], str],
         extract_changed_file_paths_from_round_note: Callable[[Optional[Path]], list[str]],
+        runtime_status_summary: Callable[[], str] | None = None,
     ) -> None:
         self.advisory_report_dir = advisory_report_dir
         self.implement_handoff_path = implement_handoff_path
@@ -369,6 +379,7 @@ class WatcherPromptAssembler:
         self._repo_relative = repo_relative
         self._get_path_sha256 = get_path_sha256
         self._extract_changed_file_paths_from_round_note = extract_changed_file_paths_from_round_note
+        self._runtime_status_summary = runtime_status_summary or (lambda: "- unavailable")
 
     def _finalize_prompt_text(self, text: str) -> str:
         normalized = self._normalize_prompt_text(text)
@@ -504,15 +515,32 @@ class WatcherPromptAssembler:
             "runtime_advisory_enabled": "true" if self.runtime_controls.get("advisory_enabled") else "false",
             "runtime_operator_stop_enabled": "true" if self.runtime_controls.get("operator_stop_enabled") else "false",
             "runtime_session_arbitration_enabled": "true" if self.runtime_controls.get("session_arbitration_enabled") else "false",
+            "runtime_status_at_dispatch": self._runtime_status_summary(),
         }
 
     def build_verify_prompt_context(self, artifact_path: str) -> dict[str, str]:
         artifact = Path(artifact_path)
         verify_scope_label, verify_scope_hint = self.verify_scope_hint_for_work(artifact)
+        advisory_enabled = bool(self.runtime_controls.get("advisory_enabled"))
         return {
             "artifact_path": artifact_path,
             "verify_scope_label": verify_scope_label,
             "verify_scope_hint": verify_scope_hint,
+            "verify_next_control_options": (
+                ".pipeline/implement_handoff.md [implement] | .pipeline/advisory_request.md [request_open] | .pipeline/operator_request.md [needs_operator]"
+                if advisory_enabled
+                else ".pipeline/implement_handoff.md [implement] | .pipeline/operator_request.md [needs_operator]"
+            ),
+            "verify_advisory_rule": (
+                "advisory is enabled; use .pipeline/advisory_request.md for next-slice ambiguity, overlap, or low-confidence prioritization"
+                if advisory_enabled
+                else "ADVISORY_ENABLED is false; do not write .pipeline/advisory_request.md and converge to .pipeline/implement_handoff.md or a real operator boundary"
+            ),
+            "verify_ambiguity_rule": (
+                "for next-slice ambiguity / overlap / low-confidence prioritization, open .pipeline/advisory_request.md before .pipeline/operator_request.md"
+                if advisory_enabled
+                else "for next-slice ambiguity / overlap / low-confidence prioritization, resolve locally from current work/verify/docs or write .pipeline/implement_handoff.md; do not use .pipeline/advisory_request.md while advisory is disabled"
+            ),
             **self.build_runtime_prompt_context(artifact),
         }
 

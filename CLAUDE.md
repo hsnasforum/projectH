@@ -74,13 +74,17 @@ not current execution truth.
   waiting for the user.
 - If watcher sends operator retriage, write exactly one newer control slot.
   Returning idle with no control can trigger `operator_retriage_no_next_control`.
+- If verify/retriage instructions include `RUNTIME_STATUS_AT_DISPATCH`, treat
+  that dispatcher surface as runtime-liveness authority over lane-local
+  `status --json`, `doctor --json`, or tmux access conflicts.
 - For active implement-owner side questions such as context exhaustion,
   rollover, or continue-vs-switch, relay a short answer back to the lane and
   keep the round-start implement handoff stable until the session boundary.
 - Publish follow-up belongs here, not in implement. In the current Codex-only
   profile, `authorize ... or explicitly hold publication` is a publish backlog
-  candidate, not completed approval; hold it and write the next non-publish
-  local control unless a separate explicit publish round approves execution.
+  candidate, not completed approval; `PUBLISH_HELD: true` means hold it and
+  write the next non-publish local control unless a separate explicit publish
+  round approves execution.
 - Keep `pr_merge_gate`, destructive publication, auth/credential,
   approval-record, and truth-sync blockers as operator boundaries.
 

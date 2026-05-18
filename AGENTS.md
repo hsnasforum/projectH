@@ -236,6 +236,9 @@ Verify/handoff owner:
 - when `advisory_enabled=false`, that same no-next-control recovery must return
   to Codex verify follow-up with `ADVISORY_DISABLED: true` instead of writing
   `.pipeline/advisory_request.md`
+- when a verify/retriage prompt includes `RUNTIME_STATUS_AT_DISPATCH`, treat
+  that dispatcher surface as runtime-liveness authority over lane-local
+  `status --json`, `doctor --json`, or tmux access conflicts
 - handle approved large-bundle publish follow-up in the verify/handoff lane,
   not by handing commit/push/PR creation to implement
 
@@ -262,8 +265,9 @@ Publish boundaries:
   `pr_creation_gate + gate_24h + release_gate` are verify/handoff follow-ups
   when already approved; they should not re-ask the operator by default
 - `authorize ... or explicitly hold publication` is a publish candidate, not
-  completed approval; Codex-only recovery holds publication and writes the next
-  safe local control instead of running commit/push/PR
+  completed approval; Codex-only or `PUBLISH_HELD: true` recovery holds
+  publication and writes the next safe local control instead of running
+  commit/push/PR
 - `pr_merge_gate`, destructive publication changes, auth/credential repair,
   approval-record/truth-sync blockers, and external publication boundaries stay
   operator-approved boundaries

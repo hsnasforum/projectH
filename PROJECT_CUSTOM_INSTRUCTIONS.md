@@ -131,6 +131,9 @@ Verify/handoff owner:
 - `advisory_enabled=false`인 Codex-only profile에서는 같은 no-next-control
   복구가 `.pipeline/advisory_request.md`를 쓰지 않고 Codex verify follow-up
   prompt(`ADVISORY_DISABLED: true`)로 돌아가야 합니다.
+- verify/retriage prompt에 `RUNTIME_STATUS_AT_DISPATCH`가 있으면 lane-local
+  `status --json`, `doctor --json`, tmux 접근 충돌보다 그 dispatcher surface를
+  runtime liveness의 권위 표면으로 봅니다.
 - 승인된 large-bundle publish follow-up은 verify/handoff owner가 처리하거나
   advisory로 넘깁니다. implement lane에 commit/push/PR 생성을 넘기지
   않습니다.
@@ -161,8 +164,9 @@ Publish/merge 경계:
   `pr_creation_gate + gate_24h + release_gate`는 이미 승인된 큰 묶음
   follow-up일 때 verify/handoff owner가 auditable하게 처리할 수 있습니다.
 - `authorize ... or explicitly hold publication` 문구는 승인 완료가 아니라
-  publish 후보입니다. Codex-only recovery는 publication을 보류하고 다음
-  safe local control을 써야 하며 commit/push/PR을 실행하지 않습니다.
+  publish 후보입니다. Codex-only 또는 `PUBLISH_HELD: true` recovery는
+  publication을 보류하고 다음 safe local control을 써야 하며 commit/push/PR을
+  실행하지 않습니다.
 - `pr_merge_gate`, destructive publication, auth/credential,
   approval-record/truth-sync blocker, external publication boundary는 operator
   승인 경계로 남깁니다.

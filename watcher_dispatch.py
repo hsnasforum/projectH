@@ -41,6 +41,10 @@ _DISPATCH_LOCKS_GUARD = threading.Lock()
 _DISPATCH_LOCKS: dict[str, threading.Lock] = {}
 _DISPATCH_LOCK_TIMEOUT_SEC = 30.0
 _STALE_PASTE_BLOCKED_BACKOFF_SEC = 30.0
+_CODEX_LITERAL_FALLBACK_PREFIX = (
+    "Follow this pipeline instruction. Decode the following JSON string as the "
+    "complete instruction body"
+)
 
 
 @dataclass(frozen=True)
@@ -553,15 +557,18 @@ class WatcherDispatchQueue:
             if str(event.get("lane") or lane_name) != lane_name:
                 continue
             event_ts = str(event.get("ts") or "")
-            if lane_signal_at and event_ts and event_ts < lane_signal_at:
-                continue
             event_type = str(event.get("event_type") or "")
             if event_type == "HEARTBEAT":
+                if lane_signal_at and event_ts and event_ts < lane_signal_at:
+                    continue
                 heartbeat_count += 1
                 continue
             payload = dict(event.get("payload") or {})
             if int(payload.get("control_seq") or -1) != control_seq:
                 continue
+            # Wrapper task events can land just before the supervisor exports
+            # lane_working for the same control; the control_seq is the stable
+            # dispatch-cycle boundary.
             if event_type == "DISPATCH_SEEN":
                 dispatch_seen_count += 1
             elif event_type == "TASK_ACCEPTED":
@@ -738,10 +745,10 @@ def _text_has_pasted_content_marker(text: str) -> bool:
     return "[Pasted Content " in str(text or "")
 
 
-def _clear_codex_prompt_input(pane_target: str) -> bool:
+def _clear_codex_prompt_input(pane_target: str, *, force_hard_clear: bool = False) -> bool:
     """Clear Codex prompt input, including stale bracketed paste blocks."""
     snapshot = _shared_capture_pane_text(pane_target)
-    had_pasted_marker = pane_text_has_unsubmitted_pasted_content(snapshot)
+    had_pasted_marker = force_hard_clear or pane_text_has_unsubmitted_pasted_content(snapshot)
     if had_pasted_marker:
         subprocess.run(
             ["tmux", "send-keys", "-t", pane_target, "C-c"],
@@ -770,6 +777,151 @@ def _clear_codex_prompt_input(pane_target: str) -> bool:
             log.info("codex stale pasted prompt remained after hard clear")
             return False
     return True
+
+
+def _clear_codex_failed_dispatch_input(pane_target: str, reason: str) -> bool:
+    """Best-effort cleanup after Codex did not accept a pasted prompt."""
+    log.info("clearing codex prompt after failed dispatch: %s", reason)
+    try:
+        if not _clear_codex_prompt_input(pane_target, force_hard_clear=True):
+            log.info("codex prompt cleanup after failed dispatch did not fully clear input")
+            return False
+        return True
+    except subprocess.CalledProcessError as exc:
+        stderr = getattr(exc, "stderr", b"")
+        if isinstance(stderr, bytes):
+            stderr_text = stderr.decode(errors="replace").strip()
+        else:
+            stderr_text = str(stderr or "").strip()
+        log.info("codex prompt cleanup after failed dispatch failed: %s", stderr_text)
+        return False
+
+
+def clear_codex_failed_dispatch_input(pane_target: str, reason: str) -> bool:
+    """Clear a visible stale Codex dispatch prompt without sending a new prompt."""
+    return _clear_codex_failed_dispatch_input(pane_target, reason)
+
+
+def _codex_literal_fallback_prompt(command: str) -> str:
+    normalized = str(command or "").replace("\r\n", "\n").replace("\r", "\n").replace("\x00", "")
+    encoded = json.dumps(normalized, ensure_ascii=False)
+    return (
+        "Follow this pipeline instruction. Decode the following JSON string as the "
+        "complete instruction body, preserving escaped newline characters: "
+        f"{encoded}"
+    )
+
+
+def _text_has_codex_literal_fallback_prompt(text: str) -> bool:
+    snapshot = str(text or "")
+    prefix_index = snapshot.rfind(_CODEX_LITERAL_FALLBACK_PREFIX)
+    if prefix_index < 0:
+        return False
+    line_start = snapshot.rfind("\n", 0, prefix_index) + 1
+    prompt_prefix = snapshot[line_start:prefix_index].replace("\xa0", " ").strip()
+    if prompt_prefix in {">", "›", "❯"}:
+        return True
+    return _shared_pane_text_has_input_cursor(snapshot)
+
+
+def _clear_codex_literal_fallback_after_submit_failure(pane_target: str) -> bool:
+    """Clear a stuck literal fallback prompt so the next dispatch can replace it."""
+    try:
+        subprocess.run(
+            ["tmux", "send-keys", "-t", pane_target, "C-u"],
+            check=True,
+            capture_output=True,
+        )
+        time.sleep(0.1)
+        subprocess.run(
+            ["tmux", "send-keys", "-t", pane_target, "C-l"],
+            check=True,
+            capture_output=True,
+        )
+        _shared_wait_for_pane_settle(
+            pane_target,
+            timeout_sec=2.0,
+            quiet_sec=0.4,
+            poll_sec=0.2,
+        )
+        snapshot = _shared_capture_pane_text(pane_target)
+    except subprocess.CalledProcessError as exc:
+        stderr = getattr(exc, "stderr", b"")
+        if isinstance(stderr, bytes):
+            stderr_text = stderr.decode(errors="replace").strip()
+        else:
+            stderr_text = str(stderr or "").strip()
+        log.info("codex literal fallback cleanup failed: %s", stderr_text)
+        return False
+    return not _text_has_codex_literal_fallback_prompt(snapshot)
+
+
+def _send_literal_text_to_pane(pane_target: str, text: str, *, chunk_size: int = 700) -> None:
+    for start in range(0, len(text), chunk_size):
+        chunk = text[start : start + chunk_size]
+        if not chunk:
+            continue
+        subprocess.run(
+            ["tmux", "send-keys", "-l", "-t", pane_target, chunk],
+            check=True,
+            capture_output=True,
+        )
+        time.sleep(0.02)
+
+
+def _dispatch_codex_literal_fallback(pane_target: str, command: str) -> bool:
+    """Dispatch Codex prompt without bracketed paste when paste submit is stuck."""
+    log.info("dispatching codex prompt via literal fallback: chars=%d", len(command))
+    if not _clear_codex_prompt_input(pane_target):
+        return False
+    literal_prompt = _codex_literal_fallback_prompt(command)
+    _send_literal_text_to_pane(pane_target, literal_prompt)
+    _shared_wait_for_pane_settle(
+        pane_target,
+        timeout_sec=2.0,
+        quiet_sec=0.5,
+        poll_sec=0.2,
+    )
+    typed_snapshot = _shared_capture_pane_text(pane_target)
+    for attempt, submit_key in enumerate(["Enter", "C-m"]):
+        subprocess.run(
+            ["tmux", "send-keys", "-t", pane_target, submit_key],
+            check=True,
+            capture_output=True,
+        )
+        time.sleep(1.5)
+        snapshot = _shared_capture_pane_text(pane_target)
+        if not _shared_pane_text_has_input_cursor(snapshot):
+            log.info("codex literal fallback prompt consumed")
+            deadline = time.time() + 6.0
+            while time.time() < deadline:
+                if _pane_has_working_indicator(pane_target):
+                    log.info("codex working indicator detected after literal fallback")
+                    return True
+                current_snapshot = _shared_capture_pane_text(pane_target)
+                if current_snapshot != snapshot and _shared_pane_text_has_codex_activity(current_snapshot):
+                    log.info("codex response activity detected after literal fallback")
+                    return True
+                time.sleep(0.5)
+            log.info("codex literal fallback consumed without immediate confirmation")
+            return True
+        if attempt == 0:
+            log.info("codex literal fallback still visible after Enter; retrying with C-m once")
+            continue
+        if snapshot != typed_snapshot and _shared_pane_text_has_codex_activity(snapshot):
+            log.info("codex response activity detected after literal fallback submit")
+            return True
+    log.info("codex literal fallback prompt still visible after submit retry")
+    final_snapshot = _shared_capture_pane_text(pane_target)
+    if _text_has_codex_literal_fallback_prompt(final_snapshot):
+        log.info("clearing codex literal fallback prompt after submit retry failure")
+        if _clear_codex_literal_fallback_after_submit_failure(pane_target):
+            log.info("cleared codex literal fallback prompt after submit retry failure")
+        else:
+            log.info("codex literal fallback prompt remained after submit retry cleanup")
+        return False
+    _clear_codex_failed_dispatch_input(pane_target, "literal_fallback_unconfirmed")
+    return False
 
 
 def _dispatch_lock_for(pane_target: str) -> threading.Lock:
@@ -842,18 +994,24 @@ def _dispatch_codex(pane_target: str, command: str) -> bool:
     pasted_snapshot = _shared_capture_pane_text(pane_target)
     time.sleep(2.0)
     snapshot = ""
-    for attempt in range(2):
-        subprocess.run(["tmux", "send-keys", "-t", pane_target, "Enter"], check=True, capture_output=True)
+    submit_keys = ["Enter", "C-j"]
+    for attempt, submit_key in enumerate(submit_keys):
+        subprocess.run(
+            ["tmux", "send-keys", "-t", pane_target, submit_key],
+            check=True,
+            capture_output=True,
+        )
         time.sleep(1.5)
         snapshot = _shared_capture_pane_text(pane_target)
         if not pane_text_has_unsubmitted_pasted_content(snapshot):
             break
         if attempt == 0:
-            log.info("codex pasted prompt still visible after first submit; retrying Enter once")
+            log.info("codex pasted prompt still visible after first submit; retrying with C-j once")
             time.sleep(2.0)
             continue
-        log.info("codex pasted prompt still visible after submit retry")
-        return False
+        log.info("codex pasted prompt still visible after C-j submit retry")
+        _clear_codex_failed_dispatch_input(pane_target, "pasted_prompt_after_submit_retry")
+        return _dispatch_codex_literal_fallback(pane_target, command)
     if not _shared_pane_text_has_input_cursor(snapshot):
         log.info("codex prompt consumed")
         deadline = time.time() + 6.0
@@ -864,6 +1022,7 @@ def _dispatch_codex(pane_target: str, command: str) -> bool:
             current_snapshot = _shared_capture_pane_text(pane_target)
             if pane_text_has_unsubmitted_pasted_content(current_snapshot):
                 log.info("codex pasted prompt remained visible while waiting for confirmation")
+                _clear_codex_failed_dispatch_input(pane_target, "pasted_prompt_while_waiting_confirmation")
                 return False
             if current_snapshot != snapshot and _shared_pane_text_has_codex_activity(current_snapshot):
                 log.info("codex response activity detected after consume")
@@ -877,6 +1036,7 @@ def _dispatch_codex(pane_target: str, command: str) -> bool:
         log.info("codex response activity detected")
         return True
     log.info("codex prompt still visible or unconfirmed after single submit")
+    _clear_codex_failed_dispatch_input(pane_target, "prompt_visible_or_unconfirmed")
     return False
 
 

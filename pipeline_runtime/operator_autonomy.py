@@ -385,6 +385,8 @@ def normalize_reason_code(value: object) -> str:
         "dirty_tree_publish_boundary",
     }:
         return COMMIT_PUSH_BUNDLE_AUTHORIZATION_REASON
+    if re.match(r"^m[0-9]+(?:_[a-z0-9]+)*_publish_bundle_authorization$", text):
+        return COMMIT_PUSH_BUNDLE_AUTHORIZATION_REASON
     if re.match(r"^m[0-9]+_commit_push(?:_milestones?)?(?:_doc(?:s)?_sync)?$", text):
         return COMMIT_PUSH_BUNDLE_AUTHORIZATION_REASON
     if re.match(r"^m[0-9]+_(?:pr_creation|draft_pr|create_pr)_gate$", text):
@@ -475,6 +477,8 @@ def normalize_decision_class(value: object) -> str:
         "pr_publication": "release_gate",
         "branch_publication": "release_gate",
         "commit_publish_authorization": "release_gate",
+        "publish_authorization": "release_gate",
+        "publish_bundle_authorization": "release_gate",
     }
     return aliases.get(text, text)
 

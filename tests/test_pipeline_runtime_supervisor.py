@@ -56,6 +56,10 @@ def _read_proc_starttime_fingerprint(pid: int) -> str:
     return rest[19]
 
 
+def _iso_utc_from_epoch(value: float) -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(value))
+
+
 def _write_active_profile(
     root: Path,
     *,
@@ -2966,6 +2970,49 @@ class RuntimeSupervisorTest(unittest.TestCase):
             self.assertEqual(marker["decision_class"], "release_gate")
             self.assertEqual(autonomy["mode"], "triage")
             self.assertEqual(autonomy["reason_code"], COMMIT_PUSH_BUNDLE_AUTHORIZATION_REASON)
+
+    def test_dirty_bundle_publication_or_hold_operator_gate_routes_to_triage(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            pipeline_dir = root / ".pipeline"
+            operator_path = pipeline_dir / "operator_request.md"
+            operator_path.write_text(
+                "STATUS: needs_operator\n"
+                "CONTROL_SEQ: 2072\n"
+                "REASON_CODE: dirty_bundle_publication_or_hold_decision\n"
+                "OPERATOR_POLICY: operator_only_publication_boundary\n"
+                "DECISION_CLASS: publication_or_hold\n"
+                "DECISION_REQUIRED: Choose one: keep the current dirty bundle local-only / publication-held, "
+                "or explicitly authorize a separate verify/handoff publication flow.\n",
+                encoding="utf-8",
+            )
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+
+            marker, autonomy = supervisor._operator_gate_marker(
+                {
+                    "active_control_file": ".pipeline/operator_request.md",
+                    "active_control_status": "needs_operator",
+                    "active_control_seq": 2072,
+                    "mtime": operator_path.stat().st_mtime,
+                },
+                turn_state={"state": "IDLE", "reason": "operator_request_updated"},
+                active_round={"state": "CLOSED"},
+                wrapper_models={},
+            )
+
+            self.assertIsNotNone(marker)
+            assert marker is not None
+            self.assertEqual(marker["reason"], COMMIT_PUSH_BUNDLE_AUTHORIZATION_REASON)
+            self.assertEqual(marker["mode"], "triage")
+            self.assertEqual(marker["routed_to"], "verify_followup")
+            self.assertEqual(marker["operator_policy"], "internal_only")
+            self.assertEqual(marker["decision_class"], "release_gate")
+            self.assertEqual(marker["classification_source"], "operator_policy")
+            self.assertEqual(autonomy["mode"], "triage")
+            self.assertEqual(autonomy["reason_code"], COMMIT_PUSH_BUNDLE_AUTHORIZATION_REASON)
+            self.assertEqual(autonomy["operator_policy"], "internal_only")
+            self.assertEqual(autonomy["decision_class"], "release_gate")
 
     def test_legacy_milestone_release_gate_operator_request_surfaces_as_triage(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -6546,7 +6593,7 @@ class RuntimeSupervisorTest(unittest.TestCase):
             logs_dir.mkdir(parents=True, exist_ok=True)
             handoff_path = pipeline_dir / "implement_handoff.md"
             handoff_path.write_text(
-                "STATUS: implement\nCONTROL_SEQ: 154\n",
+                "STATUS: implement\nCONTROL_SEQ: 154\nREISSUE: true\n",
                 encoding="utf-8",
             )
             handoff_sha = hashlib.sha256(handoff_path.read_bytes()).hexdigest()
@@ -6661,7 +6708,7 @@ class RuntimeSupervisorTest(unittest.TestCase):
             logs_dir.mkdir(parents=True, exist_ok=True)
             handoff_path = pipeline_dir / "implement_handoff.md"
             handoff_path.write_text(
-                "STATUS: implement\nCONTROL_SEQ: 1619\n",
+                "STATUS: implement\nCONTROL_SEQ: 1619\nREISSUE: true\n",
                 encoding="utf-8",
             )
             handoff_sha = hashlib.sha256(handoff_path.read_bytes()).hexdigest()
@@ -6766,7 +6813,7 @@ class RuntimeSupervisorTest(unittest.TestCase):
             verify_dir.mkdir(parents=True, exist_ok=True)
             handoff_path = pipeline_dir / "implement_handoff.md"
             handoff_path.write_text(
-                "STATUS: implement\nCONTROL_SEQ: 1621\n",
+                "STATUS: implement\nCONTROL_SEQ: 1621\nREISSUE: true\n",
                 encoding="utf-8",
             )
             latest_work = work_dir / "2026-05-12-pipeline-launcher-nonstop-guard.md"
@@ -6895,7 +6942,7 @@ class RuntimeSupervisorTest(unittest.TestCase):
             logs_dir.mkdir(parents=True, exist_ok=True)
             handoff_path = pipeline_dir / "implement_handoff.md"
             handoff_path.write_text(
-                "STATUS: implement\nCONTROL_SEQ: 155\n",
+                "STATUS: implement\nCONTROL_SEQ: 155\nREISSUE: true\n",
                 encoding="utf-8",
             )
             handoff_sha = hashlib.sha256(handoff_path.read_bytes()).hexdigest()
@@ -6978,7 +7025,7 @@ class RuntimeSupervisorTest(unittest.TestCase):
                 "active_control_status": "implement",
                 "active_control_file": ".pipeline/implement_handoff.md",
                 "active_control_seq": 155,
-                "active_control_updated_at": "2026-05-21T00:00:00Z",
+                "active_control_updated_at": "2999-01-01T00:00:00Z",
             }
             supervisor = RuntimeSupervisor(root, start_runtime=False)
             read_calls: list[str] = []
@@ -6998,6 +7045,142 @@ class RuntimeSupervisorTest(unittest.TestCase):
                 1,
                 "raw.jsonl should be read only once for the same duplicate-control key",
             )
+
+    def test_duplicate_control_marker_allows_handoff_written_after_supervisor_start(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            handoff_path = root / ".pipeline" / "implement_handoff.md"
+            handoff_path.parent.mkdir(parents=True, exist_ok=True)
+            handoff_path.write_text("STATUS: implement\nCONTROL_SEQ: 2101\n", encoding="utf-8")
+
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+            supervisor._start_runtime = True
+            supervisor.started_at = 2000.0
+            marker = supervisor._duplicate_control_marker(
+                {
+                    "active_control_status": "implement",
+                    "active_control_file": ".pipeline/implement_handoff.md",
+                    "active_control_seq": 2101,
+                    "active_control_updated_at": _iso_utc_from_epoch(2001.0),
+                }
+            )
+
+            self.assertIsNone(marker)
+
+    def test_duplicate_control_marker_blocks_stale_handoff_without_reissue_or_truth(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            handoff_path = root / ".pipeline" / "implement_handoff.md"
+            handoff_path.parent.mkdir(parents=True, exist_ok=True)
+            handoff_path.write_text("STATUS: implement\nCONTROL_SEQ: 2102\n", encoding="utf-8")
+            handoff_sha = hashlib.sha256(handoff_path.read_bytes()).hexdigest()
+
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+            supervisor._start_runtime = True
+            supervisor.started_at = 2030.0
+            marker = supervisor._duplicate_control_marker(
+                {
+                    "active_control_status": "implement",
+                    "active_control_file": ".pipeline/implement_handoff.md",
+                    "active_control_seq": 2102,
+                    "active_control_updated_at": _iso_utc_from_epoch(2000.0),
+                }
+            )
+
+            self.assertIsNotNone(marker)
+            assert marker is not None
+            self.assertEqual(marker["control_seq"], 2102)
+            self.assertEqual(marker["handoff_sha"], handoff_sha)
+            self.assertEqual(marker["reason"], "stale_handoff_dispatch_blocked")
+            self.assertEqual(marker["routed_to"], "verify_triage")
+            self.assertEqual(marker["source_event"], "stale_handoff_age_check")
+            self.assertEqual(marker["stale_age_sec"], 30.0)
+
+            supervisor._current_duplicate_control_marker = marker
+            supervisor._record_status_events({"control": {}})
+            events = [
+                json.loads(line)
+                for line in supervisor.events_path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            stale_events = [event for event in events if event.get("event_type") == "stale_handoff_dispatch_blocked"]
+            self.assertEqual(len(stale_events), 1)
+            self.assertEqual(stale_events[0]["payload"]["control_seq"], 2102)
+            self.assertEqual(stale_events[0]["payload"]["handoff_sha"], handoff_sha)
+            self.assertEqual(stale_events[0]["payload"]["reason"], "stale_handoff_dispatch_blocked")
+            self.assertNotIn("control_text", stale_events[0]["payload"])
+            self.assertNotIn("tail_text", stale_events[0]["payload"])
+
+    def test_duplicate_control_marker_allows_stale_handoff_with_reissue_marker(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            handoff_path = root / ".pipeline" / "implement_handoff.md"
+            handoff_path.parent.mkdir(parents=True, exist_ok=True)
+            handoff_path.write_text(
+                "STATUS: implement\nCONTROL_SEQ: 2103\nREISSUE: true\n",
+                encoding="utf-8",
+            )
+
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+            supervisor._start_runtime = True
+            supervisor.started_at = 2030.0
+            marker = supervisor._duplicate_control_marker(
+                {
+                    "active_control_status": "implement",
+                    "active_control_file": ".pipeline/implement_handoff.md",
+                    "active_control_seq": 2103,
+                    "active_control_updated_at": _iso_utc_from_epoch(2000.0),
+                }
+            )
+
+            self.assertIsNone(marker)
+
+    def test_duplicate_control_marker_prefers_artifact_truth_for_stale_handoff(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            pipeline_dir = root / ".pipeline"
+            handoff_path = pipeline_dir / "implement_handoff.md"
+            work_path = root / "work" / "5" / "21" / "2026-05-21-stale-handoff-work.md"
+            verify_path = root / "verify" / "5" / "21" / "2026-05-21-stale-handoff-verify.md"
+            handoff_path.parent.mkdir(parents=True, exist_ok=True)
+            work_path.parent.mkdir(parents=True, exist_ok=True)
+            verify_path.parent.mkdir(parents=True, exist_ok=True)
+            handoff_path.write_text(
+                "STATUS: implement\nCONTROL_SEQ: 2104\n\n- work/5/21/2026-05-21-stale-handoff-work.md\n",
+                encoding="utf-8",
+            )
+            work_path.write_text("# work\n", encoding="utf-8")
+            verify_path.write_text(
+                "STATUS: verified\nCONTROL_SEQ: 2105\n"
+                "BASED_ON_WORK: work/5/21/2026-05-21-stale-handoff-work.md\n",
+                encoding="utf-8",
+            )
+            os.utime(work_path, (2010.0, 2010.0))
+            os.utime(verify_path, (2020.0, 2020.0))
+
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+            supervisor._start_runtime = True
+            supervisor.started_at = 2030.0
+            marker = supervisor._duplicate_control_marker(
+                {
+                    "active_control_status": "implement",
+                    "active_control_file": ".pipeline/implement_handoff.md",
+                    "active_control_seq": 2104,
+                    "active_control_updated_at": _iso_utc_from_epoch(2000.0),
+                }
+            )
+
+            self.assertIsNotNone(marker)
+            assert marker is not None
+            self.assertEqual(marker["control_seq"], 2104)
+            self.assertEqual(marker["reason"], "handoff_already_completed")
+            self.assertEqual(marker["source_event"], "artifact_truth_completed")
+            self.assertEqual(marker["work_path"], "work/5/21/2026-05-21-stale-handoff-work.md")
+            self.assertEqual(marker["verify_path"], "verify/5/21/2026-05-21-stale-handoff-verify.md")
 
     def test_duplicate_control_marker_accepts_verified_handoff_truth_without_raw_log(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -7054,7 +7237,7 @@ class RuntimeSupervisorTest(unittest.TestCase):
             logs_dir.mkdir(parents=True, exist_ok=True)
             handoff_path = pipeline_dir / "implement_handoff.md"
             handoff_path.write_text(
-                "STATUS: implement\nCONTROL_SEQ: 154\n",
+                "STATUS: implement\nCONTROL_SEQ: 154\nREISSUE: true\n",
                 encoding="utf-8",
             )
             handoff_sha = hashlib.sha256(handoff_path.read_bytes()).hexdigest()

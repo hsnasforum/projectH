@@ -1,0 +1,143 @@
+[
+  {
+    "name": "normal live idle",
+    "overrides": {},
+    "expected": {
+      "noQueuedPipelineTask": true,
+      "pipelineQueueStatus": "대기 중인 작업 없음",
+      "pipelineQueueClass": "ok"
+    }
+  },
+  {
+    "name": "active implement control",
+    "overrides": {
+      "control": {
+        "active_control_status": "implement",
+        "active_control_seq": 2040,
+        "active_control_file": ".pipeline/implement_handoff.md"
+      }
+    },
+    "expected": {
+      "noQueuedPipelineTask": false,
+      "pipelineQueueStatus": "implement #2040",
+      "pipelineQueueClass": "neutral"
+    }
+  },
+  {
+    "name": "active verify round",
+    "overrides": {
+      "active_round": {
+        "state": "VERIFY_PENDING"
+      }
+    },
+    "expected": {
+      "noQueuedPipelineTask": false,
+      "pipelineQueueStatus": "VERIFY_PENDING",
+      "pipelineQueueClass": "neutral"
+    }
+  },
+  {
+    "name": "compat active control not shown as empty queue",
+    "overrides": {
+      "compat": {
+        "control_slots": {
+          "active": {
+            "file": "implement_handoff.md",
+            "status": "implement",
+            "control_seq": 2042
+          },
+          "stale": []
+        }
+      }
+    },
+    "expected": {
+      "noQueuedPipelineTask": false,
+      "pipelineQueueStatus": "implement #2042",
+      "pipelineQueueClass": "neutral"
+    }
+  },
+  {
+    "name": "runtime snapshot queue wins over local inference",
+    "overrides": {
+      "runtime_snapshot": {
+        "queue": {
+          "no_queued_pipeline_task": false,
+          "status": "VERIFYING",
+          "class_name": "neutral"
+        }
+      }
+    },
+    "expected": {
+      "noQueuedPipelineTask": false,
+      "pipelineQueueStatus": "VERIFYING",
+      "pipelineQueueClass": "neutral"
+    }
+  },
+  {
+    "name": "runtime snapshot queue suppresses stale compat operator control",
+    "overrides": {
+      "compat": {
+        "control_slots": {
+          "active": {
+            "file": "operator_request.md",
+            "status": "needs_operator",
+            "control_seq": 2072
+          },
+          "stale": []
+        }
+      },
+      "runtime_snapshot": {
+        "queue": {
+          "no_queued_pipeline_task": false,
+          "status": "VERIFYING",
+          "class_name": "neutral"
+        },
+        "suppressed_operator_candidate": true
+      }
+    },
+    "expected": {
+      "noQueuedPipelineTask": false,
+      "pipelineQueueStatus": "VERIFYING",
+      "pipelineQueueClass": "neutral"
+    }
+  },
+  {
+    "name": "attention automation state",
+    "overrides": {
+      "automation_health": "attention",
+      "automation_health_detail": "stale control detected",
+      "control_age_cycles": 961
+    },
+    "expected": {
+      "noQueuedPipelineTask": false,
+      "pipelineQueueStatus": "attention",
+      "pipelineQueueClass": "warn"
+    }
+  },
+  {
+    "name": "recovering automation state",
+    "overrides": {
+      "automation_health": "recovering",
+      "automation_reason_code": "active_round_status_reload_pending",
+      "automation_next_action": "retrying"
+    },
+    "expected": {
+      "noQueuedPipelineTask": false,
+      "pipelineQueueStatus": "recovering",
+      "pipelineQueueClass": "warn"
+    }
+  },
+  {
+    "name": "operator-needed automation state",
+    "overrides": {
+      "automation_health": "needs_operator",
+      "automation_reason_code": "codex_verify_dispatch_failure_loop",
+      "automation_next_action": "operator_required"
+    },
+    "expected": {
+      "noQueuedPipelineTask": false,
+      "pipelineQueueStatus": "needs_operator",
+      "pipelineQueueClass": "warn"
+    }
+  }
+]

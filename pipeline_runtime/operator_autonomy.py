@@ -394,6 +394,7 @@ def normalize_reason_code(value: object) -> str:
         "publish_boundary_accumulated_dirty_tree",
         "accumulated_dirty_tree_publish_boundary",
         "dirty_tree_publish_boundary",
+        "dirty_bundle_publication_or_hold_decision",
     }:
         return COMMIT_PUSH_BUNDLE_AUTHORIZATION_REASON
     if re.match(r"^m[0-9]+(?:_[a-z0-9]+)*_publish_bundle_authorization$", text):
@@ -438,6 +439,7 @@ def normalize_operator_policy(value: object) -> str:
         "internal": "internal_only",
         "suppress": "internal_only",
         "suppress_internal": "internal_only",
+        "operator_only_publication_boundary": "internal_only",
     }
     if text in aliases:
         return aliases[text]
@@ -485,6 +487,7 @@ def normalize_decision_class(value: object) -> str:
         "publish_bundle_permission_blocked": "release_gate",
         "publish_gate": "release_gate",
         "publication_boundary": "release_gate",
+        "publication_or_hold": "release_gate",
         "pr_publication": "release_gate",
         "branch_publication": "release_gate",
         "commit_publish_authorization": "release_gate",

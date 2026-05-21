@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime as dt
 import hashlib
 import json
+import logging
 import os
 import re
 import subprocess
@@ -14,6 +15,9 @@ from pathlib import Path
 from typing import Any, Mapping, TypedDict
 
 from .lane_catalog import physical_lane_order
+
+_log = logging.getLogger(__name__)
+
 
 @dataclass(frozen=True)
 class ControlSlotSpec:
@@ -205,8 +209,12 @@ def read_json(path: Path) -> dict[str, Any] | None:
 def atomic_write_json(path: Path, data: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = path.with_suffix(f"{path.suffix}.tmp")
-    tmp_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-    tmp_path.replace(path)
+    try:
+        tmp_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        tmp_path.replace(path)
+    except OSError:
+        _log.exception("atomic_write_json failed: %s", path)
+        raise
 
 
 def process_starttime_fingerprint(pid: int) -> str:
@@ -290,8 +298,12 @@ def _proc_ctime_fingerprint(pid: int) -> str:
 def atomic_write_text(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = path.with_suffix(f"{path.suffix}.tmp")
-    tmp_path.write_text(text, encoding="utf-8")
-    tmp_path.replace(path)
+    try:
+        tmp_path.write_text(text, encoding="utf-8")
+        tmp_path.replace(path)
+    except OSError:
+        _log.exception("atomic_write_text failed: %s", path)
+        raise
 
 
 def append_jsonl(path: Path, data: dict[str, Any]) -> None:

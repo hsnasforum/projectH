@@ -15,7 +15,8 @@ class PipelineRuntimeRoleHarnessTest(unittest.TestCase):
         self.assertEqual(role_harness_path("verify"), ".pipeline/harness/verify.md")
         self.assertEqual(role_harness_path("advisory"), ".pipeline/harness/advisory.md")
         self.assertEqual(role_harness_path("council"), ".pipeline/harness/council.md")
-        self.assertEqual(role_harness_path("Gemini"), "")
+        self.assertIsNone(role_harness_path("Gemini"))
+        self.assertIsNone(role_harness_path("unknown_role"))
 
     def test_role_harness_specs_include_purposes(self) -> None:
         specs = role_harness_specs()

@@ -2874,7 +2874,74 @@ class RuntimeSupervisor:
             return f'exec "{binary}"'
         return "exec bash"
 
+    def _runtime_command_parts(self, args: list[str]) -> list[str]:
+        command_parts: list[str] = []
+        pythonpath = str(os.environ.get("PYTHONPATH") or "").strip()
+        if pythonpath:
+            command_parts.extend(
+                [
+                    "env",
+                    f"PYTHONPATH={pythonpath}",
+                    f"PROJECT_ROOT={self.project_root}",
+                ]
+            )
+        command_parts.extend(args)
+        return command_parts
+
+    def _lane_pane_type(self, lane_name: str) -> str:
+        clean_name = str(lane_name or "").strip()
+        for spec in self.physical_lane_specs:
+            if spec.name == clean_name:
+                return str(spec.pane_type or "").strip().lower()
+        return ""
+
+    def _is_claude_print_lane(self, lane_name: str) -> bool:
+        clean_name = str(lane_name or "").strip()
+        return clean_name == "Claude" or self._lane_pane_type(clean_name) == "claude"
+
+    def _claude_print_lane_shell_command(self) -> str:
+        pending_path = self.task_hints_dir / "claude.prompt.pending"
+        active_path = self.task_hints_dir / ".claude.prompt.active"
+        pipe_args = self._runtime_command_parts(
+            [
+                sys.executable,
+                "-m",
+                "pipeline_runtime.cli",
+                "claude-print-jsonl-pipe",
+                "--project-root",
+                str(self.project_root),
+                "--run-id",
+                self.run_id,
+                "--prompt-file",
+                str(active_path),
+                "--task-hint-dir",
+                str(self.task_hints_dir),
+            ]
+        )
+        pipe_command = shlex.join(pipe_args)
+        hint_dir = shlex.quote(str(self.task_hints_dir))
+        script = (
+            f"mkdir -p {hint_dir}; "
+            f"pending={shlex.quote(str(pending_path))}; "
+            f"active={shlex.quote(str(active_path))}; "
+            "rm -f \"$active\"; "
+            "printf '%s\\n' 'Claude print JSONL watchdog ready'; "
+            "while true; do "
+            "if [ -f \"$pending\" ]; then "
+            "if mv \"$pending\" \"$active\"; then "
+            f"{pipe_command}; "
+            "rm -f \"$active\"; "
+            "fi; "
+            "else "
+            "sleep 0.5; "
+            "fi; "
+            "done"
+        )
+        return self._bash_prefixed(script)
+
     def _lane_shell_command(self, lane_name: str) -> str:
+        if self._is_claude_print_lane(lane_name):
+            return self._claude_print_lane_shell_command()
         wrapper_args = [
             sys.executable,
             "-m",
@@ -2893,18 +2960,7 @@ class RuntimeSupervisor:
             "--heartbeat-interval",
             "5.0",
         ]
-        command_parts: list[str] = []
-        pythonpath = str(os.environ.get("PYTHONPATH") or "").strip()
-        if pythonpath:
-            command_parts.extend(
-                [
-                    "env",
-                    f"PYTHONPATH={pythonpath}",
-                    f"PROJECT_ROOT={self.project_root}",
-                ]
-            )
-        command_parts.extend(wrapper_args)
-        return self._bash_prefixed(shlex.join(command_parts))
+        return self._bash_prefixed(shlex.join(self._runtime_command_parts(wrapper_args)))
 
     def _disabled_lane_command(self, lane_name: str) -> str:
         message = f"Physical lane {lane_name} disabled by active runtime plan; no runtime role is routed here."

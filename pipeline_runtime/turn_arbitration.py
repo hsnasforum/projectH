@@ -17,11 +17,6 @@ TURN_OPERATOR = "operator"
 TURN_ADVISORY = "advisory"
 TURN_IDLE = "idle"
 
-TURN_CLAUDE = TURN_IMPLEMENT
-TURN_CODEX_VERIFY = TURN_VERIFY
-TURN_CODEX_FOLLOWUP = TURN_VERIFY_FOLLOWUP
-TURN_GEMINI = TURN_ADVISORY
-
 LEGACY_WATCHER_TURN_BY_CANONICAL = {
     TURN_IMPLEMENT: "claude",
     TURN_VERIFY: "codex",
@@ -162,6 +157,8 @@ def resolve_watcher_turn(inputs: WatcherTurnInputs) -> str:
     if inputs.implement_handoff_active and not inputs.idle_release_cooldown_active:
         return TURN_IMPLEMENT
 
+    # Operator recovery/gate markers are fallbacks after active advisory,
+    # verify, and releasable handoff work has already been given priority.
     if operator_recovery is not None:
         return TURN_VERIFY_FOLLOWUP
 

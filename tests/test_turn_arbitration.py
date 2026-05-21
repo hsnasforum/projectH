@@ -47,6 +47,11 @@ class RoleRouteCompatibilityTest(unittest.TestCase):
             with self.subTest(alias=alias):
                 self.assertEqual(legacy_watcher_turn_name(alias), VERIFY_FOLLOWUP_ROUTE)
 
+    def test_watcher_turn_name_keeps_canonical_to_legacy_labels(self) -> None:
+        self.assertEqual(legacy_watcher_turn_name(TURN_IMPLEMENT), "claude")
+        self.assertEqual(legacy_watcher_turn_name(TURN_VERIFY), "codex")
+        self.assertEqual(legacy_watcher_turn_name(TURN_VERIFY_FOLLOWUP), VERIFY_FOLLOWUP_ROUTE)
+
 
 class WatcherTurnArbitrationTest(unittest.TestCase):
     def test_operator_request_wins_without_recovery_or_gate(self) -> None:
@@ -88,6 +93,51 @@ class WatcherTurnArbitrationTest(unittest.TestCase):
                 implement_handoff_verify_active=False,
                 idle_release_cooldown_active=False,
                 operator_gate_marker={"routed_to": "verify_followup"},
+            )
+        )
+        self.assertEqual(turn, TURN_VERIFY_FOLLOWUP)
+
+    def test_operator_recovery_marker_falls_back_to_followup_after_active_work(self) -> None:
+        turn = resolve_watcher_turn(
+            WatcherTurnInputs(
+                operator_request_active=True,
+                advisory_request_active=False,
+                advisory_advice_active=False,
+                implement_handoff_active=False,
+                latest_work_needs_verify=False,
+                implement_handoff_verify_active=False,
+                idle_release_cooldown_active=False,
+                operator_recovery_marker={"reason": "operator_retriage_no_next_control"},
+            )
+        )
+        self.assertEqual(turn, TURN_VERIFY_FOLLOWUP)
+
+    def test_verify_need_still_wins_over_operator_recovery_marker(self) -> None:
+        turn = resolve_watcher_turn(
+            WatcherTurnInputs(
+                operator_request_active=True,
+                advisory_request_active=False,
+                advisory_advice_active=False,
+                implement_handoff_active=False,
+                latest_work_needs_verify=True,
+                implement_handoff_verify_active=False,
+                idle_release_cooldown_active=False,
+                operator_recovery_marker={"reason": "operator_retriage_no_next_control"},
+            )
+        )
+        self.assertEqual(turn, TURN_VERIFY)
+
+    def test_operator_gate_followup_marker_is_reachable_without_active_work(self) -> None:
+        turn = resolve_watcher_turn(
+            WatcherTurnInputs(
+                operator_request_active=True,
+                advisory_request_active=False,
+                advisory_advice_active=False,
+                implement_handoff_active=False,
+                latest_work_needs_verify=False,
+                implement_handoff_verify_active=False,
+                idle_release_cooldown_active=False,
+                operator_gate_marker={"routed_to": "codex_followup"},
             )
         )
         self.assertEqual(turn, TURN_VERIFY_FOLLOWUP)

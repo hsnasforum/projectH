@@ -54,6 +54,7 @@ build/
 .pipeline/runs/
 .pipeline/freeze-snapshots/
 .pipeline/gui-runtime/
+.pipeline/.supervisor-start.lock
 .pipeline/live-arb-smoke-*/
 .pipeline/live-blocked-smoke-*/
  .pipeline/

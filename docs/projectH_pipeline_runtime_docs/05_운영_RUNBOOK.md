@@ -250,6 +250,15 @@ synthetic soak는 아래처럼 채택용 보조 게이트로만 남깁니다.
 - `turn_state=IDLE`인데 `active_round.state=VERIFY_PENDING|VERIFYING`이면 verify round가 아직 status surface에 살아 있는 것입니다. 이 조합은 정상 완료가 아니므로 `automation_health=ok`, `automation_next_action=continue`로 보이면 회귀이고, non-degraded 상태의 정상 표시는 `recovering + dispatch_stall + retrying`입니다.
 - runtime launch 중 local tmux socket permission denial이 발생하면 raw error는 `logs/launch-error.log`에서 확인하고, status reason은 `local_socket_guard_auto_held`로 확인합니다. 이 상태는 local environment-held follow-up이므로 `automation_health=attention`, `automation_next_action=verify_followup`이 정상이며, generic `runtime_launch_failed:RuntimeError` / `operator_required`로 반복 표면화되면 회귀입니다.
 - Codex verify prompt submit 자체가 반복 실패해 retry budget을 소진하면 runtime은 `dispatch_failed_submit` stage와 `degraded_reason=codex_verify_dispatch_failure_loop`을 남기고 추가 자동 재주입을 멈춥니다. 이 경우 launcher/controller는 verify follow-up이 아니라 `automation_health=needs_operator`, `automation_next_action=operator_required`로 보여 운영자가 Codex verify lane repair/restart 또는 hold를 결정하게 합니다.
+- `pane_text_fallback_used`는 실패가 아니라 supervisor가 wrapper event 대신 pane text fallback을 상태 판단 보조 채널로 썼다는 telemetry입니다. 운영자는 raw pane text가 아니라 이 event의 `lane`, `model_state`, `tail_captured`, `surface_reason`과 같은 구조화 payload만 봐야 합니다.
+
+| 관찰값 | 해석 | 다음 행동 |
+|---|---|---|
+| Codex `pane_text_fallback_used`가 run당 2~4회이고 대부분 `BOOTING`/`READY` 초기 구간 | 기동 직후 짧은 fallback 의존, 허용 범위 | 현재 유지, 누적 관찰 |
+| 같은 lane에서 `TASK_ACCEPTED` 이후에도 `pane_text_fallback_used`가 반복되거나 `WORKING` 유지가 pane fallback으로 이어짐 | 작업 중 pane text 의존, 위험한 fallback 형태 | Codex/Gemini 구조화 출력 또는 wrapper bridge 보강 조사 |
+| Claude lane에서 fallback event가 다수 발생 | `--output-format stream-json` 미지원, JSONL 파싱 실패, 또는 wrapper event 생성 실패 가능성 | Claude CLI 버전/옵션, wrapper JSONL fallback 로그, `TASK_ACCEPTED source=wrapper` 여부 점검 |
+| `pane_text_fallback_used` payload에 raw pane text 또는 prompt 원문이 보임 | telemetry privacy/audit boundary 회귀 | 즉시 수정, raw text 제거 후 재검증 |
+
 - 같은 fingerprint에서 post-accept completion wait가 한 번 더 반복되면 runtime은 이를 `post_accept_completion_stall` incident로 승격하고, 추가 자동 재큐잉 대신 `degraded_reason=post_accept_completion_stall`, `automation_next_action=verify_followup`, lane note(`waiting_task_done_after_accept` 또는 `waiting_receipt_close_after_task_done`)를 남기는 편이 맞습니다.
 - 이 incident는 supervisor events에 `dispatch_stall_detected` 또는 `completion_stall_detected`로 기록되고 launcher recent log에도 그대로 보여야 합니다. long soak를 다시 기본 게이트로 돌리기보다, live launcher session에서 이 이벤트가 0회인지와 실제 재발 replay가 막히는지를 우선 확인합니다.
 - follow-up/advisory/operator/blocked-triage notify가 lane busy 때문에 바로 못 들어가면 watcher는 silent retry 대신 `lane_input_deferred`를 남기고 prompt-ready가 확인될 때까지 pending defer로 유지해야 합니다. launcher recent log는 이 named event를 그대로 보여줘 queued paste contamination과 normal dispatch를 구분해야 합니다.

@@ -8,6 +8,7 @@ from pipeline_runtime.role_routes import (
     ADVISORY_REQUEST_NOTIFY,
     IMPLEMENT_HANDOFF_NOTIFY,
     VERIFY_FOLLOWUP_ROUTE,
+    VERIFY_FOLLOWUP_ROUTE_ALIASES,
     VERIFY_TRIAGE_ESCALATION,
     VERIFY_TRIAGE_ONLY_REASON,
     normalize_followup_route,
@@ -23,6 +24,7 @@ from pipeline_runtime.turn_arbitration import (
     TURN_VERIFY_FOLLOWUP,
     WatcherTurnInputs,
     active_lane_for_runtime,
+    legacy_watcher_turn_name,
     resolve_watcher_turn,
     suppress_active_round_for_turn,
 )
@@ -39,6 +41,11 @@ class RoleRouteCompatibilityTest(unittest.TestCase):
         self.assertEqual(normalize_followup_route("codex_followup"), VERIFY_FOLLOWUP_ROUTE)
         self.assertEqual(normalize_verify_triage_escalation("codex_triage"), VERIFY_TRIAGE_ESCALATION)
         self.assertEqual(normalize_verify_triage_reason("codex_triage_only"), VERIFY_TRIAGE_ONLY_REASON)
+
+    def test_watcher_turn_name_uses_all_verify_followup_route_aliases(self) -> None:
+        for alias in sorted(VERIFY_FOLLOWUP_ROUTE_ALIASES):
+            with self.subTest(alias=alias):
+                self.assertEqual(legacy_watcher_turn_name(alias), VERIFY_FOLLOWUP_ROUTE)
 
 
 class WatcherTurnArbitrationTest(unittest.TestCase):

@@ -132,6 +132,10 @@ def line_looks_like_input_prompt(line: str) -> bool:
     )
 
 
+def _line_looks_like_input_prompt(line: str) -> bool:
+    return line_looks_like_input_prompt(line)
+
+
 def pane_text_has_gemini_ready_prompt(text: str) -> bool:
     window = _recent_nonempty_lines(text, limit=12)
     if not window:
@@ -145,6 +149,10 @@ def pane_text_has_gemini_ready_prompt(text: str) -> bool:
     has_workspace_hint = any(line == "workspace" or line.startswith("workspace ") for line in window)
     has_gemini_banner = any("gemini cli" in line for line in window)
     return has_type_your_message and (has_workspace_hint or has_gemini_banner)
+
+
+def _pane_text_has_gemini_ready_prompt(text: str) -> bool:
+    return pane_text_has_gemini_ready_prompt(text)
 
 
 def pane_text_has_busy_indicator(text: str, lane_name: str | None = None) -> bool:

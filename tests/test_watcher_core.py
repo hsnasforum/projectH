@@ -828,6 +828,41 @@ class StateArchiveCleanupTest(unittest.TestCase):
 
 
 class PanePromptDetectionTest(unittest.TestCase):
+    def test_moved_lane_surface_helpers_remain_available(self) -> None:
+        from pipeline_runtime.lane_surface import (
+            _line_looks_like_input_prompt,
+            _pane_text_has_gemini_ready_prompt,
+        )
+
+        self.assertTrue(_line_looks_like_input_prompt("❯ "))
+        self.assertTrue(watcher_core._line_looks_like_input_prompt("› "))
+        self.assertTrue(
+            _pane_text_has_gemini_ready_prompt(
+                "Gemini CLI\nType your message\nworkspace\n"
+            )
+        )
+        self.assertTrue(
+            watcher_core._pane_text_has_gemini_ready_prompt(
+                "Gemini CLI\nType your message\nworkspace\n"
+            )
+        )
+
+    def test_moved_prompt_helpers_remain_available(self) -> None:
+        from watcher_prompt_assembly import (
+            _cleanup_prompt_files,
+            _normalize_prompt_text,
+            _write_prompt_file,
+        )
+
+        self.assertEqual(_normalize_prompt_text("a\\nb"), "a\nb")
+        self.assertEqual(watcher_core._normalize_prompt_text("a\\nb"), "a\nb")
+        prompt_path = Path(_write_prompt_file("hello"))
+        try:
+            self.assertEqual(prompt_path.read_text(encoding="utf-8"), "hello")
+        finally:
+            _cleanup_prompt_files()
+        self.assertFalse(prompt_path.exists())
+
     def test_gemini_text_prompt_counts_as_input_ready(self) -> None:
         text = "\n".join(
             [
@@ -3100,6 +3135,107 @@ class WatcherDispatchQueueControlMismatchTest(unittest.TestCase):
 
         self.assertFalse(ready)
         self.assertEqual(reason, "prompt_contains_pasted_content")
+
+    def test_claude_dispatch_writes_pending_prompt_file_without_send_keys(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            prompt_path = root / ".pipeline" / "implement_handoff.md"
+            prompt_path.parent.mkdir(parents=True, exist_ok=True)
+            prompt_path.write_text("STATUS: implement\nCONTROL_SEQ: 91\n", encoding="utf-8")
+            task_hint_dir = root / ".pipeline" / "runs" / "run-91" / "task-hints"
+            send_prompt = mock.Mock()
+            queue = watcher_dispatch.WatcherDispatchQueue(
+                lane_input_defer_cooldown_sec=0.0,
+                capture_pane_text=mock.Mock(side_effect=AssertionError("pane readiness should not be checked")),
+                send_keys=send_prompt,
+                get_path_sig=mock.Mock(return_value=""),
+                role_owner=lambda role: {"implement": "Claude"}.get(role, role),
+                log_raw=mock.Mock(),
+                append_runtime_event=mock.Mock(),
+                get_active_control_signal=mock.Mock(return_value=None),
+                is_active_control=mock.Mock(return_value=True),
+            )
+
+            with mock.patch.dict("os.environ", {"PIPELINE_RUNTIME_RUN_ID": "run-91"}, clear=False):
+                ok = queue.dispatch(
+                    watcher_dispatch.DispatchIntent(
+                        pending_key="claude_implement:implement_handoff:91",
+                        notify_kind="implement_handoff",
+                        lane_role="implement",
+                        functional_role="implement",
+                        lane_id="claude_implement",
+                        agent_kind="claude",
+                        model_alias=None,
+                        reason="implement_handoff_updated",
+                        prompt="prompt 91",
+                        prompt_path=prompt_path,
+                        target="claude-pane",
+                        pane_type="claude",
+                        control_seq=91,
+                        expected_status="implement",
+                        expected_control_path="implement_handoff.md",
+                        expected_control_slot="implement_handoff",
+                        expected_control_seq=91,
+                        require_active_control=False,
+                    )
+                )
+
+            self.assertTrue(ok)
+            send_prompt.assert_not_called()
+            self.assertEqual(
+                (task_hint_dir / "claude.prompt.pending").read_text(encoding="utf-8"),
+                "prompt 91",
+            )
+            self.assertFalse((task_hint_dir / ".claude.prompt.pending.tmp").exists())
+
+    def test_non_claude_dispatch_keeps_send_keys_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            prompt_path = root / ".pipeline" / "advisory_advice.md"
+            prompt_path.parent.mkdir(parents=True, exist_ok=True)
+            prompt_path.write_text("STATUS: advice_ready\nCONTROL_SEQ: 92\n", encoding="utf-8")
+            task_hint_dir = root / ".pipeline" / "runs" / "run-92" / "task-hints"
+            send_prompt = mock.Mock(return_value=True)
+            queue = watcher_dispatch.WatcherDispatchQueue(
+                lane_input_defer_cooldown_sec=0.0,
+                capture_pane_text=mock.Mock(),
+                send_keys=send_prompt,
+                get_path_sig=mock.Mock(return_value=""),
+                role_owner=lambda role: {"advisory": "Gemini"}.get(role, role),
+                log_raw=mock.Mock(),
+                append_runtime_event=mock.Mock(),
+                get_active_control_signal=mock.Mock(return_value=None),
+                is_active_control=mock.Mock(return_value=True),
+                task_hint_dir=task_hint_dir,
+            )
+            queue.lane_prompt_readiness = mock.Mock(return_value=(True, ""))
+
+            ok = queue.dispatch(
+                watcher_dispatch.DispatchIntent(
+                    pending_key="gemini_advisory:advisory_advice:92",
+                    notify_kind="advisory_advice",
+                    lane_role="advisory",
+                    functional_role="advisory",
+                    lane_id="gemini_advisory",
+                    agent_kind="gemini",
+                    model_alias=None,
+                    reason="advisory_ready",
+                    prompt="prompt 92",
+                    prompt_path=prompt_path,
+                    target="gemini-pane",
+                    pane_type="gemini",
+                    control_seq=92,
+                    expected_status="advice_ready",
+                    expected_control_path="advisory_advice.md",
+                    expected_control_slot="advisory_advice",
+                    expected_control_seq=92,
+                    require_active_control=False,
+                )
+            )
+
+            self.assertTrue(ok)
+            send_prompt.assert_called_once_with("gemini-pane", "prompt 92", "gemini")
+            self.assertFalse((task_hint_dir / "claude.prompt.pending").exists())
 
     def test_new_control_dispatch_blocks_stale_codex_pasted_content(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -24,7 +24,6 @@ watcher_core.py  –  Pipeline Watcher v2.0
 
 from __future__ import annotations
 
-import atexit
 import datetime as dt
 import hashlib
 import json
@@ -33,7 +32,6 @@ import os
 import re
 import subprocess
 import sys
-import tempfile
 import time
 from pathlib import Path
 from typing import Optional
@@ -45,6 +43,7 @@ if _PROJECT_IMPORT_ROOT:
         sys.path.insert(0, project_import_path)
 
 import watcher_dispatch
+from pipeline_gui.project import _session_name_for as _session_name_for_project
 from pipeline_gui.setup_profile import resolve_project_runtime_adapter
 from pipeline_runtime.automation_health import (
     STALE_ADVISORY_GRACE_CYCLES,
@@ -53,6 +52,8 @@ from pipeline_runtime.automation_health import (
     derive_automation_health,
 )
 from pipeline_runtime.lane_surface import (
+    _line_looks_like_input_prompt,
+    _pane_text_has_gemini_ready_prompt,
     capture_pane_text as _shared_capture_pane_text,
     pane_text_busy_age_seconds as _shared_pane_text_busy_age_seconds,
     pane_text_has_busy_indicator as _shared_pane_text_has_busy_indicator,
@@ -91,18 +92,12 @@ from pipeline_runtime.schema import (
     atomic_write_text,
     completed_implement_handoff_truth,
     control_block_from_snapshot,
-    control_filenames_equivalent,
     control_seq_value,
     control_slot_spec,
-    control_slot_spec_for_filename,
     iter_job_state_paths,
     iter_control_slot_specs,
-    latest_verify_note_for_work,
-    process_starttime_fingerprint,
     read_control_meta,
     read_json,
-    read_pipeline_control_snapshot,
-    same_day_verify_dir_for_work,
     snapshot_control_seq,
 )
 from pipeline_runtime.turn_arbitration import (
@@ -119,8 +114,6 @@ from verify_fsm import (
     StateMachine,
     TERMINAL_STATES,
     compute_file_sig,
-    compute_md_tree_sig,
-    compute_multi_file_sig,
     make_job_id,
 )
 from watcher_state import (
@@ -137,6 +130,14 @@ from watcher_stabilizer import (
     StabilizeSnapshot,
     compute_file_sha256,
 )
+from watcher_artifact_scanner import ArtifactScanner
+from watcher_control_signals import (
+    ControlSignalReader,
+    control_signal_for_slot,
+    control_signal_matches,
+    newest_control_signal,
+)
+from watcher_job_state import JobStateManager
 from watcher_prompt_assembly import (
     DEFAULT_ADVISORY_PROMPT,
     DEFAULT_ADVISORY_RECOVERY_PROMPT,
@@ -148,12 +149,13 @@ from watcher_prompt_assembly import (
     DEFAULT_VERIFY_TRIAGE_PROMPT,
     PromptDispatchSpec,
     WatcherPromptAssembler,
+    _cleanup_prompt_files,
+    _normalize_prompt_text,
+    _prompt_cleanup_list,
+    _write_prompt_file,
 )
+from watcher_runtime_exporter import WatcherRuntimeExporter
 
-# ---------------------------------------------------------------------------
-# Session name — pipeline-gui.py / start-pipeline.sh와 동일 규칙
-# ---------------------------------------------------------------------------
-_SESSION_PREFIX = "aip"
 _ROLLING_PIPELINE_PATHS = frozenset(
     {
         ".pipeline/implement_handoff.md",
@@ -174,13 +176,6 @@ _ROLLING_PIPELINE_PREFIXES = (
     ".pipeline/wrapper-events/",
 )
 ADVISORY_RECOVERY_FOLLOWUP_LIMIT = 2
-
-
-def _session_name_for_project(project_path: str) -> str:
-    """Project path → deterministic session name (aip-<safe-dirname>)."""
-    name = Path(project_path).resolve().name or "default"
-    safe = re.sub(r"[^A-Za-z0-9_-]", "", name)
-    return f"{_SESSION_PREFIX}-{safe}" if safe else f"{_SESSION_PREFIX}-default"
 
 
 def _default_pane_target_for_lane(session: str, lane: dict[str, object]) -> str:
@@ -251,42 +246,7 @@ DEFAULT_ADVISORY_RECOVERY_SEC = 300.0
 __all__ = ["WatcherCore", "main"]
 
 SCHEMA_VERSION = 1
-ROUND_NOTE_NAME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}-.+\.md$")
-ROUND_NOTE_SECTION_RE = re.compile(r"^##\s+(.+?)\s*$")
-ROUND_NOTE_PATH_RE = re.compile(r"(?<!@)(?:\./)?([A-Za-z0-9_.\-/]+?\.[A-Za-z0-9]+)")
-ROUND_NOTE_METADATA_ONLY_PREFIXES = ("work/", "verify/", "report/", ".pipeline/", "pipeline/")
 _MATCHING_VERIFY_PENDING_ARCHIVE_REASON = "matching_verify_already_exists"
-
-
-def _line_looks_like_input_prompt(line: str) -> bool:
-    stripped = line.strip()
-    if not stripped:
-        return False
-    return (
-        stripped == ">"
-        or stripped == "›"
-        or stripped == "❯"
-        or stripped.startswith("> ")
-        or stripped.startswith("› ")
-        or stripped.startswith("❯ ")
-        or stripped.endswith("$")
-    )
-
-
-def _pane_text_has_gemini_ready_prompt(text: str) -> bool:
-    recent_lines = [line.strip().lower() for line in text.splitlines() if line.strip()]
-    if not recent_lines:
-        return False
-    window = recent_lines[-12:]
-    has_type_your_message = any(
-        line == "type your message"
-        or line.startswith("type your message ")
-        or "type your message" in line
-        for line in window
-    )
-    has_workspace_hint = any(line == "workspace" or line.startswith("workspace ") for line in window)
-    has_gemini_banner = any("gemini cli" in line for line in window)
-    return has_type_your_message and (has_workspace_hint or has_gemini_banner)
 
 
 def _pane_has_input_cursor(pane_target: str) -> bool:
@@ -321,37 +281,6 @@ from watcher_signals import (
     _extract_implement_forbidden_menu_signal,
     _extract_implement_completed_handoff_signal,
 )
-
-
-# Prompt temp file cleanup list (cleaned at exit)
-_prompt_cleanup_list: list[str] = []
-
-
-def _cleanup_prompt_files() -> None:
-    for path in _prompt_cleanup_list:
-        try:
-            os.unlink(path)
-        except OSError:
-            pass
-
-
-atexit.register(_cleanup_prompt_files)
-
-
-def _write_prompt_file(command: str) -> str:
-    """Write prompt to a temp file. Registered for cleanup at exit."""
-    fd = tempfile.NamedTemporaryFile(
-        mode="w", suffix=".txt", prefix="prompt-", delete=False, dir="/tmp",
-    )
-    fd.write(command)
-    fd.close()
-    _prompt_cleanup_list.append(fd.name)
-    return fd.name
-
-
-def _normalize_prompt_text(text: str) -> str:
-    """Convert literal \\n sequences from shell-passed templates into real newlines."""
-    return text.replace("\\n", "\n")
 
 
 # ---------------------------------------------------------------------------
@@ -474,6 +403,18 @@ class WatcherCore:
         self._last_advisory_request_sig: str = self._get_path_sig(self.advisory_request_path)
         self._last_advisory_advice_sig: str = self._get_path_sig(self.advisory_advice_path)
         self._last_operator_request_sig: str = self._get_path_sig(self.operator_request_path)
+        self._csreader = ControlSignalReader(
+            pipeline_dir=self.pipeline_dir,
+            advisory_enabled=self._advisory_enabled(),
+            operator_stop_enabled=self._operator_stop_enabled(),
+            path_sig_fn=self._get_path_sig,
+        )
+        self._scanner = ArtifactScanner(
+            watch_dir=self.watch_dir,
+            verify_dir=self.verify_dir,
+            repo_root=self.repo_root,
+            completion_paths=tuple(self.completion_paths),
+        )
         self._last_seen_control_seq: int | None = None
         self._control_seq_age_cycles: int = 0
         self._last_operator_retriage_sig: str = ""
@@ -535,7 +476,22 @@ class WatcherCore:
         self.run_status_path: Path = self.run_dir / "status.json"
         self.run_events_path: Path = self.run_dir / "events.jsonl"
         self.current_run_path: Path = self.base_dir / "current_run.json"
-        self._runtime_event_seq: int = 0
+        self._exporter = WatcherRuntimeExporter(
+            enabled=self._runtime_export_enabled,
+            run_id=self.run_id,
+            run_dir=self.run_dir,
+            run_status_path=self.run_status_path,
+            run_events_path=self.run_events_path,
+            current_run_path=self.current_run_path,
+            repo_root=self.repo_root,
+        )
+        self._jsm = JobStateManager(
+            state_dir=self.state_dir,
+            run_id=self.run_id,
+            archive_dir_fn=self._job_state_archive_dir,
+            started_at=self.started_at,
+            state_cleanup_legacy_grace_sec=self.state_cleanup_legacy_grace_sec,
+        )
         if self._runtime_export_enabled:
             self.run_dir.mkdir(parents=True, exist_ok=True)
         self._archive_stale_job_states()
@@ -945,59 +901,24 @@ class WatcherCore:
         return self.state_archive_dir / "legacy"
 
     # ------------------------------------------------------------------
+    def _job_state_manager(self) -> JobStateManager:
+        self._jsm.state_dir = self.state_dir
+        self._jsm.run_id = self.run_id
+        self._jsm.started_at = self.started_at
+        self._jsm.state_cleanup_legacy_grace_sec = self.state_cleanup_legacy_grace_sec
+        return self._jsm
+
+    # ------------------------------------------------------------------
     def _archive_job_state_file(self, path: Path, *, source_run_id: str = "", reason: str) -> None:
-        archive_dir = self._job_state_archive_dir(source_run_id)
-        archive_dir.mkdir(parents=True, exist_ok=True)
-        target = archive_dir / path.name
-        if target.exists():
-            target = archive_dir / f"{path.stem}-{int(time.time())}{path.suffix}"
-        try:
-            path.replace(target)
-        except OSError as exc:
-            log.warning("failed to archive stale job state: %s (%s)", path, exc)
-            return
-        log.info("archived stale job state: %s -> %s (%s)", path, target, reason)
+        return self._job_state_manager().archive_job_state_file(
+            path,
+            source_run_id=source_run_id,
+            reason=reason,
+        )
 
     # ------------------------------------------------------------------
     def _archive_stale_job_states(self) -> None:
-        if not self.state_dir.exists():
-            return
-        terminal_values = {status.value for status in TERMINAL_STATES}
-        archived = 0
-        legacy_cutoff = self.started_at - self.state_cleanup_legacy_grace_sec
-        for path in iter_job_state_paths(self.state_dir):
-            try:
-                data = json.loads(path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
-                continue
-            status = str(data.get("status") or "").strip()
-            if status in terminal_values:
-                continue
-            state_run_id = str(data.get("run_id") or "").strip()
-            if state_run_id:
-                if state_run_id == self.run_id:
-                    continue
-                self._archive_job_state_file(
-                    path,
-                    source_run_id=state_run_id,
-                    reason="previous_run_nonterminal",
-                )
-                archived += 1
-                continue
-            try:
-                state_mtime = path.stat().st_mtime
-            except OSError:
-                state_mtime = 0.0
-            updated_at = float(data.get("updated_at") or 0.0)
-            if max(state_mtime, updated_at) >= legacy_cutoff:
-                continue
-            self._archive_job_state_file(
-                path,
-                reason="legacy_nonterminal_before_startup",
-            )
-            archived += 1
-        if archived:
-            log.info("archived %d stale job state files before startup", archived)
+        return self._job_state_manager().archive_stale_job_states()
 
     # ------------------------------------------------------------------
     @staticmethod
@@ -1005,44 +926,23 @@ class WatcherCore:
         return dt.datetime.fromtimestamp(ts, dt.timezone.utc).isoformat().replace("+00:00", "Z")
 
     # ------------------------------------------------------------------
+    def _runtime_exporter(self) -> WatcherRuntimeExporter:
+        self._exporter.enabled = self._runtime_export_enabled
+        self._exporter.run_id = self.run_id
+        self._exporter.run_dir = self.run_dir
+        self._exporter.run_status_path = self.run_status_path
+        self._exporter.run_events_path = self.run_events_path
+        self._exporter.current_run_path = self.current_run_path
+        self._exporter.repo_root = self.repo_root
+        return self._exporter
+
+    # ------------------------------------------------------------------
     def _write_current_run_pointer(self) -> None:
-        if not self._runtime_export_enabled:
-            return
-        # watcher가 자기 process identity(`watcher_pid` + `watcher_fingerprint`)를
-        # current_run.json에 같이 남겨야, supervisor 재시작 inheritance가 watcher가
-        # 직접 쓴 pointer를 보고도 같은 owner-match 계약 아래에서 prior run_id를
-        # 이어받을 수 있다. 이 두 필드가 빠지면 supervisor가 fresh run_id로 fall
-        # through 하면서 canonical runtime surface가 다시 어긋난다.
-        watcher_pid = os.getpid()
-        watcher_fingerprint = process_starttime_fingerprint(watcher_pid)
-        data = {
-            "run_id": self.run_id,
-            "status_path": self._repo_relative(self.run_status_path),
-            "events_path": self._repo_relative(self.run_events_path),
-            "watcher_pid": watcher_pid,
-            "watcher_fingerprint": watcher_fingerprint,
-            "updated_at": self._iso_utc(time.time()),
-        }
-        tmp_path = self.current_run_path.with_suffix(".json.tmp")
-        tmp_path.write_text(json.dumps(data, ensure_ascii=False, indent=2))
-        tmp_path.replace(self.current_run_path)
+        return self._runtime_exporter().write_run_pointer()
 
     # ------------------------------------------------------------------
     def _append_runtime_event(self, event_type: str, payload: dict[str, object]) -> None:
-        if not self._runtime_export_enabled:
-            return
-        self._runtime_event_seq += 1
-        entry = {
-            "seq": self._runtime_event_seq,
-            "ts": self._iso_utc(time.time()),
-            "run_id": self.run_id,
-            "event_type": event_type,
-            "source": "watcher-exporter",
-            "payload": payload,
-        }
-        self.run_dir.mkdir(parents=True, exist_ok=True)
-        with self.run_events_path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        return self._runtime_exporter().append_event(event_type, payload)
 
     # ------------------------------------------------------------------
     def _active_lane_name_for_turn(self, turn_state: Optional[WatcherTurnState] = None) -> str:
@@ -1372,68 +1272,26 @@ class WatcherCore:
         return None
 
     # ------------------------------------------------------------------
+    def _control_signal_reader(self) -> ControlSignalReader:
+        self._csreader.advisory_enabled = self._advisory_enabled()
+        self._csreader.operator_stop_enabled = self._operator_stop_enabled()
+        return self._csreader
+
+    # ------------------------------------------------------------------
     def _control_signal_from_entry(self, entry: dict[str, object]) -> Optional[ControlSignal]:
-        slot_id = str(entry.get("slot_id") or "").strip()
-        if slot_id in {"advisory_request", "advisory_advice"} and not self._advisory_enabled():
-            return None
-        if slot_id == "operator_request" and not self._operator_stop_enabled():
-            return None
-        filename = str(entry.get("file") or "").strip()
-        status = str(entry.get("status") or "").strip()
-        if not filename or not status:
-            return None
-        path = self.pipeline_dir / filename
-        try:
-            mtime = float(entry.get("mtime") or 0.0)
-        except (TypeError, ValueError):
-            mtime = 0.0
-        if mtime == 0.0:
-            return None
-        control_seq = control_seq_value(entry.get("control_seq"), default=-1)
-        return ControlSignal(
-            kind=slot_id or filename,
-            path=path,
-            status=status,
-            mtime=mtime,
-            sig=self._get_path_sig(path),
-            control_seq=control_seq,
-            slot_id=slot_id,
-            canonical_file=str(entry.get("canonical_file") or filename),
-            is_legacy_alias=bool(entry.get("is_legacy_alias")),
-        )
+        return self._control_signal_reader().from_entry(entry)
 
     # ------------------------------------------------------------------
     def _iter_valid_control_signals(self, *, include_advisory_advice: bool = True) -> list[ControlSignal]:
-        snapshot = read_pipeline_control_snapshot(self.pipeline_dir)
-        entries: list[dict[str, object]] = []
-        active_entry = snapshot.get("active_entry")
-        if isinstance(active_entry, dict):
-            entries.append(active_entry)
-        entries.extend(
-            entry
-            for entry in list(snapshot.get("stale_entries") or [])
-            if isinstance(entry, dict)
+        return self._control_signal_reader().iter_valid(
+            include_advisory_advice=include_advisory_advice,
         )
-        candidates: list[ControlSignal] = []
-        for entry in entries:
-            if not include_advisory_advice and str(entry.get("slot_id") or "") == "advisory_advice":
-                continue
-            signal = self._control_signal_from_entry(entry)
-            if signal is not None:
-                candidates.append(signal)
-        return candidates
 
     def _newest_control_signal(self, signals: list[ControlSignal]) -> Optional[ControlSignal]:
-        if not signals:
-            return None
-        return signals[0]
+        return newest_control_signal(signals)
 
     def _control_signal_matches(self, signal: Optional[ControlSignal], path: Path, expected_status: str) -> bool:
-        if signal is None or signal.status != expected_status:
-            return False
-        if signal.path == path:
-            return True
-        return control_filenames_equivalent(signal.path.name, path.name)
+        return control_signal_matches(signal, path, expected_status)
 
     def _control_signal_for_slot(
         self,
@@ -1441,22 +1299,10 @@ class WatcherCore:
         slot_id: str,
         expected_status: str,
     ) -> Optional[ControlSignal]:
-        if signal is None or signal.status != expected_status:
-            return None
-        if signal.slot_id == slot_id:
-            return signal
-        spec = control_slot_spec_for_filename(signal.path.name)
-        if spec is not None and spec.slot_id == slot_id:
-            return signal
-        return None
+        return control_signal_for_slot(signal, slot_id, expected_status)
 
     def _newest_control_signal_for_slot(self, slot_id: str, expected_status: str) -> Optional[ControlSignal]:
-        signals = [
-            signal
-            for signal in self._iter_valid_control_signals()
-            if signal.slot_id == slot_id and signal.status == expected_status
-        ]
-        return self._newest_control_signal(signals)
+        return self._control_signal_reader().for_slot(slot_id, expected_status)
 
     def _control_file_name(self, signal: Optional[ControlSignal], fallback: Path) -> str:
         return signal.path.name if signal is not None else fallback.name
@@ -1991,128 +1837,56 @@ class WatcherCore:
         return f"@{self._repo_relative(path)}"
 
     # ------------------------------------------------------------------
+    def _artifact_scanner(self) -> ArtifactScanner:
+        self._scanner.watch_dir = self.watch_dir
+        self._scanner.verify_dir = self.verify_dir
+        self._scanner.repo_root = self.repo_root
+        self._scanner.completion_paths = tuple(self.completion_paths)
+        return self._scanner
+
+    # ------------------------------------------------------------------
     def _find_latest_md(self, root: Path) -> Optional[Path]:
-        latest_path: Optional[Path] = None
-        latest_mtime = 0.0
-        if not root.exists():
-            return None
-        for md in root.rglob("*.md"):
-            if root == self.watch_dir:
-                if not self._is_dispatchable_work_note(md):
-                    continue
-            elif not self._is_canonical_round_note(root, md):
-                continue
-            try:
-                mt = md.stat().st_mtime
-            except OSError:
-                continue
-            if mt >= latest_mtime:
-                latest_path = md
-                latest_mtime = mt
-        return latest_path
+        return self._artifact_scanner().find_latest_md(root)
 
     # ------------------------------------------------------------------
     def _get_latest_work_path(self) -> Optional[Path]:
-        return self._find_latest_md(self.watch_dir)
+        return self._artifact_scanner().get_latest_work_path()
 
     # ------------------------------------------------------------------
     def _get_latest_work_path_broad(self) -> Optional[Path]:
-        return self._find_latest_md_broad(self.watch_dir)
+        return self._artifact_scanner().get_latest_work_path_broad()
 
     # ------------------------------------------------------------------
     def _is_canonical_round_note(self, root: Path, path: Path) -> bool:
-        try:
-            rel = path.relative_to(root)
-        except ValueError:
-            return False
-        min_depth = 3
-        for base in (self.watch_dir, self.verify_dir):
-            try:
-                base_rel = root.relative_to(base)
-            except ValueError:
-                continue
-            # top-level work/verify roots expect month/day/file (=3),
-            # but same-day subdirs like verify/4/17 only need the file itself.
-            min_depth = max(1, 3 - len(base_rel.parts))
-            break
-        if len(rel.parts) < min_depth:
-            return False
-        return bool(ROUND_NOTE_NAME_RE.match(path.name))
+        return self._artifact_scanner().is_canonical_round_note(root, path)
 
     # ------------------------------------------------------------------
     def _is_metadata_only_work_note(self, work_path: Path) -> bool:
-        if not self._is_canonical_round_note(self.watch_dir, work_path):
-            return False
-        changed_paths = [path.lstrip("./") for path in self._extract_changed_file_paths_from_round_note(work_path)]
-        if not changed_paths:
-            # "변경 파일" 섹션이 비었거나 "- 없음"만 있으면 메타 문서로 취급
-            return True
-        work_rel = self._repo_relative(work_path)
-        return all(
-            path == work_rel or path.startswith(ROUND_NOTE_METADATA_ONLY_PREFIXES)
-            for path in changed_paths
-        )
+        return self._artifact_scanner().is_metadata_only_work_note(work_path)
 
     # ------------------------------------------------------------------
     def _is_dispatchable_work_note(self, work_path: Path) -> bool:
-        return (
-            self._is_canonical_round_note(self.watch_dir, work_path)
-            and not self._is_metadata_only_work_note(work_path)
-        )
+        return self._artifact_scanner().is_dispatchable_work_note(work_path)
 
     # ------------------------------------------------------------------
     def _get_latest_same_day_verify_path(self, work_path: Optional[Path]) -> Optional[Path]:
-        if work_path is None:
-            return self._find_latest_md(self.verify_dir)
-
-        try:
-            rel = work_path.relative_to(self.watch_dir)
-        except ValueError:
-            return self._find_latest_md(self.verify_dir)
-
-        if len(rel.parts) >= 2:
-            same_day_dir = self.verify_dir / rel.parts[0] / rel.parts[1]
-            latest_same_day = self._find_latest_md(same_day_dir)
-            if latest_same_day is not None:
-                return latest_same_day
-
-        return self._find_latest_md(self.verify_dir)
+        return self._artifact_scanner().get_latest_same_day_verify_path(work_path)
 
     # ------------------------------------------------------------------
     def _get_latest_same_day_verify_path_for_work(self, work_path: Optional[Path]) -> Optional[Path]:
-        if work_path is None:
-            return None
-        return latest_verify_note_for_work(
-            self.watch_dir,
-            self.verify_dir,
-            work_path,
-            repo_root=self.repo_root,
-        )
+        return self._artifact_scanner().get_latest_same_day_verify_path_for_work(work_path)
 
     # ------------------------------------------------------------------
     def _get_same_day_verify_dir(self, work_path: Optional[Path]) -> Path:
-        if work_path is None:
-            return self.verify_dir
-        return same_day_verify_dir_for_work(self.watch_dir, self.verify_dir, work_path)
+        return self._artifact_scanner().get_same_day_verify_dir(work_path)
 
     # ------------------------------------------------------------------
     def _build_verify_feedback_sigs(self, job: JobState) -> tuple[str, str]:
-        work_path = Path(job.artifact_path)
-        control_sig = compute_multi_file_sig(self.completion_paths)
-        del work_path
-        verify_sig = compute_md_tree_sig(self.verify_dir)
-        return control_sig, verify_sig
+        return self._artifact_scanner().build_verify_feedback_sigs(job)
 
     # ------------------------------------------------------------------
     def _build_verify_receipt_state(self, job: JobState) -> tuple[str, float]:
-        work_path = Path(job.artifact_path)
-        latest_verify = (
-            self._get_latest_same_day_verify_path_for_work(work_path)
-            or self._get_latest_same_day_verify_path(work_path)
-        )
-        if latest_verify is None:
-            return "", 0.0
-        return self._repo_relative(latest_verify), self._get_path_mtime(latest_verify)
+        return self._artifact_scanner().build_verify_receipt_state(job)
 
     # ------------------------------------------------------------------
     def _infer_advisory_report_hint(self, work_path: Optional[Path]) -> str:
@@ -2125,32 +1899,7 @@ class WatcherCore:
 
     # ------------------------------------------------------------------
     def _extract_changed_file_paths_from_round_note(self, work_path: Optional[Path]) -> list[str]:
-        if work_path is None or not work_path.exists():
-            return []
-        try:
-            lines = work_path.read_text().splitlines()
-        except OSError:
-            return []
-
-        in_changed_files = False
-        collected: list[str] = []
-        for raw_line in lines:
-            line = raw_line.rstrip()
-            section = ROUND_NOTE_SECTION_RE.match(line.strip())
-            if section:
-                in_changed_files = section.group(1).strip() == "변경 파일"
-                continue
-            if not in_changed_files:
-                continue
-            if not line.strip():
-                continue
-            if line.lstrip().startswith("-"):
-                bullet = line.lstrip()[1:].strip()
-                if bullet == "없음":
-                    continue
-                for match in ROUND_NOTE_PATH_RE.finditer(bullet):
-                    collected.append(match.group(1).lstrip("./"))
-        return collected
+        return self._artifact_scanner().extract_changed_file_paths_from_round_note(work_path)
 
     # ------------------------------------------------------------------
     # ------------------------------------------------------------------
@@ -2655,56 +2404,15 @@ class WatcherCore:
 
     # ------------------------------------------------------------------
     def _get_work_tree_snapshot(self) -> dict[str, str]:
-        """work/ 전체 .md 스냅샷 반환."""
-        snapshot: dict[str, str] = {}
-        if not self.watch_dir.exists():
-            return snapshot
-        for md in self.watch_dir.rglob("*.md"):
-            if not self._is_dispatchable_work_note(md):
-                continue
-            sig = compute_file_sig(md)
-            if not sig:
-                continue
-            try:
-                rel = str(md.relative_to(self.watch_dir))
-            except ValueError:
-                rel = str(md)
-            snapshot[rel] = sig
-        return snapshot
+        return self._artifact_scanner().get_work_tree_snapshot()
 
     # ------------------------------------------------------------------
     def _get_work_tree_snapshot_broad(self) -> dict[str, str]:
-        """work/ 전체 canonical round-note 스냅샷 반환 (metadata-only 포함)."""
-        snapshot: dict[str, str] = {}
-        if not self.watch_dir.exists():
-            return snapshot
-        for md in self.watch_dir.rglob("*.md"):
-            if not self._is_canonical_round_note(self.watch_dir, md):
-                continue
-            sig = compute_file_sig(md)
-            if not sig:
-                continue
-            try:
-                rel = str(md.relative_to(self.watch_dir))
-            except ValueError:
-                rel = str(md)
-            snapshot[rel] = sig
-        return snapshot
+        return self._artifact_scanner().get_work_tree_snapshot_broad()
 
     # ------------------------------------------------------------------
     def _get_latest_work_mtime(self) -> float:
-        """work/ 내 최신 .md 파일의 mtime 반환. 없으면 0.0."""
-        latest = 0.0
-        for md in self.watch_dir.rglob("*.md"):
-            if not self._is_dispatchable_work_note(md):
-                continue
-            try:
-                mt = md.stat().st_mtime
-                if mt > latest:
-                    latest = mt
-            except OSError:
-                continue
-        return latest
+        return self._artifact_scanner().get_latest_work_mtime()
 
     # ------------------------------------------------------------------
     def _work_has_matching_verify(
@@ -2713,18 +2421,14 @@ class WatcherCore:
         *,
         verified_work_paths: Optional[set[str]] = None,
     ) -> bool:
-        if work_path is None:
-            return False
-        normalized_work = self._normalize_artifact_path(work_path)
-        if not normalized_work:
-            return False
-        verified_paths = verified_work_paths if verified_work_paths is not None else self._verified_work_paths()
-        if normalized_work in verified_paths:
-            return True
-        latest_verify = self._get_latest_same_day_verify_path_for_work(work_path)
-        if latest_verify is None:
-            return False
-        return self._get_path_mtime(latest_verify) >= self._get_path_mtime(work_path)
+        return self._artifact_scanner().work_has_matching_verify(
+            work_path,
+            verified_work_paths=(
+                verified_work_paths
+                if verified_work_paths is not None
+                else self._verified_work_paths()
+            ),
+        )
 
     # ------------------------------------------------------------------
     def _get_latest_unverified_work_path(
@@ -2733,28 +2437,11 @@ class WatcherCore:
         include_metadata_only: bool,
         newer_than_mtime: float = 0.0,
     ) -> Optional[Path]:
-        if not self.watch_dir.exists():
-            return None
-        verified_work_paths = self._verified_work_paths()
-        candidates: list[tuple[float, Path]] = []
-        for md in self.watch_dir.rglob("*.md"):
-            if include_metadata_only:
-                if not self._is_canonical_round_note(self.watch_dir, md):
-                    continue
-            elif not self._is_dispatchable_work_note(md):
-                continue
-            try:
-                mt = md.stat().st_mtime
-            except OSError:
-                continue
-            if newer_than_mtime > 0.0 and mt < newer_than_mtime:
-                continue
-            candidates.append((mt, md))
-        for _, md in sorted(candidates, key=lambda item: item[0], reverse=True):
-            if self._work_has_matching_verify(md, verified_work_paths=verified_work_paths):
-                continue
-            return md
-        return None
+        return self._artifact_scanner().get_latest_unverified_work_path(
+            include_metadata_only=include_metadata_only,
+            newer_than_mtime=newer_than_mtime,
+            verified_work_paths=self._verified_work_paths(),
+        )
 
     # ------------------------------------------------------------------
     def _handoff_verify_blocker_exists(self, handoff_mtime: float) -> bool:
@@ -2768,57 +2455,25 @@ class WatcherCore:
 
     # ------------------------------------------------------------------
     def _latest_work_needs_verify(self) -> bool:
-        """
-        자동 verify rerun은 항상 최신 dispatchable `/work` 한 장만 기준으로 본다.
-        오래된 backlog note는 이미 열린 current-run job replay로만 이어지고, 새 자동 스캔이
-        과거 round를 다시 끌어오지는 않는다.
-        """
-        latest_work = self._get_latest_work_path()
-        if latest_work is None:
-            return False
-        return not self._work_has_matching_verify(latest_work)
+        return self._artifact_scanner().latest_work_needs_verify(
+            verified_work_paths=self._verified_work_paths(),
+        )
 
     # ------------------------------------------------------------------
     def _find_latest_md_broad(self, root: Path) -> Optional[Path]:
-        """Find latest canonical round note without metadata-only filtering."""
-        latest_path: Optional[Path] = None
-        latest_mtime = 0.0
-        if not root.exists():
-            return None
-        for md in root.rglob("*.md"):
-            if not self._is_canonical_round_note(root, md):
-                continue
-            try:
-                mt = md.stat().st_mtime
-            except OSError:
-                continue
-            if mt >= latest_mtime:
-                latest_path = md
-                latest_mtime = mt
-        return latest_path
+        return self._artifact_scanner().find_latest_md_broad(root)
 
     # ------------------------------------------------------------------
     def _latest_work_needs_verify_broad(self) -> bool:
-        """Like _latest_work_needs_verify but includes metadata-only notes for the latest round only."""
-        latest_work = self._get_latest_work_path_broad()
-        if latest_work is None:
-            return False
-        return not self._work_has_matching_verify(latest_work)
+        return self._artifact_scanner().latest_work_needs_verify_broad(
+            verified_work_paths=self._verified_work_paths(),
+        )
 
     # ------------------------------------------------------------------
     def _get_latest_verify_candidate_path(self) -> Optional[Path]:
-        """Latest canonical work note that should drive automatic verify/handoff rerun.
-
-        Historical unmatched backlog is not reopened by fresh scans; only the newest canonical
-        round note may open a new automatic verify job. Older notes can still continue when a
-        current-run VERIFY_PENDING / VERIFY_RUNNING job already exists.
-        """
-        latest_work = self._get_latest_work_path_broad()
-        if latest_work is None:
-            return None
-        if self._work_has_matching_verify(latest_work):
-            return None
-        return latest_work
+        return self._artifact_scanner().get_latest_verify_candidate_path(
+            verified_work_paths=self._verified_work_paths(),
+        )
 
     # ------------------------------------------------------------------
     def _get_current_run_jobs(
@@ -2826,46 +2481,11 @@ class WatcherCore:
         *,
         statuses: Optional[set[JobStatus]] = None,
     ) -> list[JobState]:
-        """Load current-run watcher jobs from shared state.
-
-        Blank run_id is tolerated for test scaffolds and legacy local state.
-        """
-        if not self.state_dir.exists():
-            return []
-        jobs: list[JobState] = []
-        seen_job_ids: set[str] = set()
-        for path in iter_job_state_paths(self.state_dir):
-            if path.stem in seen_job_ids:
-                continue
-            seen_job_ids.add(path.stem)
-            job = JobState.load(self.state_dir, path.stem)
-            if job is None:
-                continue
-            if job.run_id and job.run_id != self.run_id:
-                continue
-            if statuses is not None and job.status not in statuses:
-                continue
-            jobs.append(job)
-        jobs.sort(
-            key=lambda job: (
-                float(job.last_dispatch_at or 0.0),
-                float(job.updated_at or 0.0),
-                str(job.job_id),
-            ),
-            reverse=True,
-        )
-        return jobs
+        return self._job_state_manager().get_current_run_jobs(statuses=statuses)
 
     # ------------------------------------------------------------------
     def _archive_current_run_job(self, job: JobState, *, reason: str) -> bool:
-        archived = False
-        source_run_id = job.run_id or self.run_id
-        for path in iter_job_state_paths(self.state_dir):
-            if path.stem != job.job_id:
-                continue
-            self._archive_job_state_file(path, source_run_id=source_run_id, reason=reason)
-            archived = True
-        return archived
+        return self._job_state_manager().archive_current_run_job(job, reason=reason)
 
     # ------------------------------------------------------------------
     def _archive_matching_verified_pending_jobs(self, jobs: list[JobState]) -> list[JobState]:

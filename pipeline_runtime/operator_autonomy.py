@@ -182,6 +182,7 @@ _IMMEDIATE_REASON_CODES = {
     "security_incident": {"mode": "needs_operator", "routed_to": "operator"},
     "destructive_risk": {"mode": "needs_operator", "routed_to": "operator"},
     "auth_login_required": {"mode": "needs_operator", "routed_to": "operator"},
+    "codex_verify_dispatch_failure_loop": {"mode": "needs_operator", "routed_to": "operator"},
     **{
         reason: {"mode": "needs_operator", "routed_to": "operator"}
         for reason in PUBLICATION_BOUNDARY_REASON_CODES
@@ -233,6 +234,7 @@ SUPPORTED_DECISION_CLASSES: frozenset[str] = frozenset(
         "internal_only",
         "release_gate",
         "merge_gate",
+        "runtime_dispatch_gate",
         "truth_sync_scope",
         "red_test_family_scope_decision",
     }
@@ -266,6 +268,15 @@ _REASON_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ),
     ("security_incident", ("security_incident", "security incident")),
     ("destructive_risk", ("destructive_risk", "destructive risk")),
+    (
+        "codex_verify_dispatch_failure_loop",
+        (
+            "codex_verify_dispatch_failure_loop",
+            "codex verify dispatch failure loop",
+            "verify dispatch failure loop",
+            "dispatch failure loop",
+        ),
+    ),
     ("context_exhaustion", ("context_exhaustion", "context exhaustion")),
     ("session_rollover", ("session_rollover", "session rollover")),
     ("continue_vs_switch", ("continue_vs_switch", "continue vs switch")),

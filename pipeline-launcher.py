@@ -21,10 +21,12 @@ import curses
 import os
 import subprocess
 import sys
+import threading
 import time
 import traceback
+import unicodedata
 from pathlib import Path
-from typing import NamedTuple
+from typing import Callable, NamedTuple
 
 from pipeline_gui.backend import (
     PIPELINE_START_READY_TIMEOUT_SECONDS,
@@ -131,22 +133,76 @@ def safe_addstr(
         allowed = min(allowed, max_width)
     if allowed <= 0:
         return
-    clipped = text[:allowed]
+    clipped = _clip_display_width(text, allowed)
     try:
         stdscr.addstr(row, col, clipped, attr)
     except curses.error:
         pass
 
 
+def _char_display_width(char: str) -> int:
+    if not char:
+        return 0
+    if unicodedata.combining(char):
+        return 0
+    category = unicodedata.category(char)
+    if category.startswith("C"):
+        return 0
+    return 2 if unicodedata.east_asian_width(char) in {"F", "W"} else 1
+
+
+def _display_width(text: str) -> int:
+    return sum(_char_display_width(char) for char in text)
+
+
+def _clip_display_width(text: str, width: int) -> str:
+    if width <= 0:
+        return ""
+    used = 0
+    clipped: list[str] = []
+    for char in text:
+        char_width = _char_display_width(char)
+        if char_width and used + char_width > width:
+            break
+        clipped.append(char)
+        used += char_width
+    return "".join(clipped)
+
+
+def _pad_display_width(text: str, width: int) -> str:
+    pad = max(0, width - _display_width(text))
+    return text + (" " * pad)
+
+
+def _tail_display_width(text: str, width: int, *, prefix: str = "...") -> str:
+    if width <= 0:
+        return ""
+    if _display_width(text) <= width:
+        return text
+    prefix_width = _display_width(prefix)
+    if width <= prefix_width:
+        return _clip_display_width(prefix, width)
+    remaining = width - prefix_width
+    used = 0
+    chars: list[str] = []
+    for char in reversed(text):
+        char_width = _char_display_width(char)
+        if char_width and used + char_width > remaining:
+            break
+        chars.append(char)
+        used += char_width
+    return prefix + "".join(reversed(chars))
+
+
 def _fit_text(text: str, width: int) -> str:
     """고정폭 컬럼 안에 맞게 자르거나 패딩합니다."""
     if width <= 0:
         return ""
-    if len(text) <= width:
-        return text.ljust(width)
+    if _display_width(text) <= width:
+        return _pad_display_width(text, width)
     if width == 1:
-        return text[:1]
-    return text[: width - 1] + "…"
+        return "…"
+    return _pad_display_width(_clip_display_width(text, width - 1) + "…", width)
 
 
 def _non_operator_hibernate(
@@ -343,7 +399,71 @@ def _run_runtime_cli(project: Path, args: list[str], *, timeout: float = 40.0) -
     else:
         kwargs["text"] = True
         kwargs["cwd"] = str(project)
-    return subprocess.run(cmd, **kwargs)
+    try:
+        return subprocess.run(cmd, **kwargs)
+    except subprocess.TimeoutExpired as exc:
+        stdout = exc.stdout if isinstance(exc.stdout, str) else ""
+        stderr = exc.stderr if isinstance(exc.stderr, str) else ""
+        detail = stderr or f"timeout after {exc.timeout}s"
+        return subprocess.CompletedProcess(cmd, 124, stdout=stdout, stderr=detail)
+    except (subprocess.SubprocessError, OSError) as exc:
+        return subprocess.CompletedProcess(
+            cmd,
+            1,
+            stdout="",
+            stderr=f"{type(exc).__name__}: {exc}",
+        )
+
+
+class BackgroundAction:
+    def __init__(
+        self,
+        *,
+        kind: str,
+        label: str,
+        pending_message: str,
+        target: Callable[[], str],
+    ) -> None:
+        self.kind = kind
+        self.label = label
+        self.pending_message = pending_message
+        self._target = target
+        self._done = threading.Event()
+        self._result = ""
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def _run(self) -> None:
+        try:
+            self._result = self._target()
+        except Exception as exc:
+            self._result = f"실패: {type(exc).__name__}: {exc}"
+        finally:
+            self._done.set()
+
+    def poll(self) -> str | None:
+        if not self._done.is_set():
+            return None
+        return f"{self.label}: {self._result or '완료'}"
+
+
+def start_pipeline_stop_task(project: Path, session: str) -> BackgroundAction:
+    return BackgroundAction(
+        kind="stop",
+        label="STOP",
+        pending_message="STOP: 중지 중...",
+        target=lambda: pipeline_stop(project, session),
+    )
+
+
+def start_pipeline_restart_task(project: Path, session: str) -> BackgroundAction:
+    return BackgroundAction(
+        kind="restart",
+        label="RESTART",
+        pending_message="RESTART: 재시작 중...",
+        target=lambda: pipeline_restart(project, session),
+    )
+
 
 def pipeline_start(project: Path, session: str = "") -> str:
     resolved_session = session or resolved_session_name(project)
@@ -876,6 +996,19 @@ def show_follow_view(project: Path, title: str, seconds: int = 8) -> None:
         time.sleep(1.0)
 
 
+def handle_resize(stdscr: curses.window) -> None:
+    try:
+        curses.update_lines_cols()
+    except curses.error:
+        pass
+    clearok = getattr(stdscr, "clearok", None)
+    if callable(clearok):
+        try:
+            clearok(True)
+        except curses.error:
+            pass
+
+
 def run_line_mode(project: Path) -> None:
     session = resolved_session_name(project)
     message = ""
@@ -941,6 +1074,7 @@ def draw(
     pending_state: str = "",
     focused_agent: int | None = None,
     runtime_view: dict[str, object] | None = None,
+    action_state: str = "",
 ) -> None:
     stdscr.erase()
     h, w = stdscr.getmaxyx()
@@ -977,11 +1111,10 @@ def draw(
 
     # 프로젝트
     proj_str = str(project)
-    if len(proj_str) > w - 16:
-        proj_str = "..." + proj_str[-(w - 19):]
+    proj_str = _tail_display_width(proj_str, max(0, w - 14))
     safe_addstr(stdscr, row, 0, "│ ", CYAN)
     safe_addstr(stdscr, row, 2, "Project: ", WHITE)
-    safe_addstr(stdscr, row, 11, proj_str[:max(0, w - 14)], YELLOW)
+    safe_addstr(stdscr, row, 11, proj_str, YELLOW, max_width=max(0, w - 14))
     safe_addstr(stdscr, row, w - 1, "│", CYAN)
     row += 1
 
@@ -1001,6 +1134,12 @@ def draw(
     elif runtime_status == "BROKEN":
         pipeline_text = "[BROKEN]".ljust(12)
         pipeline_attr = RED | curses.A_BOLD
+    elif action_state == "stop":
+        pipeline_text = "[STOPPING]".ljust(12)
+        pipeline_attr = YELLOW | curses.A_BOLD
+    elif action_state == "restart":
+        pipeline_text = "[RESTARTING]".ljust(12)
+        pipeline_attr = YELLOW | curses.A_BOLD
     elif runtime_status == "STARTING" or pending_state:
         pipeline_text = "[STARTING]".ljust(12)
         pipeline_attr = YELLOW | curses.A_BOLD
@@ -1013,6 +1152,9 @@ def draw(
     if w_alive:
         watcher_text = f"[ALIVE PID:{w_pid}]"
         watcher_attr = GREEN
+    elif action_state == "restart":
+        watcher_text = "[RESTARTING]"
+        watcher_attr = YELLOW
     elif pending_state:
         watcher_text = "[STARTING]"
         watcher_attr = YELLOW
@@ -1040,7 +1182,7 @@ def draw(
             f"[S]Start [T]Stop [R]Restart [A]Attach "
             f"[1]{lane_names.get(0, '?')} [2]{lane_names.get(1, '?')} [3]{lane_names.get(2, '?')} [Q]Quit"
         )
-    safe_addstr(stdscr, row, 2, keys[:max(0, w - 4)], WHITE | curses.A_BOLD)
+    safe_addstr(stdscr, row, 2, keys, WHITE | curses.A_BOLD, max_width=max(0, w - 4))
     safe_addstr(stdscr, row, w - 1, "│", CYAN)
     row += 1
 
@@ -1080,14 +1222,14 @@ def draw(
     safe_addstr(stdscr, row, 0, "│ ", CYAN)
     safe_addstr(stdscr, row, 2, "Latest work:   ", WHITE)
     work_display = f"{work_name} ({time_ago(work_mtime)})" if work_mtime else work_name
-    safe_addstr(stdscr, row, 17, work_display[:max(0, w - 20)], YELLOW)
+    safe_addstr(stdscr, row, 17, work_display, YELLOW, max_width=max(0, w - 20))
     safe_addstr(stdscr, row, w - 1, "│", CYAN)
     row += 1
 
     safe_addstr(stdscr, row, 0, "│ ", CYAN)
     safe_addstr(stdscr, row, 2, "Latest verify: ", WHITE)
     verify_display = f"{verify_name} ({time_ago(verify_mtime)})" if verify_mtime else verify_name
-    safe_addstr(stdscr, row, 17, verify_display[:max(0, w - 20)], YELLOW)
+    safe_addstr(stdscr, row, 17, verify_display, YELLOW, max_width=max(0, w - 20))
     safe_addstr(stdscr, row, w - 1, "│", CYAN)
     row += 1
 
@@ -1095,7 +1237,7 @@ def draw(
     safe_addstr(stdscr, row, 2, "Control:       ", WHITE)
     control_display = _control_summary(control_file, control_seq, control_status)
     control_attr = YELLOW if control_status == "needs_operator" else WHITE
-    safe_addstr(stdscr, row, 17, control_display[:max(0, w - 20)], control_attr)
+    safe_addstr(stdscr, row, 17, control_display, control_attr, max_width=max(0, w - 20))
     safe_addstr(stdscr, row, w - 1, "│", CYAN)
     row += 1
 
@@ -1115,7 +1257,7 @@ def draw(
         if autonomy_mode not in {"", "normal", "hibernate"} or automation_health != "ok"
         else WHITE
     )
-    safe_addstr(stdscr, row, 17, autonomy_display[:max(0, w - 20)], autonomy_attr)
+    safe_addstr(stdscr, row, 17, autonomy_display, autonomy_attr, max_width=max(0, w - 20))
     safe_addstr(stdscr, row, w - 1, "│", CYAN)
     row += 1
 
@@ -1133,7 +1275,7 @@ def draw(
         "attention": YELLOW | curses.A_BOLD,
         "needs_operator": RED | curses.A_BOLD,
     }.get(automation_health, YELLOW)
-    safe_addstr(stdscr, row, 17, automation_display[:max(0, w - 20)], automation_attr)
+    safe_addstr(stdscr, row, 17, automation_display, automation_attr, max_width=max(0, w - 20))
     safe_addstr(stdscr, row, w - 1, "│", CYAN)
     row += 1
 
@@ -1149,7 +1291,7 @@ def draw(
     if automation_detail and row < h - 4:
         safe_addstr(stdscr, row, 0, "│ ", CYAN)
         safe_addstr(stdscr, row, 2, "Auto detail:   ", WHITE)
-        safe_addstr(stdscr, row, 17, automation_detail[:max(0, w - 20)], automation_attr)
+        safe_addstr(stdscr, row, 17, automation_detail, automation_attr, max_width=max(0, w - 20))
         safe_addstr(stdscr, row, w - 1, "│", CYAN)
         row += 1
 
@@ -1169,8 +1311,8 @@ def draw(
             break
         # 타임스탬프 부분은 시간만 추출
         display = log_line
-        if len(display) > w - 6:
-            display = display[:w - 9] + "..."
+        if _display_width(display) > w - 6:
+            display = _fit_text(display, max(0, w - 6)).rstrip()
         safe_addstr(stdscr, row, 0, "│ ", CYAN)
         safe_addstr(stdscr, row, 2, f"  {display}", curses.color_pair(5) | curses.A_DIM)
         safe_addstr(stdscr, row, w - 1, "│", CYAN)
@@ -1220,7 +1362,7 @@ def draw(
                 stdscr,
                 row,
                 detail_col,
-                detail_text[:max(0, w - detail_col - 1)],
+                _clip_display_width(detail_text, max(0, w - detail_col - 1)),
                 curses.color_pair(5) | curses.A_DIM,
             )
             safe_addstr(stdscr, row, w - 1, "│", CYAN)
@@ -1249,7 +1391,7 @@ def draw(
         for dline in display:
             if row >= h - 3:
                 break
-            truncated = dline[:content_width] if len(dline) > content_width else dline
+            truncated = _clip_display_width(dline, content_width)
             safe_addstr(stdscr, row, 0, "│ ", CYAN)
             safe_addstr(stdscr, row, margin, truncated, curses.color_pair(5))
             safe_addstr(stdscr, row, w - 1, "│", CYAN)
@@ -1261,7 +1403,7 @@ def draw(
         row += 1
     if row < h - 1 and message:
         safe_addstr(stdscr, row, 0, "│ ", CYAN)
-        safe_addstr(stdscr, row, 2, message[:max(0, w - 4)], YELLOW)
+        safe_addstr(stdscr, row, 2, message, YELLOW, max_width=max(0, w - 4))
         safe_addstr(stdscr, row, w - 1, "│", CYAN)
         row += 1
 
@@ -1286,8 +1428,24 @@ def main(stdscr: curses.window) -> None:
     pending_state_expire = 0.0
     pending_started_at = 0.0
     focused_agent: int | None = None  # None=전체, 0=Claude, 1=Codex, 2=Gemini
+    action_task: BackgroundAction | None = None
 
     while True:
+        if action_task is not None:
+            action_result = action_task.poll()
+            if action_result is not None:
+                finished_kind = action_task.kind
+                message = action_result
+                message_expire = time.time() + 5
+                action_task = None
+                if finished_kind == "restart" and action_result == "RESTART: 재시작 요청됨":
+                    pending_state = "초기화 중... runtime lane readiness를 확인하는 중입니다."
+                    pending_state_expire = time.time() + _START_READY_TIMEOUT_SEC
+                    pending_started_at = time.time()
+                else:
+                    pending_state = ""
+                    pending_started_at = 0.0
+
         # 메시지 만료
         if message and time.time() > message_expire:
             message = ""
@@ -1327,21 +1485,50 @@ def main(stdscr: curses.window) -> None:
             pending_started_at = 0.0
 
         display_message = message
-        if not display_message and pending_state:
+        if action_task is not None:
+            display_message = action_task.pending_message
+        elif not display_message and pending_state:
             display_message = pending_state
 
         # 포커스 모드에서는 더 빠른 폴링으로 실시간감 제공
         stdscr.timeout(500 if focused_agent is not None else 1000)
-        draw(stdscr, project, session, display_message, pending_state, focused_agent, runtime_view)
+        draw(
+            stdscr,
+            project,
+            session,
+            display_message,
+            pending_state,
+            focused_agent,
+            runtime_view,
+            action_state=action_task.kind if action_task is not None else "",
+        )
 
         key = stdscr.getch()
         if key == -1:
+            continue
+
+        if key == curses.KEY_RESIZE:
+            handle_resize(stdscr)
+            draw(
+                stdscr,
+                project,
+                session,
+                display_message,
+                pending_state,
+                focused_agent,
+                runtime_view,
+                action_state=action_task.kind if action_task is not None else "",
+            )
             continue
 
         ch = chr(key).lower() if 0 <= key < 256 else ""
 
         if ch == "q":
             break
+        if action_task is not None and ch in {"s", "t", "r", "a"}:
+            message = f"{action_task.label}: 작업 진행 중... 키 입력은 계속 받을 수 있습니다."
+            message_expire = time.time() + 2
+            continue
         elif ch == "s":
             msg = pipeline_start(project, session)
             message = f"START: {msg}"
@@ -1354,25 +1541,17 @@ def main(stdscr: curses.window) -> None:
                 pending_state = ""
                 pending_started_at = 0.0
         elif ch == "t":
-            msg = pipeline_stop(project, session)
-            message = f"STOP: {msg}"
+            action_task = start_pipeline_stop_task(project, session)
+            message = action_task.pending_message
             message_expire = time.time() + 5
             pending_state = ""
             pending_started_at = 0.0
         elif ch == "r":
-            message = "RESTART: 재시작 중..."
-            message_expire = time.time() + 10
-            draw(stdscr, project, session, message, pending_state, focused_agent, runtime_view)
-            msg = pipeline_restart(project, session)
-            message = f"RESTART: {msg}"
+            action_task = start_pipeline_restart_task(project, session)
+            message = action_task.pending_message
             message_expire = time.time() + 5
-            if msg == "재시작 요청됨":
-                pending_state = "초기화 중... runtime lane readiness를 확인하는 중입니다."
-                pending_state_expire = time.time() + _START_READY_TIMEOUT_SEC
-                pending_started_at = time.time()
-            else:
-                pending_state = ""
-                pending_started_at = 0.0
+            pending_state = ""
+            pending_started_at = 0.0
         elif ch == "a":
             if str(runtime_view.get("runtime_state") or "STOPPED") != "STOPPED":
                 # curses를 잠시 내리고 runtime attach를 실행한 뒤 복귀합니다.

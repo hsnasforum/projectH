@@ -67,6 +67,7 @@ function renderRoundSection(data) {
   return `<div id="sidebar-round" class="sidebar-section">
     <div class="sidebar-section-title">CURRENT ROUND</div>
     <div class="info-row"><span class="info-label">Runtime</span><span class="info-value ${pres.runtimeClass}">${esc(pres.runtimeState)}</span></div>
+    <div class="info-row"><span class="info-label">Queue</span><span class="info-value ${pres.pipelineQueueClass}">${esc(pres.pipelineQueueStatus)}</span></div>
     <div class="info-row"><span class="info-label">Control</span><span class="info-value ${pres.controlClass}">${esc(pres.controlStatus)}</span></div>
     <div class="info-row"><span class="info-label">Seq</span><span class="info-value dim">${control.active_control_seq >= 0 ? control.active_control_seq : '\u2014'}</span></div>
     <div class="info-row"><span class="info-label">Round</span><span class="info-value ${pres.roundClass}">${esc(pres.roundState)}</span></div>

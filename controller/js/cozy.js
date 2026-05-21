@@ -409,18 +409,12 @@ function roleForAgent(name, data = runtimeStateStore.data) {
 }
 
 function currentTurnState(data = runtimeStateStore.data) {
-  if (data && data.turn_state && typeof data.turn_state === 'object') return data.turn_state;
-  if (data && data.compat && data.compat.turn_state && typeof data.compat.turn_state === 'object') return data.compat.turn_state;
-  return {};
+  return queuePresentationHelper().currentTurnState(data);
 }
 
 function liveRoundState(data = runtimeStateStore.data) {
-  const round = (data && data.active_round) || {};
   const turn = currentTurnState(data);
-  const roundState = String(round.state || '').trim().toUpperCase();
-  const turnState = String(turn.state || '').trim().toUpperCase();
-  if (roundState && roundState !== 'IDLE') return roundState;
-  return turnState || roundState || 'IDLE';
+  return queuePresentationHelper().liveRoundState(data, turn);
 }
 
 function activeWorkLaneName(data = runtimeStateStore.data) {
@@ -3958,7 +3952,7 @@ function updateMarqueeFromState(data) {
   const latestWork = basename((artifacts.latest_work || {}).path);
   const latestVerify = basename((artifacts.latest_verify || {}).path);
   const projectRoot = payload.project_root || 'runtime loading';
-  setMarqueeText(`Runtime ${presentation.runtimeState} · Control ${presentation.controlStatus} · Work ${latestWork} · Verify ${latestVerify} · ${projectRoot}`);
+  setMarqueeText(`Runtime ${presentation.runtimeState} · Queue ${presentation.pipelineQueueStatus} · Control ${presentation.controlStatus} · Work ${latestWork} · Verify ${latestVerify} · ${projectRoot}`);
 }
 
 function pushEvent(type, msg) {
@@ -4144,87 +4138,35 @@ function setLowMotion(nextLowMotion, persist = true) {
   if (persist) PrefStore.set('office_low_motion', lowMotion ? '1' : '0');
 }
 
+function queuePresentationHelper() {
+  return globalThis.PipelineQueuePresentation;
+}
+
 function isSuppressedOperatorCandidate(payload, automationHealth, controlStatus) {
-  const autonomy = (payload || {}).autonomy || {};
-  const autonomyMode = String(autonomy.mode || '').trim();
-  return controlStatus === 'none'
-    && automationHealth === 'ok'
-    && autonomy.operator_eligible === false
-    && autonomyMode === 'hibernate';
+  return queuePresentationHelper().isSuppressedOperatorCandidate(payload, automationHealth, controlStatus);
+}
+
+function isNoQueuedPipelineTask(payload, showLive, controlStatus, automationHealth) {
+  return queuePresentationHelper().isNoQueuedPipelineTask(payload, showLive, controlStatus, automationHealth);
+}
+
+function pipelineQueuePresentation(payload, showLive, controlStatus, roundState, automationHealth, noQueuedPipelineTask) {
+  return queuePresentationHelper().pipelineQueuePresentation(
+    payload,
+    showLive,
+    controlStatus,
+    roundState,
+    automationHealth,
+    noQueuedPipelineTask,
+  );
 }
 
 function getPresentation(data) {
   const payload = data || runtimeStateStore.data || {};
-  const runtimeState = String(payload.runtime_state || 'STOPPED').toUpperCase();
-  const control = payload.control || {};
-  const watcher = payload.watcher || {};
-  const turn = currentTurnState(payload);
-  const degradedReasons = (payload.degraded_reasons || []).filter(Boolean);
-  const degradedReason = degradedReasons[0] || String(payload.degraded_reason || '').trim();
-  const automationHealth = String(payload.automation_health || 'ok').trim();
-  const automationReason = String(payload.automation_reason_code || '').trim();
-  const automationFamily = String(payload.automation_incident_family || '').trim();
-  const automationAction = String(payload.automation_next_action || 'continue').trim();
-  const automationDetail = String(payload.automation_health_detail || '').trim();
-  const controlAgeCycles = Number(payload.control_age_cycles || 0);
-  const staleAdvisoryPending = Boolean(payload.stale_advisory_pending);
-  const uncertain = runtimeState === 'DEGRADED' && degradedReasons.some((reason) => UNCERTAIN_RUNTIME_REASONS.has(reason));
-  const inactive = INACTIVE_RUNTIME_STATES.has(runtimeState);
-  const showLive = !inactive && !uncertain;
-  const rawControlStatus = showLive ? (control.active_control_status || 'none') : (uncertain ? 'uncertain' : 'none');
-  const suppressedOperatorCandidate = showLive
-    ? isSuppressedOperatorCandidate(payload, automationHealth, rawControlStatus)
-    : false;
-  const controlStatus = rawControlStatus;
-  const roundState = showLive ? liveRoundState(payload) : (uncertain ? 'uncertain' : 'IDLE');
-  let watcherStatus = 'Dead';
-  let watcherClass = 'dim';
-  if (uncertain) {
-    watcherStatus = 'Unknown';
-    watcherClass = 'warn';
-  } else if (watcher.alive) {
-    watcherStatus = 'Alive';
-    watcherClass = 'ok';
-  } else if (runtimeState === 'BROKEN') {
-    watcherClass = 'err';
-  } else if (runtimeState === 'STOPPING') {
-    watcherClass = 'neutral';
-  }
-  const controlClass = controlStatus === 'implement' ? 'ok'
-    : controlStatus === 'needs_operator' || controlStatus === 'uncertain' ? 'warn'
-    : controlStatus === 'none' ? 'dim' : 'neutral';
-  const roundClass = roundState === 'uncertain' ? 'warn' : roundState === 'IDLE' ? 'dim' : 'neutral';
-  const runtimeClass = runtimeState === 'RUNNING' ? 'ok'
-    : runtimeState === 'DEGRADED' ? 'warn'
-    : runtimeState === 'STOPPING' ? 'neutral'
-    : runtimeState === 'BROKEN' ? 'err' : 'dim';
-  const badgeClass = runtimeState === 'RUNNING' ? 'running'
-    : runtimeState === 'DEGRADED' ? 'degraded'
-    : runtimeState === 'STOPPING' ? 'stopping'
-    : runtimeState === 'BROKEN' ? 'broken' : 'stopped';
-  return {
-    runtimeState,
-    runtimeClass,
-    badgeClass,
-    uncertain,
-    inactive,
-    controlStatus,
-    controlClass,
-    roundState,
-    roundClass,
-    watcherStatus,
-    watcherClass,
-    degradedReason,
-    degradedReasons,
-    automationHealth,
-    automationReason,
-    automationFamily,
-    automationAction,
-    automationDetail,
-    controlAgeCycles,
-    staleAdvisoryPending,
-    suppressedOperatorCandidate,
-  };
+  return queuePresentationHelper().buildPresentation(payload, {
+    inactiveRuntimeStates: INACTIVE_RUNTIME_STATES,
+    uncertainRuntimeReasons: UNCERTAIN_RUNTIME_REASONS,
+  });
 }
 
 function detectChanges(data) {
@@ -4421,6 +4363,7 @@ function renderSidebar() {
     <div class="sidebar-section">
       <div class="sidebar-section-title">Current Round</div>
       <div class="info-row"><span class="info-label">Runtime</span><span class="info-value ${presentation.runtimeClass}">${esc(presentation.runtimeState)}</span></div>
+      <div class="info-row"><span class="info-label">Queue</span><span class="info-value ${presentation.pipelineQueueClass}">${esc(presentation.pipelineQueueStatus)}</span></div>
       <div class="info-row"><span class="info-label">Control</span><span class="info-value ${presentation.controlClass}">${esc(presentation.controlStatus)}</span></div>
       <div class="info-row"><span class="info-label">Seq</span><span class="info-value dim">${control.active_control_seq >= 0 ? `#${control.active_control_seq}` : '—'}</span></div>
       <div class="info-row"><span class="info-label">Round</span><span class="info-value ${presentation.roundClass}">${esc(presentation.roundState)}</span></div>

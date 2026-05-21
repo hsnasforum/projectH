@@ -17,6 +17,26 @@ from core.contracts import (
 class ReviewedMemoryHandlerMixin:
     """Reviewed-memory aggregate lifecycle methods."""
 
+    def _find_aggregate_transition_record(
+        self,
+        existing_records: list[Any],
+        *,
+        canonical_transition_id: str,
+        aggregate_fingerprint: str,
+    ) -> dict[str, Any] | None:
+        for record in existing_records:
+            if not isinstance(record, dict):
+                continue
+            if str(record.get("canonical_transition_id") or "").strip() != canonical_transition_id:
+                continue
+            rec_identity = record.get("aggregate_identity_ref")
+            if not isinstance(rec_identity, dict):
+                continue
+            if str(rec_identity.get("normalized_delta_fingerprint") or "").strip() != aggregate_fingerprint:
+                continue
+            return record
+        return None
+
     def emit_aggregate_transition(self, payload: dict[str, Any]) -> dict[str, Any]:
         session_id = self._normalize_session_id(payload.get("session_id"))
         aggregate_fingerprint = self._normalize_optional_text(payload.get("aggregate_fingerprint"))
@@ -112,19 +132,11 @@ class ReviewedMemoryHandlerMixin:
         if not isinstance(existing_records, list):
             raise WebApiError(404, "발행된 transition record가 없습니다.")
 
-        target_record = None
-        for record in existing_records:
-            if not isinstance(record, dict):
-                continue
-            if str(record.get("canonical_transition_id") or "").strip() != canonical_transition_id:
-                continue
-            rec_identity = record.get("aggregate_identity_ref")
-            if not isinstance(rec_identity, dict):
-                continue
-            if str(rec_identity.get("normalized_delta_fingerprint") or "").strip() != aggregate_fingerprint:
-                continue
-            target_record = record
-            break
+        target_record = self._find_aggregate_transition_record(
+            existing_records,
+            canonical_transition_id=canonical_transition_id,
+            aggregate_fingerprint=aggregate_fingerprint,
+        )
 
         if target_record is None:
             raise WebApiError(404, "해당 transition record를 찾지 못했습니다.")
@@ -170,19 +182,11 @@ class ReviewedMemoryHandlerMixin:
         if not isinstance(existing_records, list):
             raise WebApiError(404, "발행된 transition record가 없습니다.")
 
-        target_record = None
-        for record in existing_records:
-            if not isinstance(record, dict):
-                continue
-            if str(record.get("canonical_transition_id") or "").strip() != canonical_transition_id:
-                continue
-            rec_identity = record.get("aggregate_identity_ref")
-            if not isinstance(rec_identity, dict):
-                continue
-            if str(rec_identity.get("normalized_delta_fingerprint") or "").strip() != aggregate_fingerprint:
-                continue
-            target_record = record
-            break
+        target_record = self._find_aggregate_transition_record(
+            existing_records,
+            canonical_transition_id=canonical_transition_id,
+            aggregate_fingerprint=aggregate_fingerprint,
+        )
 
         if target_record is None:
             raise WebApiError(404, "해당 transition record를 찾지 못했습니다.")
@@ -253,14 +257,11 @@ class ReviewedMemoryHandlerMixin:
         existing_records = session.get("reviewed_memory_emitted_transition_records")
         if not isinstance(existing_records, list):
             raise WebApiError(404, "발행된 transition record가 없습니다.")
-        target_record = None
-        for record in existing_records:
-            if not isinstance(record, dict):
-                continue
-            if str(record.get("canonical_transition_id") or "").strip() != canonical_transition_id:
-                continue
-            target_record = record
-            break
+        target_record = self._find_aggregate_transition_record(
+            existing_records,
+            canonical_transition_id=canonical_transition_id,
+            aggregate_fingerprint=aggregate_fingerprint,
+        )
         if target_record is None:
             raise WebApiError(404, "해당 transition record를 찾지 못했습니다.")
         if str(target_record.get("record_stage") or "").strip() != RecordStage.APPLIED_WITH_RESULT:
@@ -315,14 +316,11 @@ class ReviewedMemoryHandlerMixin:
         existing_records = session.get("reviewed_memory_emitted_transition_records")
         if not isinstance(existing_records, list):
             raise WebApiError(404, "발행된 transition record가 없습니다.")
-        target_record = None
-        for record in existing_records:
-            if not isinstance(record, dict):
-                continue
-            if str(record.get("canonical_transition_id") or "").strip() != canonical_transition_id:
-                continue
-            target_record = record
-            break
+        target_record = self._find_aggregate_transition_record(
+            existing_records,
+            canonical_transition_id=canonical_transition_id,
+            aggregate_fingerprint=aggregate_fingerprint,
+        )
         if target_record is None:
             raise WebApiError(404, "해당 transition record를 찾지 못했습니다.")
         if str(target_record.get("record_stage") or "").strip() != RecordStage.STOPPED:
@@ -369,14 +367,11 @@ class ReviewedMemoryHandlerMixin:
         existing_records = session.get("reviewed_memory_emitted_transition_records")
         if not isinstance(existing_records, list):
             raise WebApiError(404, "발행된 transition record가 없습니다.")
-        target_record = None
-        for record in existing_records:
-            if not isinstance(record, dict):
-                continue
-            if str(record.get("canonical_transition_id") or "").strip() != canonical_transition_id:
-                continue
-            target_record = record
-            break
+        target_record = self._find_aggregate_transition_record(
+            existing_records,
+            canonical_transition_id=canonical_transition_id,
+            aggregate_fingerprint=aggregate_fingerprint,
+        )
         if target_record is None:
             raise WebApiError(404, "해당 transition record를 찾지 못했습니다.")
         if str(target_record.get("record_stage") or "").strip() != RecordStage.REVERSED:

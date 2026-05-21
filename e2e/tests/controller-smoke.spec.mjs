@@ -1,9 +1,63 @@
 import { test, expect } from "@playwright/test";
+import { readFileSync } from "node:fs";
+
+const QUEUE_PRESENTATION_CASES = JSON.parse(
+  readFileSync(
+    new URL("../../tests/fixtures/controller_queue_presentation_cases.json", import.meta.url),
+    "utf8",
+  ),
+);
 
 async function disableRuntimeMonitor(page) {
   await page.addInitScript(() => {
     window.__officeRuntimeMonitorDisabled = true;
   });
+}
+
+function queueRuntimePayload(overrides = {}) {
+  const base = {
+    runtime_state: "RUNNING",
+    project_root: "/tmp/projectH",
+    automation_health: "ok",
+    automation_reason_code: "",
+    automation_next_action: "continue",
+    stale_advisory_pending: false,
+    lanes: [
+      { name: "Claude", state: "ready", note: "waiting" },
+      { name: "Codex", state: "ready", note: "waiting" },
+      { name: "Gemini", state: "off", note: "" },
+    ],
+    control: {
+      active_control_status: "none",
+      active_control_seq: -1,
+      active_control_file: "",
+    },
+    watcher: { alive: true },
+    active_round: null,
+    artifacts: {
+      latest_work: { path: "work/5/20/demo-work.md", mtime: "2026-05-20T00:00:00Z" },
+      latest_verify: { path: "verify/5/20/demo-verify.md", mtime: "2026-05-20T00:00:00Z" },
+    },
+  };
+  return {
+    ...base,
+    ...overrides,
+    control: { ...base.control, ...(overrides.control || {}) },
+  };
+}
+
+async function expectQueuePresentation(page, { text, tone }) {
+  const currentRound = page
+    .locator("#tab-content .sidebar-section")
+    .filter({ hasText: "Current Round" });
+  const queueValue = currentRound
+    .locator(".info-row")
+    .filter({ hasText: "Queue" })
+    .locator(".info-value");
+
+  await expect(queueValue).toHaveText(text);
+  await expect(queueValue).toHaveClass(new RegExp(`\\b${tone}\\b`));
+  await expect(page.locator("#marquee-text")).toContainText(`Queue ${text}`);
 }
 
 test.describe("controller office smoke", () => {
@@ -640,6 +694,30 @@ test.describe("controller office smoke", () => {
 
     expect(x2).toBeLessThan(x1 - 20);
     expect(x3).toBeLessThan(x2 - 20);
+  });
+
+  test("controller renders Queue presentation from runtime payloads", async ({ page }) => {
+    await disableRuntimeMonitor(page);
+    let runtimePayload = queueRuntimePayload();
+    await page.route("**/api/runtime/status", (route) =>
+      route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify(runtimePayload),
+      }),
+    );
+
+    async function loadAndExpect(payload, expected) {
+      runtimePayload = payload;
+      await page.goto("/controller");
+      await expectQueuePresentation(page, expected);
+    }
+
+    for (const testCase of QUEUE_PRESENTATION_CASES) {
+      await loadAndExpect(queueRuntimePayload(testCase.overrides || {}), {
+        text: testCase.expected.pipelineQueueStatus,
+        tone: testCase.expected.pipelineQueueClass,
+      });
+    }
   });
 
   test("agent cards expose data-fatigue attribute for fatigue observability", async ({

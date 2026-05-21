@@ -52,6 +52,7 @@ build/
 .pipeline/*.pid
 .pipeline/current_run.json
 .pipeline/runs/
+.pipeline/freeze-snapshots/
 .pipeline/gui-runtime/
 .pipeline/live-arb-smoke-*/
 .pipeline/live-blocked-smoke-*/

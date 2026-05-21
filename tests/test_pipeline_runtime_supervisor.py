@@ -8780,6 +8780,38 @@ class RuntimeSupervisorTest(unittest.TestCase):
             self.assertIn(f"PROJECT_ROOT={root}", command)
             self.assertIn("pipeline_runtime.cli lane-wrapper", command)
 
+    def test_lane_shell_command_uses_claude_print_watchdog_for_claude(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            supervisor = RuntimeSupervisor(root, run_id="run-claude-print", start_runtime=False)
+
+            claude_command = supervisor._lane_shell_command("Claude")
+            codex_command = supervisor._lane_shell_command("Codex")
+
+            self.assertIn("claude-print-jsonl-pipe", claude_command)
+            self.assertIn("claude.prompt.pending", claude_command)
+            self.assertIn("while true", claude_command)
+            self.assertNotIn("lane-wrapper", claude_command)
+            self.assertIn("pipeline_runtime.cli lane-wrapper", codex_command)
+
+    def test_lane_shell_command_uses_pane_type_to_select_claude_print_watchdog(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            lanes_path = root / ".pipeline" / "config" / "lanes.json"
+            lanes_path.parent.mkdir(parents=True, exist_ok=True)
+            lanes_path.write_text(
+                json.dumps({"lanes": [{"name": "ImplementLane", "pane_type": "claude"}]}),
+                encoding="utf-8",
+            )
+            supervisor = RuntimeSupervisor(root, run_id="run-custom-claude", start_runtime=False)
+
+            command = supervisor._lane_shell_command("ImplementLane")
+
+            self.assertIn("claude-print-jsonl-pipe", command)
+            self.assertIn("claude.prompt.pending", command)
+
     def test_supervisor_inherits_run_id_when_watcher_is_alive_so_status_follows_verify_replay(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

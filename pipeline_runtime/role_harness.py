@@ -36,9 +36,9 @@ _ROLE_HARNESS_SPECS: tuple[RoleHarnessSpec, ...] = (
 _ROLE_HARNESS_BY_ROLE = {spec.role: spec for spec in _ROLE_HARNESS_SPECS}
 
 
-def role_harness_path(role: str) -> str:
+def role_harness_path(role: str) -> str | None:
     spec = _ROLE_HARNESS_BY_ROLE.get(str(role or "").strip().lower())
-    return spec.path if spec is not None else ""
+    return spec.path if spec is not None else None
 
 
 def role_harness_specs() -> list[dict[str, str]]:

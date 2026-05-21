@@ -77,6 +77,32 @@ class RoleRoutesTest(unittest.TestCase):
 
 
 class RuntimeSchemaTest(unittest.TestCase):
+    def test_atomic_write_json_logs_oserror_before_reraising(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "state" / "status.json"
+            with (
+                mock.patch.object(Path, "write_text", side_effect=OSError("disk full")),
+                self.assertLogs("pipeline_runtime.schema", level="ERROR") as logs,
+                self.assertRaises(OSError),
+            ):
+                schema_module.atomic_write_json(path, {"ok": True})
+
+            self.assertIn("atomic_write_json failed", "\n".join(logs.output))
+            self.assertIn(str(path), "\n".join(logs.output))
+
+    def test_atomic_write_text_logs_oserror_before_reraising(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "state" / "status.txt"
+            with (
+                mock.patch.object(Path, "write_text", side_effect=OSError("disk full")),
+                self.assertLogs("pipeline_runtime.schema", level="ERROR") as logs,
+                self.assertRaises(OSError),
+            ):
+                schema_module.atomic_write_text(path, "status")
+
+            self.assertIn("atomic_write_text failed", "\n".join(logs.output))
+            self.assertIn(str(path), "\n".join(logs.output))
+
     def test_sha256_file_reads_in_64k_chunks(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "large.bin"

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import shlex
 import subprocess
@@ -125,6 +126,7 @@ class WatcherDispatchQueue:
         append_runtime_event: Callable[[str, dict[str, object]], None],
         get_active_control_signal: Callable[[], Any],
         is_active_control: Callable[[Path, str], bool],
+        task_hint_dir: Path | None = None,
     ) -> None:
         self.pending_notifications: dict[str, dict[str, object]] = {}
         self.last_lane_input_defer_at: dict[str, float] = {}
@@ -138,6 +140,7 @@ class WatcherDispatchQueue:
         self._get_active_control_signal = get_active_control_signal
         self._is_active_control = is_active_control
         self.stale_paste_blocked_until: dict[str, float] = {}
+        self._task_hint_dir = task_hint_dir
 
     def lane_prompt_readiness(self, target: str) -> tuple[bool, str]:
         try:
@@ -251,6 +254,38 @@ class WatcherDispatchQueue:
         self._log_raw("codex_stale_paste_blocked", str(path), "turn_signal", payload)
         self._append_runtime_event("codex_stale_paste_blocked", payload)
 
+    def _task_hint_dir_for_intent(self, intent: DispatchIntent) -> Path | None:
+        if self._task_hint_dir is not None:
+            return self._task_hint_dir
+        run_id = str(os.environ.get("PIPELINE_RUNTIME_RUN_ID") or "").strip()
+        if not run_id:
+            return None
+        for parent in [intent.prompt_path, *intent.prompt_path.parents]:
+            if parent.name == ".pipeline":
+                return parent / "runs" / run_id / "task-hints"
+        return None
+
+    def _is_claude_file_dispatch(self, intent: DispatchIntent) -> bool:
+        if self._task_hint_dir_for_intent(intent) is None:
+            return False
+        pane_type = str(intent.pane_type or "").strip().lower()
+        lane = self._role_owner(intent.functional_role or intent.lane_role) or intent.lane_role
+        return pane_type == "claude" or str(lane or "").strip() == "Claude"
+
+    def _write_claude_pending_prompt(self, prompt: str, task_hint_dir: Path | None) -> bool:
+        if task_hint_dir is None:
+            return False
+        try:
+            task_hint_dir.mkdir(parents=True, exist_ok=True)
+            temp_path = task_hint_dir / ".claude.prompt.pending.tmp"
+            pending_path = task_hint_dir / "claude.prompt.pending"
+            temp_path.write_text(prompt, encoding="utf-8")
+            temp_path.replace(pending_path)
+            return True
+        except OSError:
+            log.exception("failed to write claude pending prompt")
+            return False
+
     def _stale_paste_backoff_active(self, key: str) -> bool:
         until = self.stale_paste_blocked_until.get(key, 0.0)
         if until <= 0.0:
@@ -360,6 +395,31 @@ class WatcherDispatchQueue:
 
     def dispatch(self, intent: DispatchIntent, *, from_pending: bool = False) -> bool:
         if not from_pending and self._drop_dispatch_if_active_control_mismatch(intent):
+            return False
+
+        claude_task_hint_dir = self._task_hint_dir_for_intent(intent)
+        if claude_task_hint_dir is not None and self._is_claude_file_dispatch(intent):
+            ok = self._write_claude_pending_prompt(intent.prompt, claude_task_hint_dir)
+            if ok:
+                self.pending_notifications.pop(intent.pending_key, None)
+                self.last_lane_input_defer_at.pop(intent.pending_key, None)
+                self.stale_paste_blocked_until.pop(intent.pending_key, None)
+                return True
+            if not from_pending:
+                self.pending_notifications[intent.pending_key] = self._pending_record(intent)
+            self.emit_lane_input_deferred(
+                key=intent.pending_key,
+                lane=self._role_owner(intent.functional_role or intent.lane_role) or intent.lane_role,
+                lane_id=intent.lane_id,
+                functional_role=intent.functional_role or intent.lane_role,
+                agent_kind=intent.agent_kind,
+                model_alias=intent.model_alias,
+                path=intent.prompt_path,
+                reason=intent.reason,
+                defer_reason="claude_prompt_file_write_failed",
+                control_seq=intent.control_seq,
+                notify_kind=intent.notify_kind,
+            )
             return False
 
         ready, defer_reason = self.lane_prompt_readiness(intent.target)

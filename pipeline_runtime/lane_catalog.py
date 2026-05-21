@@ -21,6 +21,19 @@ class PhysicalLaneSpec:
     vendor_args: tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class AgentProfileSpec:
+    selected_agents: list[str] | tuple[str, ...] | None = None
+    role_bindings: dict[str, str | None] | None = None
+    advisory_enabled: bool = True
+    operator_stop_enabled: bool = True
+    session_arbitration_enabled: bool | None = None
+    single_agent_mode: bool | None = None
+    self_verify_allowed: bool = False
+    self_advisory_allowed: bool = False
+    schema_version: int = 1
+
+
 _PHYSICAL_LANE_SPECS: tuple[PhysicalLaneSpec, ...] = (
     PhysicalLaneSpec(
         name="Claude",
@@ -307,6 +320,53 @@ def build_lane_configs(
     return lane_configs
 
 
+def _build_from_spec(spec: AgentProfileSpec) -> dict[str, object]:
+    selected = [
+        name
+        for name in physical_lane_order()
+        if name in {
+            str(item).strip()
+            for item in list(spec.selected_agents or physical_lane_order())
+            if str(item).strip()
+        }
+    ]
+    advisory_enabled_value = bool(spec.advisory_enabled)
+    bindings = default_role_bindings()
+    for key, value in dict(spec.role_bindings or {}).items():
+        if key not in bindings:
+            continue
+        text = str(value or "").strip()
+        if text:
+            bindings[key] = text
+    if not advisory_enabled_value:
+        bindings["advisory"] = ""
+    single_agent_mode = spec.single_agent_mode
+    if single_agent_mode is None:
+        single_agent_mode = len(selected) == 1
+    session_arbitration_enabled = spec.session_arbitration_enabled
+    if session_arbitration_enabled is None:
+        session_arbitration_enabled = advisory_enabled_value
+    return {
+        "schema_version": int(spec.schema_version),
+        "selected_agents": selected,
+        "role_bindings": {
+            "implement": bindings["implement"],
+            "verify": bindings["verify"],
+            "advisory": bindings["advisory"],
+        },
+        "role_options": {
+            "advisory_enabled": advisory_enabled_value,
+            "operator_stop_enabled": bool(spec.operator_stop_enabled),
+            "session_arbitration_enabled": bool(session_arbitration_enabled) if advisory_enabled_value else False,
+        },
+        "mode_flags": {
+            "single_agent_mode": bool(single_agent_mode),
+            "self_verify_allowed": bool(spec.self_verify_allowed),
+            "self_advisory_allowed": bool(spec.self_advisory_allowed) if advisory_enabled_value else False,
+        },
+    }
+
+
 def build_agent_profile_payload(
     *,
     selected_agents: list[str] | tuple[str, ...] | None = None,
@@ -319,45 +379,16 @@ def build_agent_profile_payload(
     self_advisory_allowed: bool = False,
     schema_version: int = 1,
 ) -> dict[str, object]:
-    selected = [
-        name
-        for name in physical_lane_order()
-        if name in {
-            str(item).strip()
-            for item in list(selected_agents or physical_lane_order())
-            if str(item).strip()
-        }
-    ]
-    advisory_enabled_value = bool(advisory_enabled)
-    bindings = default_role_bindings()
-    for key, value in dict(role_bindings or {}).items():
-        if key not in bindings:
-            continue
-        text = str(value or "").strip()
-        if text:
-            bindings[key] = text
-    if not advisory_enabled_value:
-        bindings["advisory"] = ""
-    if single_agent_mode is None:
-        single_agent_mode = len(selected) == 1
-    if session_arbitration_enabled is None:
-        session_arbitration_enabled = advisory_enabled_value
-    return {
-        "schema_version": int(schema_version),
-        "selected_agents": selected,
-        "role_bindings": {
-            "implement": bindings["implement"],
-            "verify": bindings["verify"],
-            "advisory": bindings["advisory"],
-        },
-        "role_options": {
-            "advisory_enabled": advisory_enabled_value,
-            "operator_stop_enabled": bool(operator_stop_enabled),
-            "session_arbitration_enabled": bool(session_arbitration_enabled) if advisory_enabled_value else False,
-        },
-        "mode_flags": {
-            "single_agent_mode": bool(single_agent_mode),
-            "self_verify_allowed": bool(self_verify_allowed),
-            "self_advisory_allowed": bool(self_advisory_allowed) if advisory_enabled_value else False,
-        },
-    }
+    return _build_from_spec(
+        AgentProfileSpec(
+            selected_agents=selected_agents,
+            role_bindings=role_bindings,
+            advisory_enabled=advisory_enabled,
+            operator_stop_enabled=operator_stop_enabled,
+            session_arbitration_enabled=session_arbitration_enabled,
+            single_agent_mode=single_agent_mode,
+            self_verify_allowed=self_verify_allowed,
+            self_advisory_allowed=self_advisory_allowed,
+            schema_version=schema_version,
+        )
+    )

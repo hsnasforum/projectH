@@ -47,6 +47,7 @@ _CODEX_LITERAL_FALLBACK_PREFIX = (
     "Follow this pipeline instruction. Decode the following JSON string as the "
     "complete instruction body"
 )
+_CODEX_PASTE_SUBMIT_KEYS = ("Enter", "C-j")
 _GEMINI_GIT_PERMISSION_PROMPT_RE = re.compile(
     r"Allow execution of\s*\[git\]\?",
     re.IGNORECASE,
@@ -143,9 +144,9 @@ class WatcherDispatchQueue:
             snapshot = self._capture_pane_text(target)
         except Exception:
             return False, "pane_capture_failed"
+        if pane_text_has_unsubmitted_pasted_content(snapshot):
+            return False, "prompt_contains_pasted_content"
         if pane_text_is_idle(snapshot):
-            if pane_text_has_unsubmitted_pasted_content(snapshot):
-                return False, "prompt_contains_pasted_content"
             return True, ""
         if not snapshot.strip():
             return False, "pane_blank"
@@ -1183,41 +1184,55 @@ def _dispatch_codex(pane_target: str, command: str) -> bool:
     subprocess.run(["tmux", "paste-buffer", "-t", pane_target], check=True, capture_output=True)
     pasted_snapshot = _shared_capture_pane_text(pane_target)
     time.sleep(2.0)
-    subprocess.run(
-        ["tmux", "send-keys", "-t", pane_target, "Enter"],
-        check=True,
-        capture_output=True,
-    )
-    time.sleep(1.5)
-    snapshot = _shared_capture_pane_text(pane_target)
-    if pane_text_has_unsubmitted_pasted_content(snapshot):
-        log.info("codex pasted prompt still visible after submit; fail-closed")
-        _clear_codex_failed_dispatch_input(pane_target, "pasted_prompt_after_submit")
-        return False
-    if not _shared_pane_text_has_input_cursor(snapshot):
-        log.info("codex prompt consumed")
-        deadline = time.time() + 6.0
-        while time.time() < deadline:
-            if _pane_has_working_indicator(pane_target):
-                log.info("codex working indicator detected")
-                return True
-            current_snapshot = _shared_capture_pane_text(pane_target)
-            if pane_text_has_unsubmitted_pasted_content(current_snapshot):
-                log.info("codex pasted prompt remained visible while waiting for confirmation")
-                _clear_codex_failed_dispatch_input(pane_target, "pasted_prompt_while_waiting_confirmation")
-                return False
-            if current_snapshot != snapshot and _shared_pane_text_has_codex_activity(current_snapshot):
-                log.info("codex response activity detected after consume")
-                return True
-            time.sleep(0.5)
-        log.info(
-            "codex dispatch consumed without immediate confirmation: defer acceptance to wrapper events"
+    for attempt, submit_key in enumerate(_CODEX_PASTE_SUBMIT_KEYS):
+        subprocess.run(
+            ["tmux", "send-keys", "-t", pane_target, submit_key],
+            check=True,
+            capture_output=True,
         )
-        return True
-    if snapshot != pasted_snapshot and _shared_pane_text_has_codex_activity(snapshot):
-        log.info("codex response activity detected")
-        return True
-    log.info("codex prompt still visible or unconfirmed after single submit")
+        time.sleep(1.5)
+        snapshot = _shared_capture_pane_text(pane_target)
+        if pane_text_has_unsubmitted_pasted_content(snapshot):
+            if attempt + 1 < len(_CODEX_PASTE_SUBMIT_KEYS):
+                log.info(
+                    "codex pasted prompt still visible after %s; retrying with %s once",
+                    submit_key,
+                    _CODEX_PASTE_SUBMIT_KEYS[attempt + 1],
+                )
+                continue
+            log.info("codex pasted prompt still visible after submit retry; fail-closed")
+            if not _clear_codex_failed_dispatch_input(pane_target, "pasted_prompt_after_submit_retry"):
+                return False
+            log.info("retrying codex dispatch via literal fallback after pasted prompt cleanup")
+            return _dispatch_codex_literal_fallback(pane_target, command)
+        if not _shared_pane_text_has_input_cursor(snapshot):
+            log.info("codex prompt consumed")
+            deadline = time.time() + 6.0
+            while time.time() < deadline:
+                if _pane_has_working_indicator(pane_target):
+                    log.info("codex working indicator detected")
+                    return True
+                current_snapshot = _shared_capture_pane_text(pane_target)
+                if pane_text_has_unsubmitted_pasted_content(current_snapshot):
+                    log.info("codex pasted prompt remained visible while waiting for confirmation")
+                    _clear_codex_failed_dispatch_input(
+                        pane_target,
+                        "pasted_prompt_while_waiting_confirmation",
+                    )
+                    return False
+                if current_snapshot != snapshot and _shared_pane_text_has_codex_activity(current_snapshot):
+                    log.info("codex response activity detected after consume")
+                    return True
+                time.sleep(0.5)
+            log.info(
+                "codex dispatch consumed without immediate confirmation: defer acceptance to wrapper events"
+            )
+            return True
+        if snapshot != pasted_snapshot and _shared_pane_text_has_codex_activity(snapshot):
+            log.info("codex response activity detected")
+            return True
+        break
+    log.info("codex prompt still visible or unconfirmed after submit")
     _clear_codex_failed_dispatch_input(pane_target, "prompt_visible_or_unconfirmed")
     return False
 

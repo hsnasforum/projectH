@@ -16,6 +16,7 @@ from pipeline_runtime.automation_health import (
     STALE_ADVISORY_GRACE_CYCLES,
     STALE_CONTROL_CYCLE_THRESHOLD,
 )
+from pipeline_runtime.lane_surface import pane_text_has_unsubmitted_pasted_content
 from pipeline_runtime.operator_autonomy import (
     COMMIT_PUSH_BUNDLE_AUTHORIZATION_REASON,
     OPERATOR_APPROVAL_COMPLETED_REASON,
@@ -915,6 +916,26 @@ class PanePromptDetectionTest(unittest.TestCase):
         self.assertTrue(watcher_core._shared_pane_text_has_input_cursor(text))
         self.assertFalse(watcher_core._shared_pane_text_has_busy_indicator(text, "Codex"))
         self.assertTrue(watcher_core._shared_pane_text_is_idle(text, "Codex"))
+
+    def test_wrapped_codex_pasted_content_counts_as_unsubmitted_input(self) -> None:
+        text = "\n".join(
+            [
+                "╭────────────────────────────────────────────────────╮",
+                "│ >_ OpenAI Codex (v0.132.0)                         │",
+                "╰────────────────────────────────────────────────────╯",
+                "›  new `.pipeline/operator_request.md`, use canonical shared-helper metadata only;",
+                "`pr_creation_gate`, or `pr_merge_gate` over ad hoc publish/merge reason labels",
+                "- operator stop header must include STATUS, CONTROL_SEQ, REASON_CODE",
+                "BASED_ON_VERIFY",
+                "- do not write .pipeline/advisory_request.md while ADVISORY_DISABLED is true"
+                "[Pasted Content 2048 chars][Pasted Content 1024 chars]ify`",
+                "that the local full smoke is environment-held, then choose the next safe local slice",
+                "- after 3+ same-day same-family docs-only truth-sync rounds, choose one bounded docs bundle",
+                "gpt-5.5 xhigh fast · ~/code/projectH",
+            ]
+        )
+
+        self.assertTrue(pane_text_has_unsubmitted_pasted_content(text))
 
 
 class LiveSessionEscalationTest(unittest.TestCase):
@@ -3050,6 +3071,36 @@ class DedupeGuardPersistenceTest(unittest.TestCase):
 
 
 class WatcherDispatchQueueControlMismatchTest(unittest.TestCase):
+    def test_wrapped_codex_paste_blocks_readiness_before_idle_prompt_detection(self) -> None:
+        text = "\n".join(
+            [
+                "OpenAI Codex (v0.132.0)",
+                "›  new `.pipeline/operator_request.md`, use canonical shared-helper metadata only;",
+                "`pr_creation_gate`, or `pr_merge_gate` over ad hoc publish/merge reason labels",
+                "- operator stop header must include STATUS, CONTROL_SEQ, REASON_CODE",
+                "- do not write .pipeline/advisory_request.md while ADVISORY_DISABLED is true"
+                "[Pasted Content 2048 chars][Pasted Content 1024 chars]ify`",
+                "- after 3+ same-day same-family docs-only truth-sync rounds, choose one bounded docs bundle",
+                "gpt-5.5 xhigh fast · ~/code/projectH",
+            ]
+        )
+        queue = watcher_dispatch.WatcherDispatchQueue(
+            lane_input_defer_cooldown_sec=0.0,
+            capture_pane_text=mock.Mock(return_value=text),
+            send_keys=mock.Mock(),
+            get_path_sig=mock.Mock(return_value=""),
+            role_owner=mock.Mock(return_value="Codex"),
+            log_raw=mock.Mock(),
+            append_runtime_event=mock.Mock(),
+            get_active_control_signal=mock.Mock(return_value=None),
+            is_active_control=mock.Mock(return_value=True),
+        )
+
+        ready, reason = queue.lane_prompt_readiness("codex-pane")
+
+        self.assertFalse(ready)
+        self.assertEqual(reason, "prompt_contains_pasted_content")
+
     def test_new_control_dispatch_blocks_stale_codex_pasted_content(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -10447,7 +10498,7 @@ class CodexDispatchConfirmationTest(unittest.TestCase):
         enter_calls = [call for call in run_calls if call == ["tmux", "send-keys", "-t", "%1", "Enter"]]
         self.assertEqual(len(enter_calls), 1)
 
-    def test_dispatch_codex_returns_false_when_pasted_prompt_remains_after_enter(self) -> None:
+    def test_dispatch_codex_returns_false_when_pasted_prompt_remains_after_submit_retry(self) -> None:
         snapshots = iter([
             "› [Pasted Content 1024 chars]stale prompt",
             "›",
@@ -10476,15 +10527,14 @@ class CodexDispatchConfirmationTest(unittest.TestCase):
         enter_calls = [call for call in run_calls if call == ["tmux", "send-keys", "-t", "%1", "Enter"]]
         c_j_calls = [call for call in run_calls if call == ["tmux", "send-keys", "-t", "%1", "C-j"]]
         self.assertEqual(len(enter_calls), 1)
-        self.assertEqual(len(c_j_calls), 0)
-        fallback.assert_not_called()
+        self.assertEqual(len(c_j_calls), 1)
+        fallback.assert_called_once_with("%1", "ROLE: verify")
 
-    def test_dispatch_codex_fail_closes_when_pasted_prompt_lingers(self) -> None:
+    def test_dispatch_codex_retries_cj_when_fresh_paste_remains_after_enter(self) -> None:
         snapshots = iter([
             "›",
             "› [Pasted Content 1024 chars]ROLE: verify",
             "› [Pasted Content 1024 chars]ROLE: verify",
-            "processing view without prompt",
             "processing view without prompt",
         ])
         run_calls: list[list[str]] = []
@@ -10499,11 +10549,90 @@ class CodexDispatchConfirmationTest(unittest.TestCase):
              mock.patch("watcher_dispatch.time.sleep", return_value=None):
             result = watcher_dispatch._dispatch_codex("%1", "ROLE: verify")
 
+        self.assertTrue(result)
+        enter_calls = [call for call in run_calls if call == ["tmux", "send-keys", "-t", "%1", "Enter"]]
+        c_j_calls = [call for call in run_calls if call == ["tmux", "send-keys", "-t", "%1", "C-j"]]
+        self.assertEqual(len(enter_calls), 1)
+        self.assertEqual(len(c_j_calls), 1)
+
+    def test_dispatch_codex_fail_closes_when_fresh_paste_lingers_after_cj(self) -> None:
+        snapshots = iter([
+            "›",
+            "› [Pasted Content 1024 chars]ROLE: verify",
+            "› [Pasted Content 1024 chars]ROLE: verify",
+            "› [Pasted Content 1024 chars]ROLE: verify",
+            "› [Pasted Content 1024 chars]ROLE: verify",
+            "›",
+        ])
+        run_calls: list[list[str]] = []
+
+        def _run(cmd, **kwargs):
+            run_calls.append(list(cmd))
+            return mock.Mock(stdout="", stderr=b"")
+
+        with mock.patch("watcher_dispatch.subprocess.run", side_effect=_run), \
+             mock.patch("watcher_dispatch._shared_capture_pane_text", side_effect=lambda _pane: next(snapshots)), \
+             mock.patch("watcher_dispatch._shared_wait_for_pane_settle", return_value=True), \
+             mock.patch("watcher_dispatch._dispatch_codex_literal_fallback", return_value=False) as fallback, \
+             mock.patch("watcher_dispatch.time.sleep", return_value=None):
+            result = watcher_dispatch._dispatch_codex("%1", "ROLE: verify")
+
         self.assertFalse(result)
         enter_calls = [call for call in run_calls if call == ["tmux", "send-keys", "-t", "%1", "Enter"]]
         c_j_calls = [call for call in run_calls if call == ["tmux", "send-keys", "-t", "%1", "C-j"]]
         self.assertEqual(len(enter_calls), 1)
-        self.assertEqual(len(c_j_calls), 0)
+        self.assertEqual(len(c_j_calls), 1)
+        fallback.assert_called_once_with("%1", "ROLE: verify")
+
+    def test_dispatch_codex_does_not_literal_fallback_when_paste_cleanup_fails(self) -> None:
+        snapshots = iter([
+            "›",
+            "› [Pasted Content 1024 chars]ROLE: verify",
+            "› [Pasted Content 1024 chars]ROLE: verify",
+            "› [Pasted Content 1024 chars]ROLE: verify",
+            "› [Pasted Content 1024 chars]ROLE: verify",
+            "› [Pasted Content 1024 chars]ROLE: verify",
+        ])
+        run_calls: list[list[str]] = []
+
+        def _run(cmd, **kwargs):
+            run_calls.append(list(cmd))
+            return mock.Mock(stdout="", stderr=b"")
+
+        with mock.patch("watcher_dispatch.subprocess.run", side_effect=_run), \
+             mock.patch("watcher_dispatch._shared_capture_pane_text", side_effect=lambda _pane: next(snapshots)), \
+             mock.patch("watcher_dispatch._shared_wait_for_pane_settle", return_value=True), \
+             mock.patch("watcher_dispatch._dispatch_codex_literal_fallback", return_value=True) as fallback, \
+             mock.patch("watcher_dispatch.time.sleep", return_value=None):
+            result = watcher_dispatch._dispatch_codex("%1", "ROLE: verify")
+
+        self.assertFalse(result)
+        fallback.assert_not_called()
+
+    def test_dispatch_codex_returns_true_when_literal_fallback_succeeds_after_paste_retry(self) -> None:
+        snapshots = iter([
+            "›",
+            "› [Pasted Content 1024 chars]ROLE: verify",
+            "› [Pasted Content 1024 chars]ROLE: verify",
+            "› [Pasted Content 1024 chars]ROLE: verify",
+            "› [Pasted Content 1024 chars]ROLE: verify",
+            "›",
+        ])
+        run_calls: list[list[str]] = []
+
+        def _run(cmd, **kwargs):
+            run_calls.append(list(cmd))
+            return mock.Mock(stdout="", stderr=b"")
+
+        with mock.patch("watcher_dispatch.subprocess.run", side_effect=_run), \
+             mock.patch("watcher_dispatch._shared_capture_pane_text", side_effect=lambda _pane: next(snapshots)), \
+             mock.patch("watcher_dispatch._shared_wait_for_pane_settle", return_value=True), \
+             mock.patch("watcher_dispatch._dispatch_codex_literal_fallback", return_value=True) as fallback, \
+             mock.patch("watcher_dispatch.time.sleep", return_value=None):
+            result = watcher_dispatch._dispatch_codex("%1", "ROLE: verify")
+
+        self.assertTrue(result)
+        fallback.assert_called_once_with("%1", "ROLE: verify")
 
     def test_dispatch_codex_returns_true_when_working_indicator_appears(self) -> None:
         snapshots = iter([

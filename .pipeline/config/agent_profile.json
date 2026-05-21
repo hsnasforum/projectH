@@ -1,26 +1,19 @@
 {
   "schema_version": 1,
-  "selected_agents": [
-    "Codex"
-  ],
+  "selected_agents": ["Codex"],
   "role_bindings": {
     "implement": "Codex",
     "verify": "Codex",
-    "advisory": ""
+    "advisory": "Codex"
   },
   "role_options": {
-    "advisory_enabled": false,
+    "advisory_enabled": true,
     "operator_stop_enabled": true,
     "session_arbitration_enabled": false
   },
   "mode_flags": {
     "single_agent_mode": true,
     "self_verify_allowed": true,
-    "self_advisory_allowed": false
-  },
-  "metadata": {
-    "saved_at": "2026-05-12T03:40:49+00:00",
-    "saved_by": "launcher",
-    "source_setup_id": "setup-20260512-codex-single-agent-nonstop"
+    "self_advisory_allowed": true
   }
 }

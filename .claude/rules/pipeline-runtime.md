@@ -2,6 +2,10 @@
 paths:
   - ".pipeline/**/*.md"
   - "watcher_core.py"
+  - "watcher_dispatch.py"
+  - "watcher_prompt_assembly.py"
+  - "watcher_state.py"
+  - "verify_fsm.py"
   - "pipeline_runtime/**/*.py"
   - "pipeline-launcher.py"
   - "controller/**/*.py"

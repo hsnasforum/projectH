@@ -614,7 +614,7 @@ class WatcherPromptAssembler:
         context = {
             **self.build_runtime_prompt_context(),
             "stale_control_seq": str(marker.get("control_seq") or "none"),
-            "stale_control_reason": str(marker.get("reason") or "operator_wait_idle_retriage"),
+            "stale_control_reason": reason,
             "operator_wait_age_sec": str(marker.get("operator_wait_age_sec") or "0"),
             "operator_retriage_advisory_disabled": (
                 "true" if not bool(self.runtime_controls.get("advisory_enabled", True)) else "false"
@@ -849,11 +849,11 @@ class WatcherPromptAssembler:
                 ),
             },
             control_seq=control_seq,
-            expected_control_path=str(prompt_path.name),
-            expected_control_slot=self._control_slot_id_for_path(prompt_path),
-            expected_control_seq=control_seq,
-            expected_status="request_open",
-            require_active_control=True,
+            # The stale request is superseded before this recovery prompt is
+            # dispatched, so active-control matching would drop the prompt.
+            # The prompt_path signature still removes stale queued recovery if
+            # the request file changes before the verify lane can accept it.
+            require_active_control=False,
         )
 
     def build_control_recovery_dispatch_spec(

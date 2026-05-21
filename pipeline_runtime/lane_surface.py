@@ -220,14 +220,13 @@ def pane_text_has_unsubmitted_pasted_content(text: str) -> bool:
     lines = [line.replace("\xa0", " ").strip() for line in str(text or "").splitlines() if line.strip()]
     if not lines:
         return False
-    window = lines[-12:]
     prompt_index = -1
-    for index, line in enumerate(window):
+    for index, line in enumerate(lines):
         if line_looks_like_input_prompt(line):
             prompt_index = index
     if prompt_index < 0:
         return False
-    return any(_PASTED_CONTENT_RE.search(line) for line in window[prompt_index:])
+    return any(_PASTED_CONTENT_RE.search(line) for line in lines[prompt_index:])
 
 
 def pane_text_has_working_indicator(text: str) -> bool:

@@ -34,6 +34,7 @@ from pipeline_gui.backend import (
 from pipeline_gui.project import _session_name_for
 from pipeline_gui.setup_profile import resolve_project_runtime_adapter
 from pipeline_gui.token_queries import load_token_dashboard
+from pipeline_runtime.state_contract import reduce_runtime_snapshot
 
 PROJECT_ROOT = Path(os.environ.get("PROJECT_ROOT", Path(__file__).resolve().parent.parent))
 CONTROLLER_DIR = Path(__file__).parent
@@ -139,8 +140,11 @@ def _resolve_controller_asset(rel_path: str) -> tuple[Path | None, str | None]:
 def _runtime_status_or_placeholder() -> dict:
     status = normalize_runtime_status(read_runtime_status(PROJECT_ROOT))
     if status:
-        return {**status, "project_root": str(PROJECT_ROOT), **_runtime_role_metadata()}
-    return {
+        payload = {**status, "project_root": str(PROJECT_ROOT), **_runtime_role_metadata()}
+        if "runtime_snapshot" not in payload:
+            payload["runtime_snapshot"] = reduce_runtime_snapshot(payload)
+        return payload
+    placeholder = {
         "schema_version": 1,
         "backend_type": "tmux",
         "project_root": str(PROJECT_ROOT),
@@ -191,6 +195,8 @@ def _runtime_status_or_placeholder() -> dict:
         "last_heartbeat_at": "",
         "updated_at": "",
     }
+    placeholder["runtime_snapshot"] = reduce_runtime_snapshot(placeholder)
+    return placeholder
 
 
 def _normalize_capture_tail_text(text: str) -> str:
@@ -212,7 +218,10 @@ def get_runtime_status() -> tuple[dict, HTTPStatus]:
     status = normalize_runtime_status(read_runtime_status(PROJECT_ROOT))
     if not status:
         return _runtime_status_or_placeholder(), HTTPStatus.OK
-    return {**status, "project_root": str(PROJECT_ROOT), **_runtime_role_metadata()}, HTTPStatus.OK
+    payload = {**status, "project_root": str(PROJECT_ROOT), **_runtime_role_metadata()}
+    if "runtime_snapshot" not in payload:
+        payload["runtime_snapshot"] = reduce_runtime_snapshot(payload)
+    return payload, HTTPStatus.OK
 
 
 def pipeline_start() -> dict:
@@ -402,11 +411,13 @@ class ControllerHandler(BaseHTTPRequestHandler):
             self._json(pipeline_restart())
             return
         if parsed.path == "/api/runtime/send-input":
-            content_length = int(self.headers.get("Content-Length") or "0")
             try:
+                content_length = int(self.headers.get("Content-Length") or "0")
+                if content_length < 0:
+                    raise ValueError
                 raw = self.rfile.read(content_length) if content_length > 0 else b"{}"
                 payload = json.loads(raw.decode("utf-8"))
-            except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            except (ValueError, OSError, UnicodeDecodeError, json.JSONDecodeError):
                 self._json({"ok": False, "error": "invalid json"}, HTTPStatus.BAD_REQUEST)
                 return
             if not isinstance(payload, dict):

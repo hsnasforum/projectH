@@ -40,6 +40,21 @@ class ControlWritersTest(unittest.TestCase):
             self.assertEqual(meta["based_on_work"], "work/4/16/example.md")
             self.assertEqual(meta["based_on_verify"], "verify/4/16/example.md")
 
+    def test_runtime_dispatch_gate_operator_request_is_supported(self) -> None:
+        text = render_operator_request(
+            control_seq=1978,
+            reason_code="codex_verify_dispatch_failure_loop",
+            operator_policy="internal_only",
+            decision_class="runtime_dispatch_gate",
+            decision_required="repair or hold the Codex verify lane before resuming",
+            based_on_work="work/5/19/example.md",
+            based_on_verify="verify/5/19/example.md",
+            body="Why now:\n- repeated dispatch prompt injection failed",
+        )
+
+        self.assertIn("REASON_CODE: codex_verify_dispatch_failure_loop", text)
+        self.assertIn("DECISION_CLASS: runtime_dispatch_gate", text)
+
     def test_render_operator_request_rejects_missing_required_headers(self) -> None:
         with self.assertRaisesRegex(ValueError, "based_on_verify is required"):
             render_operator_request(

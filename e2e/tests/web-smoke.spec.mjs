@@ -57,6 +57,10 @@ function sessionLocalReviewQueueItem(reviewQueueBox) {
   return reviewQueueBox.getByTestId("review-queue-item").filter({ hasText: "기준 명시 확인" }).first();
 }
 
+async function expectAggregateTriggerMutationGuard(aggregateTriggerBox) {
+  await expect(aggregateTriggerBox.getByTestId("aggregate-trigger-item").locator(".history-item-title span")).toContainText("mutation canonical_transition_id+aggregate_fingerprint");
+}
+
 function findLatestCandidateSourceMessage(messages) {
   return [...(Array.isArray(messages) ? messages : [])]
     .reverse()
@@ -1128,6 +1132,7 @@ test("same-session recurrence aggregate는 emitted-apply-confirm lifecycle으로
   await expect(aggregateTriggerBox.getByTestId("aggregate-trigger-item").locator("strong").first()).toHaveText("반복 교정 묶음");
   await expect(aggregateTriggerBox.getByTestId("aggregate-trigger-item").locator(".history-item-title span")).toContainText("capability unblocked_all_required");
   await expect(aggregateTriggerBox.getByTestId("aggregate-trigger-item").locator(".history-item-title span")).toContainText("audit contract_only_not_emitted");
+  await expectAggregateTriggerMutationGuard(aggregateTriggerBox);
   await expect(aggregateTriggerBox.getByTestId("aggregate-trigger-item").locator(".history-item-summary").filter({ hasText: "계획 타깃" })).toHaveText("계획 타깃 eligible_for_reviewed_memory_draft_planning_only");
   await expect(aggregateTriggerBox.getByTestId("aggregate-trigger-helper")).toHaveText("검토 메모 적용을 시작할 수 있습니다. 사유를 입력한 뒤 시작 버튼을 누르세요.");
 
@@ -1171,6 +1176,7 @@ test("same-session recurrence aggregate는 emitted-apply-confirm lifecycle으로
     document.getElementById("load-session").click();
   }, sessionId);
   await expect(aggregateTriggerBox).toBeVisible({ timeout: 10_000 });
+  await expectAggregateTriggerMutationGuard(aggregateTriggerBox);
   await expect(aggregateTriggerBox.getByTestId("aggregate-trigger-helper")).toHaveText(
     "transition record가 발행되었습니다. 적용 실행 버튼을 눌러 주세요."
   );
@@ -1223,6 +1229,7 @@ test("same-session recurrence aggregate는 emitted-apply-confirm lifecycle으로
     document.getElementById("load-session").click();
   }, sessionId);
   await expect(aggregateTriggerBox).toBeVisible({ timeout: 10_000 });
+  await expectAggregateTriggerMutationGuard(aggregateTriggerBox);
   await expect(aggregateTriggerBox.getByTestId("aggregate-trigger-helper")).toHaveText(
     "검토 메모 적용이 실행되었습니다. 결과 확정 버튼을 눌러 주세요."
   );
@@ -1288,6 +1295,7 @@ test("same-session recurrence aggregate는 emitted-apply-confirm lifecycle으로
     document.getElementById("load-session").click();
   }, sessionId);
   await expect(aggregateTriggerBox).toBeVisible({ timeout: 10_000 });
+  await expectAggregateTriggerMutationGuard(aggregateTriggerBox);
   await expect(aggregateTriggerBox.getByTestId("aggregate-trigger-result")).toBeVisible();
   await expect(aggregateTriggerBox.getByTestId("aggregate-trigger-result")).toHaveText(
     `결과 확정 완료 (${resultAggregate.reviewed_memory_transition_record.canonical_transition_id} · ${resultAggregate.reviewed_memory_transition_record.apply_result.applied_effect_kind})`
@@ -1557,6 +1565,7 @@ test("same-session recurrence aggregate는 stop-reverse-conflict lifecycle으로
     document.getElementById("load-session").click();
   }, sessionId);
   await expect(aggregateTriggerBox).toBeVisible({ timeout: 10_000 });
+  await expectAggregateTriggerMutationGuard(aggregateTriggerBox);
   await expect(aggregateTriggerBox.getByTestId("aggregate-trigger-stopped")).toBeVisible();
   await expect(aggregateTriggerBox.getByTestId("aggregate-trigger-stopped")).toHaveText(
     `적용 중단됨 (${stoppedAggregate.reviewed_memory_transition_record.canonical_transition_id})`
@@ -1610,6 +1619,7 @@ test("same-session recurrence aggregate는 stop-reverse-conflict lifecycle으로
     document.getElementById("load-session").click();
   }, sessionId);
   await expect(aggregateTriggerBox).toBeVisible({ timeout: 10_000 });
+  await expectAggregateTriggerMutationGuard(aggregateTriggerBox);
   await expect(aggregateTriggerBox.getByTestId("aggregate-trigger-reversed")).toBeVisible();
   await expect(aggregateTriggerBox.getByTestId("aggregate-trigger-reversed")).toHaveText(
     `적용 되돌림 완료 (${reversedAggregate.reviewed_memory_transition_record.canonical_transition_id})`
@@ -1679,6 +1689,7 @@ test("same-session recurrence aggregate는 stop-reverse-conflict lifecycle으로
   }, sessionId);
   // Aggregate-trigger box must still be visible with conflict-checked state after reload
   await expect(aggregateTriggerBox).toBeVisible({ timeout: 10_000 });
+  await expectAggregateTriggerMutationGuard(aggregateTriggerBox);
   await expect(aggregateTriggerBox.locator(".sidebar-section-label")).toHaveText("검토 메모 적용 후보");
   await expect(aggregateTriggerBox.getByTestId("aggregate-trigger-conflict-checked")).toBeVisible();
   await expect(aggregateTriggerBox.getByTestId("aggregate-trigger-conflict-checked")).toHaveText(

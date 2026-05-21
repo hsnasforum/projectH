@@ -3,12 +3,17 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 import tempfile
 import time
 import unittest
 from pathlib import Path
 from unittest import mock
 
+from pipeline_runtime.automation_health import (
+    AUTOMATION_HEALTH_RULESET_VERSION,
+    LOCAL_SOCKET_GUARD_AUTO_HELD_REASON,
+)
 from pipeline_runtime.cli import build_parser
 from pipeline_runtime.operator_autonomy import (
     COMMIT_PUSH_BUNDLE_AUTHORIZATION_REASON,
@@ -18,8 +23,15 @@ from pipeline_runtime.operator_autonomy import (
     classify_operator_candidate,
 )
 from pipeline_runtime.pr_merge_state import PrMergeGateResolution
+from pipeline_runtime.receipts import receipt_path
 from pipeline_runtime.supervisor import RuntimeSupervisor
-from pipeline_runtime.wrapper_events import append_wrapper_event, build_lane_read_models
+from pipeline_runtime.wrapper_events import (
+    ALL_EVENT_TYPES,
+    WRAPPER_EVENT_SCHEMA_VERSION,
+    append_wrapper_event,
+    build_lane_read_models,
+    validate_wrapper_event_payload,
+)
 from watcher_prompt_assembly import (
     DEFAULT_ADVISORY_PROMPT,
     DEFAULT_FOLLOWUP_PROMPT,
@@ -87,6 +99,164 @@ class RuntimeSupervisorTest(unittest.TestCase):
         self.assertEqual(args.project_root, "/tmp/projectH")
         self.assertEqual(args.legacy_mode, "baseline")
         self.assertTrue(args.no_attach)
+
+    def test_runtime_launch_failure_reason_classifies_tmux_socket_permission_denial(self) -> None:
+        reason = RuntimeSupervisor._runtime_launch_failure_reason(
+            RuntimeError("error connecting to /tmp/tmux-1000/default (Operation not permitted)")
+        )
+
+        self.assertEqual(reason, LOCAL_SOCKET_GUARD_AUTO_HELD_REASON)
+
+    def test_runtime_launch_failure_reason_keeps_generic_runtime_errors(self) -> None:
+        reason = RuntimeSupervisor._runtime_launch_failure_reason(RuntimeError("lane spawn failed"))
+
+        self.assertEqual(reason, "runtime_launch_failed:RuntimeError")
+
+    def test_write_status_surfaces_local_socket_guard_launch_failure_as_verify_followup(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+            supervisor._launch_failed_reason = LOCAL_SOCKET_GUARD_AUTO_HELD_REASON
+
+            with (
+                mock.patch.object(supervisor, "_watcher_status", return_value={"alive": False, "pid": None}),
+                mock.patch.object(supervisor.adapter, "session_exists", return_value=False),
+                mock.patch.object(
+                    supervisor,
+                    "_build_lane_statuses",
+                    return_value=(
+                        [
+                            {"name": "Claude", "state": "OFF", "attachable": False, "pid": None, "note": ""},
+                            {"name": "Codex", "state": "OFF", "attachable": False, "pid": None, "note": ""},
+                        ],
+                        {"Claude": {}, "Codex": {}},
+                    ),
+                ),
+                mock.patch("pipeline_runtime.supervisor.build_lane_read_models", return_value={}),
+                mock.patch.object(
+                    supervisor,
+                    "_build_artifacts",
+                    return_value={"latest_work": {}, "latest_verify": {}},
+                ),
+            ):
+                status = supervisor._write_status()
+
+            self.assertEqual(status["runtime_state"], "BROKEN")
+            self.assertEqual(status["degraded_reason"], LOCAL_SOCKET_GUARD_AUTO_HELD_REASON)
+            self.assertEqual(status["degraded_reasons"], [LOCAL_SOCKET_GUARD_AUTO_HELD_REASON])
+            self.assertEqual(status["automation_health"], "attention")
+            self.assertEqual(status["automation_reason_code"], LOCAL_SOCKET_GUARD_AUTO_HELD_REASON)
+            self.assertEqual(status["automation_incident_family"], LOCAL_SOCKET_GUARD_AUTO_HELD_REASON)
+            self.assertEqual(status["automation_next_action"], "verify_followup")
+            source = status["automation_health_source"]
+            self.assertEqual(source["ruleset_version"], AUTOMATION_HEALTH_RULESET_VERSION)
+            self.assertEqual(source["derived_by"], "pipeline_runtime.automation_health.derive_automation_health")
+            self.assertEqual(source["runtime_state"], "BROKEN")
+            self.assertEqual(source["reason_code"], LOCAL_SOCKET_GUARD_AUTO_HELD_REASON)
+            self.assertEqual(source["next_action"], "verify_followup")
+
+    def test_record_status_events_preserves_local_socket_guard_automation_incident(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+            supervisor._launch_failed_reason = LOCAL_SOCKET_GUARD_AUTO_HELD_REASON
+
+            with (
+                mock.patch.object(supervisor, "_watcher_status", return_value={"alive": False, "pid": None}),
+                mock.patch.object(supervisor.adapter, "session_exists", return_value=False),
+                mock.patch.object(
+                    supervisor,
+                    "_build_lane_statuses",
+                    return_value=(
+                        [
+                            {"name": "Claude", "state": "OFF", "attachable": False, "pid": None, "note": ""},
+                            {"name": "Codex", "state": "OFF", "attachable": False, "pid": None, "note": ""},
+                        ],
+                        {"Claude": {}, "Codex": {}},
+                    ),
+                ),
+                mock.patch("pipeline_runtime.supervisor.build_lane_read_models", return_value={}),
+                mock.patch.object(
+                    supervisor,
+                    "_build_artifacts",
+                    return_value={"latest_work": {}, "latest_verify": {}},
+                ),
+            ):
+                status = supervisor._write_status()
+                supervisor._record_status_events(status)
+
+            events = [
+                json.loads(line)
+                for line in supervisor.events_path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            automation_events = [event for event in events if event.get("event_type") == "automation_incident"]
+
+            self.assertEqual(status["automation_health"], "attention")
+            self.assertEqual(status["automation_reason_code"], LOCAL_SOCKET_GUARD_AUTO_HELD_REASON)
+            self.assertEqual(status["automation_incident_family"], LOCAL_SOCKET_GUARD_AUTO_HELD_REASON)
+            self.assertEqual(status["automation_next_action"], "verify_followup")
+            self.assertEqual(len(automation_events), 1)
+            payload = automation_events[0]["payload"]
+            self.assertEqual(payload["automation_health"], "attention")
+            self.assertEqual(payload["reason_code"], LOCAL_SOCKET_GUARD_AUTO_HELD_REASON)
+            self.assertEqual(payload["incident_family"], LOCAL_SOCKET_GUARD_AUTO_HELD_REASON)
+            self.assertEqual(payload["next_action"], "verify_followup")
+
+    def test_run_launch_failure_preserves_local_socket_guard_reason_and_raw_log(self) -> None:
+        launch_error = "error connecting to /tmp/tmux-1000/default (Operation not permitted)"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            supervisor = RuntimeSupervisor(root, start_runtime=True)
+            captured_broken_statuses: list[dict[str, object]] = []
+            original_write_status = supervisor._write_status
+
+            def capture_first_broken_status() -> dict[str, object]:
+                status = original_write_status()
+                if status.get("runtime_state") == "BROKEN" and not captured_broken_statuses:
+                    captured_broken_statuses.append(status)
+                    supervisor._stop_requested = True
+                return status
+
+            with (
+                mock.patch("pipeline_runtime.supervisor.signal.signal"),
+                mock.patch.object(supervisor, "_launch_runtime", side_effect=RuntimeError(launch_error)),
+                mock.patch.object(supervisor, "_maybe_restart_watcher_for_source_change"),
+                mock.patch.object(supervisor, "_watcher_status", return_value={"alive": False, "pid": None}),
+                mock.patch.object(supervisor.adapter, "session_exists", return_value=False),
+                mock.patch.object(
+                    supervisor,
+                    "_build_lane_statuses",
+                    return_value=(
+                        [
+                            {"name": "Claude", "state": "OFF", "attachable": False, "pid": None, "note": ""},
+                            {"name": "Codex", "state": "OFF", "attachable": False, "pid": None, "note": ""},
+                        ],
+                        {"Claude": {}, "Codex": {}},
+                    ),
+                ),
+                mock.patch("pipeline_runtime.supervisor.build_lane_read_models", return_value={}),
+                mock.patch.object(
+                    supervisor,
+                    "_build_artifacts",
+                    return_value={"latest_work": {}, "latest_verify": {}},
+                ),
+                mock.patch.object(supervisor, "_write_status", side_effect=capture_first_broken_status),
+            ):
+                result = supervisor.run()
+
+            self.assertEqual(result, 0)
+            self.assertEqual(supervisor._launch_failed_reason, LOCAL_SOCKET_GUARD_AUTO_HELD_REASON)
+            launch_log = supervisor.logs_dir / "launch-error.log"
+            self.assertEqual(launch_log.read_text(encoding="utf-8"), launch_error)
+            self.assertEqual(len(captured_broken_statuses), 1)
+            first_status = captured_broken_statuses[0]
+            self.assertEqual(first_status["runtime_state"], "BROKEN")
+            self.assertEqual(first_status["degraded_reason"], LOCAL_SOCKET_GUARD_AUTO_HELD_REASON)
+            self.assertEqual(first_status["automation_next_action"], "verify_followup")
 
     def test_build_active_round_skips_autonomy_state_pseudo_job(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -201,6 +371,62 @@ class RuntimeSupervisorTest(unittest.TestCase):
             self.assertEqual(active_round["job_id"], "job-receipt-pending")
             self.assertEqual(active_round["round"], 2)
             self.assertEqual(active_round["state"], "RECEIPT_PENDING")
+
+    def test_build_active_round_uses_receipt_file_when_latest_receipt_is_other_job(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+            supervisor.receipts_dir.mkdir(parents=True, exist_ok=True)
+
+            older_receipt = {
+                "job_id": "job-closed-older",
+                "round": 1,
+                "artifact_hash": "older-hash",
+                "closed_at": "2026-05-20T10:00:00Z",
+            }
+            newer_receipt = {
+                "job_id": "job-closed-newer",
+                "round": 1,
+                "artifact_hash": "newer-hash",
+                "closed_at": "2026-05-20T11:00:00Z",
+            }
+            receipt_path(supervisor.receipts_dir, "job-closed-older", 1).write_text(
+                json.dumps(older_receipt),
+                encoding="utf-8",
+            )
+            receipt_path(supervisor.receipts_dir, "job-closed-newer", 1).write_text(
+                json.dumps(newer_receipt),
+                encoding="utf-8",
+            )
+            job_states = [
+                {
+                    "job_id": "job-closed-older",
+                    "status": "VERIFY_DONE",
+                    "artifact_path": "work/5/20/older.md",
+                    "artifact_hash": "older-hash",
+                    "round": 1,
+                    "updated_at": 500.0,
+                    "last_activity_at": 500.0,
+                    "verify_completed_at": 500.0,
+                },
+                {
+                    "job_id": "job-closed-newer",
+                    "status": "VERIFY_DONE",
+                    "artifact_path": "work/5/20/newer.md",
+                    "artifact_hash": "newer-hash",
+                    "round": 1,
+                    "updated_at": 100.0,
+                    "last_activity_at": 100.0,
+                    "verify_completed_at": 100.0,
+                },
+            ]
+
+            active_round = supervisor._build_active_round(job_states, last_receipt=newer_receipt)
+
+            self.assertIsNotNone(active_round)
+            self.assertEqual(active_round["job_id"], "job-closed-older")
+            self.assertEqual(active_round["state"], "CLOSED")
 
     def test_build_active_round_prefers_current_control_seq_match(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -524,6 +750,49 @@ class RuntimeSupervisorTest(unittest.TestCase):
                 ],
             )
 
+    def test_prepare_runtime_surfaces_preserves_raw_jsonl(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+            raw_log = supervisor.base_dir / "logs" / "experimental" / "raw.jsonl"
+            raw_log.parent.mkdir(parents=True, exist_ok=True)
+            raw_log.write_text('{"event":"implement_blocked_detected"}\n', encoding="utf-8")
+
+            supervisor._prepare_runtime_surfaces()
+
+            content = raw_log.read_text(encoding="utf-8")
+            self.assertIn("implement_blocked_detected", content)
+
+    def test_build_artifacts_dispatch_selection_not_emitted_when_unchanged(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+
+            def count_dispatch_selection_events() -> int:
+                if not supervisor.events_path.exists():
+                    return 0
+                count = 0
+                for line in supervisor.events_path.read_text(encoding="utf-8").splitlines():
+                    if not line.strip():
+                        continue
+                    try:
+                        event = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if event.get("event_type") == "dispatch_selection":
+                        count += 1
+                return count
+
+            before = count_dispatch_selection_events()
+            supervisor._build_artifacts()
+            supervisor._build_artifacts()
+            supervisor._build_artifacts()
+            after = count_dispatch_selection_events()
+
+            self.assertEqual(after - before, 1)
+
     def test_write_status_emits_receipt_and_control_block(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -578,6 +847,7 @@ class RuntimeSupervisorTest(unittest.TestCase):
                         "round": 2,
                         "verify_manifest_path": str(manifest_path),
                         "verify_result": "passed_by_feedback",
+                        "last_dispatch_at": time.time() + 10.0,
                         "updated_at": 100.0,
                         "verify_completed_at": 100.0,
                     }
@@ -717,6 +987,97 @@ class RuntimeSupervisorTest(unittest.TestCase):
             receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
             self.assertEqual(receipt["job_id"], "job-dispatch")
             self.assertEqual(receipt["control_seq"], 12)
+
+    def test_write_status_receipt_does_not_use_newer_active_control_seq_without_dispatch_seq(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            pipeline_dir = root / ".pipeline"
+            state_dir = pipeline_dir / "state"
+            manifest_dir = pipeline_dir / "manifests" / "job-new-control"
+            verify_dir = root / "verify" / "4" / "11"
+            state_dir.mkdir(parents=True, exist_ok=True)
+            manifest_dir.mkdir(parents=True, exist_ok=True)
+            verify_dir.mkdir(parents=True, exist_ok=True)
+            (pipeline_dir / "implement_handoff.md").write_text(
+                "STATUS: implement\nCONTROL_SEQ: 2036\n",
+                encoding="utf-8",
+            )
+            (state_dir / "turn_state.json").write_text(
+                json.dumps(
+                    {
+                        "state": "IMPLEMENT_ACTIVE",
+                        "legacy_state": "CLAUDE_ACTIVE",
+                        "entered_at": 1.0,
+                        "active_control_file": ".pipeline/implement_handoff.md",
+                        "active_control_seq": 2036,
+                        "active_role": "implement",
+                        "active_lane": "Codex",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            manifest_path = manifest_dir / "round-1.verify.json"
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "job_id": "job-new-control",
+                        "round": 1,
+                        "role": "verify",
+                        "artifact_hash": "artifact-hash-new-control",
+                        "created_at": "2026-04-11T01:02:03Z",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (state_dir / "job-new-control.json").write_text(
+                json.dumps(
+                    {
+                        "job_id": "job-new-control",
+                        "status": "VERIFY_DONE",
+                        "artifact_path": "work/4/11/work-note.md",
+                        "artifact_hash": "artifact-hash-new-control",
+                        "round": 1,
+                        "dispatch_control_seq": -1,
+                        "last_dispatch_at": 100.0,
+                        "verify_manifest_path": str(manifest_path),
+                        "verify_result": "passed_by_feedback",
+                        "updated_at": 200.0,
+                        "verify_completed_at": 200.0,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (verify_dir / "2026-04-11-verify.md").write_text(
+                "Based on `work/4/11/work-note.md`\n",
+                encoding="utf-8",
+            )
+
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+            supervisor._runtime_started = True
+            with (
+                mock.patch.object(supervisor, "_watcher_status", return_value={"alive": True, "pid": 4242}),
+                mock.patch.object(supervisor.adapter, "session_exists", return_value=True),
+                mock.patch.object(
+                    supervisor,
+                    "_build_lane_statuses",
+                    return_value=(
+                        [{"name": "Codex", "state": "READY", "attachable": True, "pid": 12, "note": ""}],
+                        {"Codex": {}},
+                    ),
+                ),
+                mock.patch("pipeline_runtime.supervisor.build_lane_read_models", return_value={}),
+                mock.patch.object(supervisor, "_build_artifacts", return_value={"latest_work": {}, "latest_verify": {}}),
+                mock.patch.object(supervisor._pr_merge_status_cache, "control_resolution", return_value=PrMergeGateResolution()),
+            ):
+                status = supervisor._write_status()
+
+            self.assertEqual(status["control"]["active_control_seq"], 2036)
+            receipt_path = supervisor.receipts_dir / f"{status['last_receipt_id']}.json"
+            receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+            self.assertEqual(receipt["job_id"], "job-new-control")
+            self.assertEqual(receipt["control_seq"], -1)
 
     def test_write_status_receipt_uses_verify_matching_job_work(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1144,10 +1505,12 @@ class RuntimeSupervisorTest(unittest.TestCase):
                 command = supervisor._lane_command_override("Claude")
 
             self.assertIn("Claude", command)
-            events = [
-                json.loads(line)
-                for line in supervisor.events_path.read_text(encoding="utf-8").splitlines()
-            ]
+            event_lines = (
+                supervisor.events_path.read_text(encoding="utf-8").splitlines()
+                if supervisor.events_path.exists()
+                else []
+            )
+            events = [json.loads(line) for line in event_lines]
             self.assertEqual(events[0]["event_type"], "lane_command_override")
             payload = events[0]["payload"]
             self.assertEqual(payload["lane"], "Claude")
@@ -1169,12 +1532,99 @@ class RuntimeSupervisorTest(unittest.TestCase):
                 command = supervisor._lane_command_override("Claude")
 
             self.assertEqual(command, "")
+            event_lines = (
+                supervisor.events_path.read_text(encoding="utf-8").splitlines()
+                if supervisor.events_path.exists()
+                else []
+            )
+            events = [json.loads(line) for line in event_lines]
+            self.assertEqual(events[0]["event_type"], "lane_command_override_ignored")
+            self.assertEqual(events[0]["payload"]["reason"], "explicit_opt_in_required")
+
+    def test_lane_command_override_format_key_error_returns_empty_and_logs_event(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            supervisor = RuntimeSupervisor(root, run_id="run-override-invalid", start_runtime=False)
+
+            with mock.patch.dict(
+                os.environ,
+                {
+                    "PIPELINE_RUNTIME_ALLOW_LANE_COMMAND_OVERRIDE": "1",
+                    "PIPELINE_RUNTIME_LANE_COMMAND_CODEX": "exec mybin {unknown_key}",
+                },
+            ):
+                command = supervisor._lane_command_override("Codex")
+
+            self.assertEqual(command, "")
             events = [
                 json.loads(line)
                 for line in supervisor.events_path.read_text(encoding="utf-8").splitlines()
             ]
-            self.assertEqual(events[0]["event_type"], "lane_command_override_ignored")
-            self.assertEqual(events[0]["payload"]["reason"], "explicit_opt_in_required")
+            override_invalid = [
+                event
+                for event in events
+                if event.get("event_type") == "lane_command_override_invalid"
+            ]
+            self.assertEqual(len(override_invalid), 1)
+            self.assertEqual(override_invalid[0]["payload"]["lane"], "Codex")
+            self.assertIn("format_key_error", override_invalid[0]["payload"]["reason"])
+
+    def test_refresh_control_seq_age_logs_error_when_scan_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            supervisor = RuntimeSupervisor(root, run_id="run-control-age-error", start_runtime=False)
+
+            with mock.patch.object(
+                supervisor,
+                "_highest_control_seq_for_age",
+                side_effect=RuntimeError("bad control slot"),
+            ):
+                age = supervisor._refresh_control_seq_age({"active": {}})
+
+            self.assertEqual(age, 0)
+            event_lines = (
+                supervisor.events_path.read_text(encoding="utf-8").splitlines()
+                if supervisor.events_path.exists()
+                else []
+            )
+            events = [json.loads(line) for line in event_lines]
+            control_errors = [
+                event for event in events if event.get("event_type") == "control_seq_age_error"
+            ]
+            self.assertEqual(len(control_errors), 1)
+            self.assertIn("RuntimeError: bad control slot", control_errors[0]["payload"]["error"])
+
+    def test_write_compat_files_uses_atomic_pattern_for_text_files(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            supervisor = RuntimeSupervisor(root, run_id="run-compat-atomic", start_runtime=False)
+            status = {
+                "artifacts": {
+                    "latest_work": {"path": "work/5/21/test.md"},
+                    "latest_verify": {"path": "verify/5/21/test.md"},
+                },
+                "compat": {"control_slots": {}},
+            }
+            supervisor.compat_dir.mkdir(parents=True, exist_ok=True)
+            work_path = supervisor.compat_dir / "latest-work.txt"
+            verify_path = supervisor.compat_dir / "latest-verify.txt"
+            writes: list[Path] = []
+            original_write_text = Path.write_text
+
+            def tracking_write_text(path: Path, *args, **kwargs):
+                writes.append(path)
+                return original_write_text(path, *args, **kwargs)
+
+            with mock.patch.object(Path, "write_text", tracking_write_text):
+                supervisor._write_compat_files(status)
+
+            self.assertNotIn(work_path, writes)
+            self.assertNotIn(verify_path, writes)
+            self.assertEqual(work_path.read_text(encoding="utf-8"), "work/5/21/test.md")
+            self.assertEqual(verify_path.read_text(encoding="utf-8"), "verify/5/21/test.md")
 
     def test_write_status_clears_stale_degraded_reason_after_runtime_has_stopped(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1547,6 +1997,56 @@ class RuntimeSupervisorTest(unittest.TestCase):
             self.assertFalse(gemini_hint["active"])
             self.assertEqual(gemini_hint["job_id"], "")
             self.assertEqual(gemini_hint["dispatch_id"], "")
+
+    def test_write_task_hints_implement_lane_ignores_closed_verify_round_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root, implement="Codex", verify="Codex")
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+
+            supervisor._write_task_hints(
+                active_lane="Codex",
+                active_round={
+                    "job_id": "verify-job-old",
+                    "dispatch_id": "",
+                    "dispatch_control_seq": -1,
+                    "state": "CLOSED",
+                },
+                turn_state={"state": "IMPLEMENT_ACTIVE"},
+                control={"active_control_status": "implement", "active_control_seq": 1981},
+            )
+
+            codex_hint = json.loads(supervisor._task_hint_path("Codex").read_text(encoding="utf-8"))
+
+            self.assertTrue(codex_hint["active"])
+            self.assertEqual(codex_hint["control_seq"], 1981)
+            self.assertEqual(codex_hint["job_id"], "ctrl-1981")
+            self.assertEqual(codex_hint["dispatch_id"], "seq-1981")
+
+    def test_write_task_hints_self_verify_round_identity_takes_precedence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root, implement="Codex", verify="Codex")
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+
+            supervisor._write_task_hints(
+                active_lane="Codex",
+                active_round={
+                    "job_id": "verify-job-current",
+                    "dispatch_id": "verify-dispatch-current",
+                    "dispatch_control_seq": 1981,
+                    "state": "VERIFYING",
+                },
+                turn_state={"state": "VERIFY_ACTIVE"},
+                control={"active_control_status": "implement", "active_control_seq": 1981},
+            )
+
+            codex_hint = json.loads(supervisor._task_hint_path("Codex").read_text(encoding="utf-8"))
+
+            self.assertTrue(codex_hint["active"])
+            self.assertEqual(codex_hint["control_seq"], 1981)
+            self.assertEqual(codex_hint["job_id"], "verify-job-current")
+            self.assertEqual(codex_hint["dispatch_id"], "verify-dispatch-current")
 
     def test_write_status_clears_stale_autonomy_when_active_round_targets_newer_work(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -2030,6 +2530,92 @@ class RuntimeSupervisorTest(unittest.TestCase):
             stale_models = build_lane_read_models(wrapper_dir, heartbeat_timeout_sec=0.0, now_ts=9999999999.0)
             self.assertEqual(stale_models["Codex"]["state"], "BROKEN")
             self.assertEqual(stale_models["Codex"]["note"], "heartbeat_timeout")
+
+    def test_wrapper_event_schema_validation_contract(self) -> None:
+        self.assertIn("TASK_ACCEPTED", ALL_EVENT_TYPES)
+        self.assertEqual(
+            validate_wrapper_event_payload("TASK_ACCEPTED", {}),
+            ["job_id", "dispatch_id", "control_seq", "attempt"],
+        )
+        self.assertEqual(
+            validate_wrapper_event_payload(
+                "TASK_ACCEPTED",
+                {
+                    "job_id": "job-42",
+                    "dispatch_id": "dispatch-42",
+                    "control_seq": 19,
+                    "attempt": 1,
+                },
+            ),
+            [],
+        )
+        self.assertEqual(validate_wrapper_event_payload("FUTURE_EVENT", {}), [])
+
+    def test_append_wrapper_event_records_schema_version_and_warnings(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            wrapper_dir = Path(tmp)
+            append_wrapper_event(
+                wrapper_dir,
+                "Codex",
+                "TASK_ACCEPTED",
+                {
+                    "job_id": "job-42",
+                    "dispatch_id": "dispatch-42",
+                    "control_seq": 19,
+                    "attempt": 1,
+                },
+                source="wrapper",
+            )
+            append_wrapper_event(
+                wrapper_dir,
+                "Codex",
+                "TASK_ACCEPTED",
+                {},
+                source="wrapper",
+            )
+
+            entries = [
+                json.loads(line)
+                for line in (wrapper_dir / "codex.jsonl").read_text(encoding="utf-8").splitlines()
+            ]
+
+            self.assertEqual(entries[0]["schema_version"], WRAPPER_EVENT_SCHEMA_VERSION)
+            self.assertNotIn("_schema_warnings", entries[0])
+            self.assertEqual(entries[1]["schema_version"], WRAPPER_EVENT_SCHEMA_VERSION)
+            self.assertEqual(
+                entries[1]["_schema_warnings"],
+                ["job_id", "dispatch_id", "control_seq", "attempt"],
+            )
+
+    def test_build_lane_read_models_accepts_legacy_events_without_schema_version(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            wrapper_dir = Path(tmp)
+            wrapper_dir.mkdir(parents=True, exist_ok=True)
+            (wrapper_dir / "codex.jsonl").write_text(
+                json.dumps(
+                    {
+                        "ts": "2026-05-21T00:00:00Z",
+                        "lane": "Codex",
+                        "event_type": "TASK_ACCEPTED",
+                        "source": "wrapper",
+                        "payload": {
+                            "job_id": "job-legacy",
+                            "dispatch_id": "dispatch-legacy",
+                            "control_seq": 77,
+                            "attempt": 2,
+                        },
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            models = build_lane_read_models(wrapper_dir, heartbeat_timeout_sec=3600.0, now_ts=1.0)
+
+            self.assertEqual(models["Codex"]["state"], "WORKING")
+            self.assertEqual(models["Codex"]["accepted_task"]["job_id"], "job-legacy")
+            self.assertEqual(models["Codex"]["accepted_task"]["dispatch_id"], "dispatch-legacy")
+            self.assertEqual(models["Codex"]["accepted_task"]["control_seq"], 77)
 
     def test_build_lane_read_models_tracks_task_done_dispatch_id(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -2826,6 +3412,139 @@ class RuntimeSupervisorTest(unittest.TestCase):
             self.assertEqual(automation_events[0]["payload"]["reason_code"], "dispatch_stall")
             self.assertEqual(automation_events[0]["payload"]["next_action"], "retrying")
 
+    def test_write_status_surfaces_idle_active_verify_round_as_recovering(self) -> None:
+        cases = (
+            ("VERIFY_PENDING", "VERIFY_PENDING"),
+            ("VERIFY_RUNNING", "VERIFYING"),
+        )
+        for job_status, expected_round_state in cases:
+            with self.subTest(job_status=job_status), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                _write_active_profile(
+                    root,
+                    selected_agents=["Claude", "Codex"],
+                    implement="Codex",
+                    verify="Codex",
+                    advisory="Claude",
+                    self_verify_allowed=True,
+                )
+                pipeline_dir = root / ".pipeline"
+                state_dir = pipeline_dir / "state"
+                state_dir.mkdir(parents=True, exist_ok=True)
+                (pipeline_dir / "implement_handoff.md").write_text(
+                    "STATUS: implement\nCONTROL_SEQ: 1998\n",
+                    encoding="utf-8",
+                )
+                (state_dir / "turn_state.json").write_text(
+                    json.dumps(
+                        {
+                            "state": "IDLE",
+                            "legacy_state": "IDLE",
+                            "reason": "implement_activity_detected",
+                            "active_control_file": "",
+                            "active_control_seq": -1,
+                            "active_role": "",
+                            "active_lane": "",
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+                (state_dir / f"job-idle-active-{job_status.lower()}.json").write_text(
+                    json.dumps(
+                        {
+                            "job_id": f"job-idle-active-{job_status.lower()}",
+                            "status": job_status,
+                            "artifact_path": "work/5/20/2026-05-20-active-verify-round-status-exporter-guard.md",
+                            "artifact_hash": f"artifact-hash-{job_status.lower()}",
+                            "round": 1,
+                            "updated_at": 300.0,
+                            "dispatch_control_seq": 1998,
+                            "degraded_reason": "",
+                            "lane_note": "",
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+
+                supervisor = RuntimeSupervisor(root, start_runtime=False)
+                supervisor._runtime_started = True
+
+                with (
+                    mock.patch.object(supervisor, "_watcher_status", return_value={"alive": True, "pid": 4242}),
+                    mock.patch.object(supervisor.adapter, "session_exists", return_value=True),
+                    mock.patch.object(
+                        supervisor.adapter,
+                        "lane_health",
+                        side_effect=lambda lane_name: {
+                            "name": lane_name,
+                            "alive": True,
+                            "pid": {"Claude": 11, "Codex": 12}.get(lane_name),
+                            "attachable": True,
+                            "pane_id": "%2",
+                        },
+                    ),
+                    mock.patch.object(
+                        supervisor.adapter,
+                        "capture_tail",
+                        side_effect=lambda lane_name, lines=80: (
+                            "› Use /skills to list available skills\n\n"
+                            "gpt-5.4 xhigh fast · ~/code/projectH\n"
+                            if lane_name == "Codex"
+                            else ""
+                        ),
+                    ),
+                    mock.patch(
+                        "pipeline_runtime.supervisor.build_lane_read_models",
+                        return_value={
+                            "Codex": {
+                                "state": "READY",
+                                "note": "prompt_visible",
+                                "last_event_at": "2026-05-20T06:00:00Z",
+                                "last_heartbeat_at": "2026-05-20T06:00:05Z",
+                            },
+                            "Claude": {
+                                "state": "READY",
+                                "note": "prompt_visible",
+                                "last_event_at": "2026-05-20T06:00:00Z",
+                                "last_heartbeat_at": "2026-05-20T06:00:05Z",
+                            },
+                        },
+                    ),
+                    mock.patch.object(
+                        supervisor,
+                        "_build_artifacts",
+                        return_value={"latest_work": {}, "latest_verify": {}},
+                    ),
+                ):
+                    status = supervisor._write_status()
+                    supervisor._record_status_events(status)
+
+                events = [
+                    json.loads(line)
+                    for line in supervisor.events_path.read_text(encoding="utf-8").splitlines()
+                    if line.strip()
+                ]
+                automation_events = [event for event in events if event.get("event_type") == "automation_incident"]
+
+                self.assertEqual(status["runtime_state"], "RUNNING")
+                self.assertEqual(status["degraded_reason"], "")
+                self.assertEqual(status["automation_health"], "recovering")
+                self.assertEqual(status["automation_reason_code"], "dispatch_stall")
+                self.assertEqual(status["automation_next_action"], "retrying")
+                source = status["automation_health_source"]
+                self.assertEqual(source["ruleset_version"], AUTOMATION_HEALTH_RULESET_VERSION)
+                self.assertEqual(source["derived_by"], "pipeline_runtime.automation_health.derive_automation_health")
+                self.assertEqual(source["active_round_state"], expected_round_state)
+                self.assertEqual(source["turn_state"], "IDLE")
+                self.assertEqual(source["reason_code"], "dispatch_stall")
+                self.assertEqual(source["next_action"], "retrying")
+                self.assertEqual(status["active_round"]["state"], expected_round_state)
+                self.assertEqual(status["active_round"]["dispatch_stage"], "")
+                self.assertEqual(len(automation_events), 1)
+                self.assertEqual(automation_events[0]["payload"]["automation_health"], "recovering")
+                self.assertEqual(automation_events[0]["payload"]["reason_code"], "dispatch_stall")
+                self.assertEqual(automation_events[0]["payload"]["next_action"], "retrying")
+
     def test_write_status_ignores_old_legacy_dispatch_stall_from_previous_run(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -3138,6 +3857,316 @@ class RuntimeSupervisorTest(unittest.TestCase):
             codex = next(lane for lane in lanes if lane["name"] == "Codex")
             self.assertEqual(codex["state"], "WORKING")
             self.assertEqual(codex["note"], "verify_pending")
+
+    def test_wrapper_accepted_task_skips_tail_capture_and_marks_working(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+            with (
+                mock.patch.object(
+                    supervisor.adapter,
+                    "lane_health",
+                    return_value={"alive": True, "pid": 4242, "attachable": True, "pane_id": "%2"},
+                ),
+                mock.patch.object(supervisor.adapter, "capture_tail", return_value="• Working") as capture_tail,
+            ):
+                lanes, _models = supervisor._build_lane_statuses(
+                    wrapper_models={
+                        "Codex": {
+                            "state": "WORKING",
+                            "note": "seq 205",
+                            "accepted_task": {
+                                "job_id": "job-42",
+                                "dispatch_id": "dispatch-42",
+                                "control_seq": 205,
+                                "attempt": 1,
+                            },
+                            "last_event_at": "2026-04-16T12:38:57.552104Z",
+                            "last_heartbeat_at": "2026-04-16T12:38:57.552104Z",
+                        }
+                    },
+                    active_lane="Codex",
+                    active_round={
+                        "job_id": "job-42",
+                        "state": "VERIFY_PENDING",
+                        "status": "VERIFY_PENDING",
+                    },
+                    turn_state={"state": "IDLE"},
+                )
+
+            codex = next(lane for lane in lanes if lane["name"] == "Codex")
+            self.assertEqual(codex["state"], "WORKING")
+            self.assertEqual(codex["note"], "verify_pending")
+            capture_tail.assert_not_called()
+
+    def test_wrapper_done_task_skips_tail_capture_and_marks_ready(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root, implement="Codex", verify="Claude")
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+            with (
+                mock.patch.object(
+                    supervisor.adapter,
+                    "lane_health",
+                    return_value={"alive": True, "pid": 31337, "attachable": True, "pane_id": "%1"},
+                ),
+                mock.patch.object(supervisor.adapter, "capture_tail", return_value="• Working") as capture_tail,
+            ):
+                lanes, _models = supervisor._build_lane_statuses(
+                    wrapper_models={
+                        "Codex": {
+                            "state": "READY",
+                            "note": "",
+                            "done_task": {
+                                "job_id": "ctrl-205",
+                                "dispatch_id": "seq-205",
+                                "control_seq": 205,
+                            },
+                            "last_event_at": "2026-04-21T09:00:00.000000Z",
+                            "last_heartbeat_at": "2026-04-21T09:00:01.000000Z",
+                        }
+                    },
+                    active_lane="",
+                    active_round=None,
+                    turn_state={"state": "IDLE"},
+                    control={"active_control_status": "implement", "active_control_seq": 205},
+                )
+
+            codex = next(lane for lane in lanes if lane["name"] == "Codex")
+            self.assertEqual(codex["state"], "READY")
+            self.assertEqual(codex["note"], "waiting_next_control")
+            capture_tail.assert_not_called()
+
+    def test_lane_statuses_use_pane_text_fallback_without_decisive_wrapper_event(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+            with (
+                mock.patch.object(
+                    supervisor.adapter,
+                    "lane_health",
+                    return_value={"alive": True, "pid": 4242, "attachable": True, "pane_id": "%2"},
+                ),
+                mock.patch.object(
+                    supervisor.adapter,
+                    "capture_tail",
+                    side_effect=lambda lane_name, lines=80: (
+                        "• Working (22s • esc to interrupt)\n"
+                        if lane_name == "Codex"
+                        else ""
+                    ),
+                ) as capture_tail,
+            ):
+                lanes, _models = supervisor._build_lane_statuses(
+                    wrapper_models={
+                        "Codex": {
+                            "state": "READY",
+                            "note": "prompt_visible",
+                            "last_event_at": "2026-04-15T08:33:21.218699Z",
+                            "last_heartbeat_at": "2026-04-15T08:33:27.312433Z",
+                        }
+                    },
+                    active_lane="Codex",
+                    active_round={
+                        "job_id": "job-42",
+                        "state": "VERIFYING",
+                        "status": "VERIFY_RUNNING",
+                    },
+                )
+
+            codex = next(lane for lane in lanes if lane["name"] == "Codex")
+            self.assertEqual(codex["state"], "WORKING")
+            self.assertEqual(codex["note"], "verifying")
+            self.assertIn(mock.call("Codex", lines=80), capture_tail.call_args_list)
+
+    def test_pane_text_fallback_telemetry_is_not_emitted_for_decisive_wrapper_event(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+
+            with (
+                mock.patch.object(
+                    supervisor.adapter,
+                    "lane_health",
+                    side_effect=lambda lane_name: {
+                        "alive": lane_name == "Codex",
+                        "pid": 4242 if lane_name == "Codex" else None,
+                        "attachable": lane_name == "Codex",
+                        "pane_id": "%2" if lane_name == "Codex" else None,
+                    },
+                ),
+                mock.patch.object(supervisor.adapter, "capture_tail", return_value="• Working") as capture_tail,
+            ):
+                supervisor._build_lane_statuses(
+                    wrapper_models={
+                        "Codex": {
+                            "state": "WORKING",
+                            "note": "seq 2099",
+                            "accepted_task": {
+                                "job_id": "job-2099",
+                                "dispatch_id": "dispatch-2099",
+                                "control_seq": 2099,
+                                "attempt": 1,
+                            },
+                        }
+                    },
+                    active_lane="Codex",
+                    active_round={"job_id": "job-2099", "state": "VERIFY_PENDING"},
+                )
+
+            capture_tail.assert_not_called()
+            if supervisor.events_path.exists():
+                events = [
+                    json.loads(line)
+                    for line in supervisor.events_path.read_text(encoding="utf-8").splitlines()
+                    if line.strip()
+                ]
+                self.assertNotIn("pane_text_fallback_used", [event.get("event_type") for event in events])
+
+    def test_pane_text_fallback_telemetry_records_without_raw_tail_text(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+            raw_tail_marker = "SECRET_RAW_PANE_TEXT"
+
+            with (
+                mock.patch.object(
+                    supervisor.adapter,
+                    "lane_health",
+                    side_effect=lambda lane_name: {
+                        "alive": lane_name == "Codex",
+                        "pid": 4242 if lane_name == "Codex" else None,
+                        "attachable": lane_name == "Codex",
+                        "pane_id": "%2" if lane_name == "Codex" else None,
+                    },
+                ),
+                mock.patch.object(
+                    supervisor.adapter,
+                    "capture_tail",
+                    return_value=f"• Working (22s • esc to interrupt) {raw_tail_marker}\n",
+                ),
+            ):
+                supervisor._build_lane_statuses(
+                    wrapper_models={
+                        "Codex": {
+                            "state": "READY",
+                            "note": "prompt_visible",
+                            "last_event_at": "2026-04-15T08:33:21.218699Z",
+                            "last_heartbeat_at": "2026-04-15T08:33:27.312433Z",
+                        }
+                    },
+                    active_lane="Codex",
+                    active_round={"job_id": "job-42", "state": "VERIFYING"},
+                )
+
+            event_text = supervisor.events_path.read_text(encoding="utf-8")
+            self.assertNotIn(raw_tail_marker, event_text)
+            events = [json.loads(line) for line in event_text.splitlines() if line.strip()]
+            fallback_events = [event for event in events if event.get("event_type") == "pane_text_fallback_used"]
+            self.assertEqual(len(fallback_events), 1)
+            payload = fallback_events[0]["payload"]
+            self.assertEqual(payload["lane"], "Codex")
+            self.assertEqual(payload["model_state"], "READY")
+            self.assertEqual(payload["active_lane"], "Codex")
+            self.assertEqual(payload["control_status"], "none")
+            self.assertTrue(payload["tail_captured"])
+            self.assertEqual(payload["surface_reason"], "WORKING")
+            self.assertNotIn("tail_text", payload)
+            self.assertNotIn(raw_tail_marker, json.dumps(payload, ensure_ascii=False))
+
+    def test_pane_text_fallback_telemetry_dedupes_same_lane_key(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+
+            with (
+                mock.patch.object(
+                    supervisor.adapter,
+                    "lane_health",
+                    side_effect=lambda lane_name: {
+                        "alive": lane_name == "Codex",
+                        "pid": 4242 if lane_name == "Codex" else None,
+                        "attachable": lane_name == "Codex",
+                        "pane_id": "%2" if lane_name == "Codex" else None,
+                    },
+                ),
+                mock.patch.object(
+                    supervisor.adapter,
+                    "capture_tail",
+                    return_value="• Working (22s • esc to interrupt)\n",
+                ),
+            ):
+                for _index in range(2):
+                    supervisor._build_lane_statuses(
+                        wrapper_models={
+                            "Codex": {
+                                "state": "READY",
+                                "note": "prompt_visible",
+                                "last_event_at": "2026-04-15T08:33:21.218699Z",
+                                "last_heartbeat_at": "2026-04-15T08:33:27.312433Z",
+                            }
+                        },
+                        active_lane="Codex",
+                        active_round={"job_id": "job-42", "state": "VERIFYING"},
+                    )
+
+            events = [
+                json.loads(line)
+                for line in supervisor.events_path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            fallback_events = [event for event in events if event.get("event_type") == "pane_text_fallback_used"]
+            self.assertEqual(len(fallback_events), 1)
+
+    def test_pane_text_fallback_telemetry_reemits_when_key_changes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+
+            with (
+                mock.patch.object(
+                    supervisor.adapter,
+                    "lane_health",
+                    side_effect=lambda lane_name: {
+                        "alive": lane_name == "Codex",
+                        "pid": 4242 if lane_name == "Codex" else None,
+                        "attachable": lane_name == "Codex",
+                        "pane_id": "%2" if lane_name == "Codex" else None,
+                    },
+                ),
+                mock.patch.object(
+                    supervisor.adapter,
+                    "capture_tail",
+                    return_value="• Working (22s • esc to interrupt)\n",
+                ),
+            ):
+                for model_state in ("READY", "WORKING"):
+                    supervisor._build_lane_statuses(
+                        wrapper_models={
+                            "Codex": {
+                                "state": model_state,
+                                "note": "prompt_visible",
+                                "last_event_at": "2026-04-15T08:33:21.218699Z",
+                                "last_heartbeat_at": "2026-04-15T08:33:27.312433Z",
+                            }
+                        },
+                        active_lane="Codex",
+                        active_round={"job_id": "job-42", "state": "VERIFYING"},
+                    )
+
+            events = [
+                json.loads(line)
+                for line in supervisor.events_path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            fallback_events = [event for event in events if event.get("event_type") == "pane_text_fallback_used"]
+            self.assertEqual([event["payload"]["model_state"] for event in fallback_events], ["READY", "WORKING"])
 
     def test_dispatch_stall_active_round_surfaces_machine_note_on_codex_lane(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -4073,6 +5102,217 @@ class RuntimeSupervisorTest(unittest.TestCase):
             self.assertEqual(codex_hint["job_id"], "")
             self.assertEqual(codex_hint["control_seq"], -1)
 
+    def test_write_status_ignores_missing_operator_control_from_stale_turn_state(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            pipeline_dir = root / ".pipeline"
+            state_dir = pipeline_dir / "state"
+            state_dir.mkdir(parents=True, exist_ok=True)
+            (state_dir / "turn_state.json").write_text(
+                json.dumps(
+                    {
+                        "state": "OPERATOR_WAIT",
+                        "legacy_state": "OPERATOR_WAIT",
+                        "entered_at": 1.0,
+                        "reason": "operator_request_updated",
+                        "active_control_file": "operator_request.md",
+                        "active_control_seq": 2031,
+                        "active_role": "operator",
+                        "active_lane": "",
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+            supervisor._runtime_started = True
+
+            with (
+                mock.patch.object(supervisor, "_watcher_status", return_value={"alive": True, "pid": 4242}),
+                mock.patch.object(supervisor.adapter, "session_exists", return_value=True),
+                mock.patch.object(
+                    supervisor,
+                    "_build_lane_statuses",
+                    return_value=(
+                        [
+                            {"name": "Claude", "state": "READY", "attachable": True, "pid": 11},
+                            {"name": "Codex", "state": "READY", "attachable": True, "pid": 12},
+                            {"name": "Gemini", "state": "READY", "attachable": True, "pid": 13},
+                        ],
+                        {"Claude": {}, "Codex": {}, "Gemini": {}},
+                    ),
+                ),
+                mock.patch("pipeline_runtime.supervisor.build_lane_read_models", return_value={}),
+                mock.patch.object(supervisor, "_build_artifacts", return_value={"latest_work": {}, "latest_verify": {}}),
+            ):
+                status = supervisor._write_status()
+
+            self.assertEqual(status["control"]["active_control_file"], "")
+            self.assertEqual(status["control"]["active_control_status"], "none")
+            self.assertEqual(status["control"]["active_control_seq"], -1)
+            self.assertIsNone(status["compat"]["control_slots"]["active"])
+            self.assertEqual(status["compat"]["control_slots"]["stale"], [])
+            self.assertEqual(status["turn_state"]["state"], "IDLE")
+            self.assertEqual(status["turn_state"]["active_control_file"], "")
+            self.assertEqual(status["turn_state"]["active_control_seq"], -1)
+            self.assertEqual(status["progress"], {})
+            self.assertNotIn("progress_phase", status["lanes"][0])
+
+    def test_write_status_ignores_stale_operator_turn_state_when_non_operator_control_is_active(self) -> None:
+        cases = (
+            ("implement_handoff.md", "STATUS: implement\nCONTROL_SEQ: 2033\n", "implement"),
+            ("advisory_request.md", "STATUS: request_open\nCONTROL_SEQ: 2033\n", "request_open"),
+            ("advisory_advice.md", "STATUS: advice_ready\nCONTROL_SEQ: 2033\n", "advice_ready"),
+        )
+        for control_file, control_body, expected_status in cases:
+            with self.subTest(control_file=control_file), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                _write_active_profile(root)
+                pipeline_dir = root / ".pipeline"
+                state_dir = pipeline_dir / "state"
+                state_dir.mkdir(parents=True, exist_ok=True)
+                (pipeline_dir / control_file).write_text(control_body, encoding="utf-8")
+                (state_dir / "turn_state.json").write_text(
+                    json.dumps(
+                        {
+                            "state": "OPERATOR_WAIT",
+                            "legacy_state": "OPERATOR_WAIT",
+                            "entered_at": 1.0,
+                            "reason": "operator_request_updated",
+                            "active_control_file": "operator_request.md",
+                            "active_control_seq": 2031,
+                            "active_role": "operator",
+                            "active_lane": "",
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+
+                supervisor = RuntimeSupervisor(root, start_runtime=False)
+                supervisor._runtime_started = True
+
+                with (
+                    mock.patch.object(supervisor, "_watcher_status", return_value={"alive": True, "pid": 4242}),
+                    mock.patch.object(supervisor.adapter, "session_exists", return_value=True),
+                    mock.patch.object(
+                        supervisor,
+                        "_build_lane_statuses",
+                        return_value=(
+                            [
+                                {"name": "Claude", "state": "READY", "attachable": True, "pid": 11},
+                                {"name": "Codex", "state": "READY", "attachable": True, "pid": 12},
+                                {"name": "Gemini", "state": "READY", "attachable": True, "pid": 13},
+                            ],
+                            {"Claude": {}, "Codex": {}, "Gemini": {}},
+                        ),
+                    ),
+                    mock.patch("pipeline_runtime.supervisor.build_lane_read_models", return_value={}),
+                    mock.patch.object(
+                        supervisor,
+                        "_build_artifacts",
+                        return_value={"latest_work": {}, "latest_verify": {}},
+                    ),
+                ):
+                    status = supervisor._write_status()
+
+                self.assertEqual(status["control"]["active_control_file"], f".pipeline/{control_file}")
+                self.assertEqual(status["control"]["active_control_status"], expected_status)
+                self.assertEqual(status["control"]["active_control_seq"], 2033)
+                self.assertEqual(status["compat"]["control_slots"]["active"]["file"], control_file)
+                self.assertEqual(status["compat"]["control_slots"]["active"]["status"], expected_status)
+                self.assertEqual(status["turn_state"]["state"], "IDLE")
+                self.assertEqual(status["turn_state"]["reason"], "stale_operator_turn_state_cleared")
+                self.assertNotEqual(status.get("progress", {}).get("phase"), "operator_boundary")
+                for lane in status["lanes"]:
+                    self.assertNotEqual(lane.get("progress_phase"), "operator_boundary")
+
+    def test_write_status_keeps_active_verify_round_when_stale_operator_turn_state_is_cleared(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(
+                root,
+                selected_agents=["Codex"],
+                implement="Codex",
+                verify="Codex",
+                advisory="",
+                advisory_enabled=False,
+                self_verify_allowed=True,
+            )
+            pipeline_dir = root / ".pipeline"
+            state_dir = pipeline_dir / "state"
+            state_dir.mkdir(parents=True, exist_ok=True)
+            (pipeline_dir / "implement_handoff.md").write_text(
+                "STATUS: implement\nCONTROL_SEQ: 2034\n",
+                encoding="utf-8",
+            )
+            (state_dir / "turn_state.json").write_text(
+                json.dumps(
+                    {
+                        "state": "OPERATOR_WAIT",
+                        "legacy_state": "OPERATOR_WAIT",
+                        "entered_at": 1.0,
+                        "reason": "operator_request_updated",
+                        "active_control_file": ".pipeline/operator_request.md",
+                        "active_control_seq": 2031,
+                        "active_role": "operator",
+                        "active_lane": "",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (state_dir / "job-active-verify-pending.json").write_text(
+                json.dumps(
+                    {
+                        "job_id": "job-active-verify-pending",
+                        "status": "VERIFY_PENDING",
+                        "artifact_path": "work/5/20/active.md",
+                        "artifact_hash": "active-hash",
+                        "round": 1,
+                        "dispatch_control_seq": 2034,
+                        "updated_at": 200.0,
+                        "last_activity_at": 200.0,
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+            supervisor._runtime_started = True
+
+            with (
+                mock.patch.object(supervisor, "_watcher_status", return_value={"alive": True, "pid": 4242}),
+                mock.patch.object(supervisor.adapter, "session_exists", return_value=True),
+                mock.patch.object(
+                    supervisor,
+                    "_build_lane_statuses",
+                    return_value=(
+                        [{"name": "Codex", "state": "READY", "attachable": True, "pid": 12, "note": "prompt_visible"}],
+                        {"Codex": {}},
+                    ),
+                ),
+                mock.patch("pipeline_runtime.supervisor.build_lane_read_models", return_value={}),
+                mock.patch.object(
+                    supervisor,
+                    "_build_artifacts",
+                    return_value={"latest_work": {}, "latest_verify": {}},
+                ),
+            ):
+                status = supervisor._write_status()
+
+            self.assertEqual(status["runtime_state"], "RUNNING")
+            self.assertEqual(status["control"]["active_control_status"], "implement")
+            self.assertEqual(status["control"]["active_control_seq"], 2034)
+            self.assertEqual(status["turn_state"]["state"], "IDLE")
+            self.assertEqual(status["turn_state"]["reason"], "stale_operator_turn_state_cleared")
+            self.assertEqual(status["active_round"]["job_id"], "job-active-verify-pending")
+            self.assertEqual(status["active_round"]["state"], "VERIFY_PENDING")
+            self.assertEqual(status["automation_health"], "recovering")
+            self.assertEqual(status["automation_next_action"], "retrying")
+            self.assertNotEqual(status.get("progress", {}).get("phase"), "operator_boundary")
+            for lane in status["lanes"]:
+                self.assertNotEqual(lane.get("progress_phase"), "operator_boundary")
+
     def test_write_status_clears_verify_task_hint_when_runtime_is_stopped(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -4369,6 +5609,58 @@ class RuntimeSupervisorTest(unittest.TestCase):
             self.assertEqual(status["automation_next_action"], "advisory_followup")
             self.assertEqual(len(gated_events), 1)
             self.assertEqual(gated_events[0]["payload"]["reason"], "slice_ambiguity")
+
+    def test_write_status_advisory_disabled_operator_candidate_routes_to_verify_followup(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(
+                root,
+                selected_agents=["Codex"],
+                implement="Codex",
+                verify="Codex",
+                advisory="",
+                advisory_enabled=False,
+                self_verify_allowed=True,
+            )
+            pipeline_dir = root / ".pipeline"
+            state_dir = pipeline_dir / "state"
+            state_dir.mkdir(parents=True, exist_ok=True)
+            (pipeline_dir / "operator_request.md").write_text(
+                "STATUS: needs_operator\n"
+                "CONTROL_SEQ: 291\n"
+                "REASON_CODE: next_direction_after_launcher_close\n"
+                "OPERATOR_POLICY: direction_selection_after_feature_complete\n"
+                "DECISION_CLASS: milestone_direction\n"
+                "DECISION_REQUIRED: confirm next priority — runtime hardening or docs reconciliation\n",
+                encoding="utf-8",
+            )
+
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+            supervisor._runtime_started = True
+
+            with (
+                mock.patch.object(supervisor, "_watcher_status", return_value={"alive": True, "pid": 4242}),
+                mock.patch.object(supervisor.adapter, "session_exists", return_value=True),
+                mock.patch.object(
+                    supervisor,
+                    "_build_lane_statuses",
+                    return_value=(
+                        [{"name": "Codex", "state": "READY", "attachable": True, "pid": 12, "note": ""}],
+                        {"Codex": {}},
+                    ),
+                ),
+                mock.patch("pipeline_runtime.supervisor.build_lane_read_models", return_value={}),
+                mock.patch.object(supervisor, "_build_artifacts", return_value={"latest_work": {}, "latest_verify": {}}),
+                mock.patch.object(supervisor._pr_merge_status_cache, "control_resolution", return_value=PrMergeGateResolution()),
+            ):
+                status = supervisor._write_status()
+
+            self.assertFalse(status["runtime_controls"]["advisory_enabled"])
+            self.assertEqual(status["control"]["active_control_status"], "none")
+            self.assertEqual(status["autonomy"]["mode"], "triage")
+            self.assertEqual(status["automation_health"], "attention")
+            self.assertEqual(status["automation_reason_code"], "slice_ambiguity")
+            self.assertEqual(status["automation_next_action"], "verify_followup")
 
     def test_write_status_routes_pr_creation_gate_to_verify_followup(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -5638,6 +6930,75 @@ class RuntimeSupervisorTest(unittest.TestCase):
             self.assertEqual(marker["control_seq"], 155)
             self.assertEqual(marker["reason"], "handoff_already_completed")
 
+    def test_control_handoff_sha_uses_mtime_cache(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            control_path = root / ".pipeline" / "implement_handoff.md"
+            control_path.parent.mkdir(parents=True, exist_ok=True)
+            control_path.write_text("STATUS: implement\nCONTROL_SEQ: 155\n", encoding="utf-8")
+            control = {
+                "active_control_file": ".pipeline/implement_handoff.md",
+                "active_control_status": "implement",
+            }
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+            read_calls: list[str] = []
+            original_read_bytes = Path.read_bytes
+
+            def tracking_read_bytes(self_path: Path) -> bytes:
+                read_calls.append(str(self_path))
+                return original_read_bytes(self_path)
+
+            with mock.patch.object(Path, "read_bytes", tracking_read_bytes):
+                sha1 = supervisor._control_handoff_sha(control)
+                sha2 = supervisor._control_handoff_sha(control)
+
+            self.assertEqual(sha1, sha2)
+            matching = [path for path in read_calls if path == str(control_path)]
+            self.assertEqual(
+                len(matching),
+                1,
+                "read_bytes should be called only once for the same control mtime",
+            )
+
+    def test_duplicate_control_marker_caches_result_for_same_key(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            pipeline_dir = root / ".pipeline"
+            logs_dir = pipeline_dir / "logs" / "experimental"
+            logs_dir.mkdir(parents=True, exist_ok=True)
+            handoff_path = pipeline_dir / "implement_handoff.md"
+            handoff_path.write_text(
+                "STATUS: implement\nCONTROL_SEQ: 155\n",
+                encoding="utf-8",
+            )
+            (logs_dir / "raw.jsonl").write_text("", encoding="utf-8")
+            control = {
+                "active_control_status": "implement",
+                "active_control_file": ".pipeline/implement_handoff.md",
+                "active_control_seq": 155,
+                "active_control_updated_at": "2026-05-21T00:00:00Z",
+            }
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+            read_calls: list[str] = []
+            original_read_text = Path.read_text
+
+            def tracking_read_text(self_path: Path, *args: object, **kwargs: object) -> str:
+                if self_path.name == "raw.jsonl":
+                    read_calls.append(str(self_path))
+                return original_read_text(self_path, *args, **kwargs)
+
+            with mock.patch.object(Path, "read_text", tracking_read_text):
+                self.assertIsNone(supervisor._duplicate_control_marker(control))
+                self.assertIsNone(supervisor._duplicate_control_marker(control))
+
+            self.assertEqual(
+                len(read_calls),
+                1,
+                "raw.jsonl should be read only once for the same duplicate-control key",
+            )
+
     def test_duplicate_control_marker_accepts_verified_handoff_truth_without_raw_log(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -5923,6 +7284,172 @@ class RuntimeSupervisorTest(unittest.TestCase):
             )
             experimental_pid = root / ".pipeline" / "experimental.pid"
             self.assertTrue(experimental_pid.exists())
+
+    def test_launch_runtime_runs_cleanup_before_surface_prep_and_spawn(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+            order: list[str] = []
+
+            with (
+                mock.patch.object(supervisor.adapter, "kill_session", return_value=True),
+                mock.patch.object(supervisor, "_terminate_pid_file"),
+                mock.patch.object(supervisor, "_stop_token_collector"),
+                mock.patch.object(supervisor, "_terminate_repo_watchers"),
+                mock.patch.object(supervisor, "_cleanup_old_runs", side_effect=lambda: order.append("cleanup")),
+                mock.patch.object(supervisor, "_prepare_runtime_surfaces", side_effect=lambda: order.append("prepare")),
+                mock.patch.object(supervisor, "_clear_runtime_sidecars", side_effect=lambda: order.append("clear")),
+                mock.patch.object(supervisor, "_spawn_runtime_session", side_effect=lambda: order.append("spawn")),
+            ):
+                supervisor._launch_runtime()
+
+            self.assertEqual(order, ["cleanup", "prepare", "clear", "spawn"])
+
+    def test_cleanup_old_runs_keeps_current_and_recent_and_records_event(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            self_run_id = "20260521T235959Z-p999"
+            current_run_id = "20260521T000000Z-p0"
+            supervisor = RuntimeSupervisor(root, run_id=self_run_id, start_runtime=False)
+            runs_dir = root / ".pipeline" / "runs"
+            run_ids = [f"20260521T{i:06d}Z-p{i}" for i in range(12)]
+            for run_id in [*run_ids, self_run_id]:
+                run_dir = runs_dir / run_id
+                run_dir.mkdir(parents=True, exist_ok=True)
+                (run_dir / "status.json").write_text("{}", encoding="utf-8")
+            (runs_dir / "not-a-run-file").write_text("keep file", encoding="utf-8")
+            supervisor.current_run_path.parent.mkdir(parents=True, exist_ok=True)
+            supervisor.current_run_path.write_text(
+                json.dumps({"run_id": current_run_id}),
+                encoding="utf-8",
+            )
+
+            with mock.patch.dict(
+                os.environ,
+                {
+                    "PIPELINE_RUNTIME_KEEP_RECENT_RUNS": "3",
+                    "PIPELINE_RUNTIME_DISABLE_RUNS_CLEANUP": "",
+                },
+                clear=False,
+            ):
+                supervisor._cleanup_old_runs()
+
+            kept = {self_run_id, current_run_id, "20260521T000011Z-p11", "20260521T000010Z-p10"}
+            for run_id in kept:
+                self.assertTrue((runs_dir / run_id).exists(), run_id)
+            for run_id in set(run_ids) - kept:
+                self.assertFalse((runs_dir / run_id).exists(), run_id)
+            self.assertTrue((runs_dir / "not-a-run-file").exists())
+
+            events = [
+                json.loads(line)
+                for line in supervisor.events_path.read_text(encoding="utf-8").splitlines()
+            ]
+            cleanup_events = [event for event in events if event.get("event_type") == "runs_cleanup"]
+            self.assertEqual(len(cleanup_events), 1)
+            payload = cleanup_events[0]["payload"]
+            self.assertEqual(payload["deleted_count"], 9)
+            self.assertEqual(payload["keep_recent"], 3)
+            self.assertEqual(len(payload["deleted_run_ids"]), 9)
+            self.assertNotIn(current_run_id, payload["deleted_run_ids"])
+            self.assertNotIn(self_run_id, payload["deleted_run_ids"])
+
+    def test_cleanup_old_runs_disable_env_skips_deletion_and_event(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            supervisor = RuntimeSupervisor(root, run_id="20260521T235959Z-p999", start_runtime=False)
+            runs_dir = root / ".pipeline" / "runs"
+            run_ids = [f"20260521T{i:06d}Z-p{i}" for i in range(5)]
+            for run_id in run_ids:
+                (runs_dir / run_id).mkdir(parents=True, exist_ok=True)
+
+            with mock.patch.dict(
+                os.environ,
+                {
+                    "PIPELINE_RUNTIME_KEEP_RECENT_RUNS": "1",
+                    "PIPELINE_RUNTIME_DISABLE_RUNS_CLEANUP": "1",
+                },
+                clear=False,
+            ):
+                supervisor._cleanup_old_runs()
+
+            for run_id in run_ids:
+                self.assertTrue((runs_dir / run_id).exists(), run_id)
+            self.assertFalse(supervisor.events_path.exists())
+
+    def test_cleanup_old_runs_does_not_emit_event_when_nothing_deleted(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            supervisor = RuntimeSupervisor(root, run_id="20260521T235959Z-p999", start_runtime=False)
+            runs_dir = root / ".pipeline" / "runs"
+            for run_id in [
+                "20260521T000000Z-p0",
+                "20260521T000100Z-p1",
+                supervisor.run_id,
+            ]:
+                (runs_dir / run_id).mkdir(parents=True, exist_ok=True)
+
+            with mock.patch.dict(
+                os.environ,
+                {
+                    "PIPELINE_RUNTIME_KEEP_RECENT_RUNS": "10",
+                    "PIPELINE_RUNTIME_DISABLE_RUNS_CLEANUP": "",
+                },
+                clear=False,
+            ):
+                supervisor._cleanup_old_runs()
+
+            self.assertFalse(supervisor.events_path.exists())
+
+    def test_cleanup_old_runs_ignores_rmtree_failure_and_continues(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            supervisor = RuntimeSupervisor(root, run_id="20260521T235959Z-p999", start_runtime=False)
+            runs_dir = root / ".pipeline" / "runs"
+            failed_run_id = "20260521T000020Z-p2"
+            for run_id in [
+                "20260521T000000Z-p0",
+                "20260521T000010Z-p1",
+                failed_run_id,
+                supervisor.run_id,
+            ]:
+                (runs_dir / run_id).mkdir(parents=True, exist_ok=True)
+            original_rmtree = shutil.rmtree
+
+            def flaky_rmtree(path: Path) -> None:
+                if Path(path).name == failed_run_id:
+                    raise OSError("simulated delete failure")
+                original_rmtree(path)
+
+            with (
+                mock.patch.dict(
+                    os.environ,
+                    {
+                        "PIPELINE_RUNTIME_KEEP_RECENT_RUNS": "1",
+                        "PIPELINE_RUNTIME_DISABLE_RUNS_CLEANUP": "",
+                    },
+                    clear=False,
+                ),
+                mock.patch("pipeline_runtime.supervisor.shutil.rmtree", side_effect=flaky_rmtree),
+            ):
+                supervisor._cleanup_old_runs()
+
+            self.assertTrue((runs_dir / supervisor.run_id).exists())
+            self.assertTrue((runs_dir / failed_run_id).exists())
+            self.assertFalse((runs_dir / "20260521T000000Z-p0").exists())
+            self.assertFalse((runs_dir / "20260521T000010Z-p1").exists())
+            events = [
+                json.loads(line)
+                for line in supervisor.events_path.read_text(encoding="utf-8").splitlines()
+            ]
+            payload = [event for event in events if event.get("event_type") == "runs_cleanup"][0]["payload"]
+            self.assertEqual(payload["deleted_count"], 2)
+            self.assertNotIn(failed_run_id, payload["deleted_run_ids"])
 
     def test_runtime_stays_starting_until_all_enabled_lanes_are_ready(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -6406,6 +7933,34 @@ class RuntimeSupervisorTest(unittest.TestCase):
             self.assertEqual(reason, "claude_interrupted_post_accept")
             restart_lane.assert_not_called()
 
+    def test_maybe_recover_lane_blocks_verify_and_advisory_restart_post_accept(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+
+            for lane_name, active_round in (
+                ("Codex", {"job_id": "job-verify", "state": "VERIFYING"}),
+                ("Gemini", {"job_id": "job-advisory", "state": "ADVISORY_RUNNING"}),
+            ):
+                with self.subTest(lane=lane_name):
+                    lane = {"name": lane_name, "state": "BROKEN"}
+                    lane_model = {
+                        "accepted_task": {
+                            "job_id": active_round["job_id"],
+                            "dispatch_id": f"dispatch-{lane_name.lower()}",
+                        },
+                        "state": "BROKEN",
+                    }
+                    with mock.patch.object(supervisor.adapter, "restart_lane") as restart_lane:
+                        reason = supervisor._maybe_recover_lane(
+                            lane,
+                            lane_model=lane_model,
+                            active_round=active_round,
+                        )
+                    self.assertEqual(reason, f"{lane_name.lower()}_interrupted_post_accept")
+                    restart_lane.assert_not_called()
+
     def test_pre_accept_wrapper_exit_note_consumes_retry_budget_and_restarts(self) -> None:
         """Wrapper-surfaced pre-accept breakage (``exit:<code>``, ``pane_dead``,
         ``heartbeat_timeout``) must fall through to the bounded restart path and
@@ -6558,6 +8113,37 @@ class RuntimeSupervisorTest(unittest.TestCase):
                 active_round={"job_id": "job-9", "state": "VERIFY_PENDING"},
             )
             self.assertEqual(reason, "codex_broken")
+
+    def test_spawn_runtime_session_kills_session_on_lane_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+            supervisor.runtime_lane_configs = [
+                {"name": "Claude", "enabled": True},
+                {"name": "Codex", "enabled": True},
+            ]
+            spawned: list[str] = []
+
+            def fake_spawn_lane(lane_name: str, command: str) -> bool:
+                spawned.append(lane_name)
+                return lane_name == "Claude"
+
+            with (
+                mock.patch.object(supervisor.adapter, "create_scaffold") as create_scaffold,
+                mock.patch.object(supervisor.adapter, "spawn_lane", side_effect=fake_spawn_lane),
+                mock.patch.object(supervisor.adapter, "kill_session", return_value=True) as kill_session,
+                mock.patch.object(supervisor, "_spawn_experimental_watcher") as spawn_watcher,
+                mock.patch.object(supervisor, "_start_token_collector") as start_collector,
+            ):
+                with self.assertRaises(RuntimeError):
+                    supervisor._spawn_runtime_session()
+
+            create_scaffold.assert_called_once()
+            self.assertEqual(spawned, ["Claude", "Codex"])
+            kill_session.assert_called_once()
+            spawn_watcher.assert_not_called()
+            start_collector.assert_not_called()
 
     def test_lane_vendor_command_prefers_env_override_template(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -6734,6 +8320,355 @@ class RuntimeSupervisorTest(unittest.TestCase):
             self.assertEqual(completed["payload"]["reason"], "watcher_source_updated")
             self.assertEqual(completed["payload"]["new_pid"], 9999)
 
+    def test_automation_health_source_change_marks_watcher_restart_source(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            pipeline_dir = root / ".pipeline"
+            pid_path = pipeline_dir / "experimental.pid"
+            pid_path.write_text(str(os.getpid()), encoding="utf-8")
+            os.utime(pid_path, (1.0, 1.0))
+            helper_path = root / "pipeline_runtime" / "automation_health.py"
+            helper_path.parent.mkdir(parents=True, exist_ok=True)
+            helper_path.write_text("# automation health helper\n", encoding="utf-8")
+            os.utime(helper_path, (10.0, 10.0))
+            watcher_core_path = root / "watcher_core.py"
+            watcher_core_path.write_text("# watcher core\n", encoding="utf-8")
+            os.utime(watcher_core_path, (2.0, 2.0))
+
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+            supervisor._runtime_started = True
+
+            with mock.patch(
+                "pipeline_runtime.supervisor.resolve_project_runtime_file",
+                side_effect=lambda _project, name: root / name,
+            ):
+                marker = supervisor._watcher_source_restart_marker()
+
+            self.assertIsNotNone(marker)
+            assert marker is not None
+            self.assertEqual(Path(str(marker["source_path"])), helper_path)
+            self.assertEqual(marker["reason"], "watcher_source_updated")
+
+    def test_supervisor_source_change_marks_watcher_restart_source(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            pipeline_dir = root / ".pipeline"
+            pid_path = pipeline_dir / "experimental.pid"
+            pid_path.write_text(str(os.getpid()), encoding="utf-8")
+            os.utime(pid_path, (1.0, 1.0))
+            supervisor_path = root / "pipeline_runtime" / "supervisor.py"
+            supervisor_path.parent.mkdir(parents=True, exist_ok=True)
+            supervisor_path.write_text("# supervisor runtime helper\n", encoding="utf-8")
+            os.utime(supervisor_path, (10.0, 10.0))
+            watcher_core_path = root / "watcher_core.py"
+            watcher_core_path.write_text("# watcher core\n", encoding="utf-8")
+            os.utime(watcher_core_path, (2.0, 2.0))
+
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+            supervisor._runtime_started = True
+
+            with mock.patch(
+                "pipeline_runtime.supervisor.resolve_project_runtime_file",
+                side_effect=lambda _project, name: root / name,
+            ):
+                marker = supervisor._watcher_source_restart_marker()
+
+            self.assertIsNotNone(marker)
+            assert marker is not None
+            self.assertEqual(Path(str(marker["source_path"])), supervisor_path)
+            self.assertEqual(marker["reason"], "watcher_source_updated")
+
+    def test_source_reload_self_verify_task_hint_identity_survives_watcher_restart(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(
+                root,
+                selected_agents=["Codex"],
+                implement="Codex",
+                verify="Codex",
+                advisory="",
+                advisory_enabled=False,
+                self_verify_allowed=True,
+            )
+            pipeline_dir = root / ".pipeline"
+            state_dir = pipeline_dir / "state"
+            state_dir.mkdir(parents=True, exist_ok=True)
+            run_id = "20260418T010203Z-p555"
+            run_dir = pipeline_dir / "runs" / run_id
+            run_dir.mkdir(parents=True, exist_ok=True)
+            current_pid = os.getpid()
+            current_fingerprint = _read_proc_starttime_fingerprint(current_pid)
+            pid_path = pipeline_dir / "experimental.pid"
+            pid_path.write_text(str(current_pid), encoding="utf-8")
+            os.utime(pid_path, (1.0, 1.0))
+            (pipeline_dir / "current_run.json").write_text(
+                json.dumps(
+                    {
+                        "run_id": run_id,
+                        "status_path": f".pipeline/runs/{run_id}/status.json",
+                        "events_path": f".pipeline/runs/{run_id}/events.jsonl",
+                        "watcher_pid": current_pid,
+                        "watcher_fingerprint": current_fingerprint,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (pipeline_dir / "implement_handoff.md").write_text(
+                "STATUS: implement\n"
+                "CONTROL_SEQ: 1983\n"
+                "REASON_CODE: task_hint_source_reload_replay_guard\n",
+                encoding="utf-8",
+            )
+            (state_dir / "turn_state.json").write_text(
+                json.dumps(
+                    {
+                        "state": "CODEX_VERIFY",
+                        "entered_at": 1.0,
+                        "active_control_file": ".pipeline/implement_handoff.md",
+                        "active_control_seq": 1983,
+                        "active_role": "verify",
+                        "active_lane": "Codex",
+                        "verify_job_id": "job-self-verify-reload",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (state_dir / "job-self-verify-reload.json").write_text(
+                json.dumps(
+                    {
+                        "job_id": "job-self-verify-reload",
+                        "run_id": run_id,
+                        "status": "VERIFY_RUNNING",
+                        "artifact_path": "work/5/19/reload.md",
+                        "artifact_hash": "reload-hash",
+                        "round": 1,
+                        "updated_at": 200.0,
+                        "last_activity_at": 200.0,
+                        "dispatch_id": "verify-dispatch-reload",
+                        "dispatch_control_seq": 1983,
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+            self.assertEqual(supervisor.run_id, run_id)
+            supervisor._runtime_started = True
+
+            def spawn_watcher() -> dict[str, object]:
+                pid_path.write_text(str(current_pid), encoding="utf-8")
+                return {"pid": current_pid, "pane_id": "%99", "window_name": "watcher-exp"}
+
+            with (
+                mock.patch.object(supervisor, "_terminate_pid_file") as terminate_pid,
+                mock.patch.object(
+                    supervisor,
+                    "_spawn_experimental_watcher",
+                    side_effect=spawn_watcher,
+                ) as spawn,
+            ):
+                self.assertTrue(supervisor._maybe_restart_watcher_for_source_change())
+
+            terminate_pid.assert_called_once_with(pid_path)
+            spawn.assert_called_once()
+
+            with (
+                mock.patch.object(supervisor.adapter, "session_exists", return_value=True),
+                mock.patch.object(
+                    supervisor,
+                    "_build_lane_statuses",
+                    return_value=(
+                        [{"name": "Codex", "state": "READY", "attachable": True, "pid": 12, "note": ""}],
+                        {"Codex": {}},
+                    ),
+                ),
+                mock.patch("pipeline_runtime.supervisor.build_lane_read_models", return_value={}),
+                mock.patch.object(
+                    supervisor,
+                    "_build_artifacts",
+                    return_value={"latest_work": {}, "latest_verify": {}},
+                ),
+            ):
+                status = supervisor._write_status()
+
+            codex_hint = json.loads(supervisor._task_hint_path("Codex").read_text(encoding="utf-8"))
+            self.assertEqual(status["runtime_state"], "RUNNING")
+            self.assertEqual(status["control"]["active_control_status"], "implement")
+            self.assertEqual(status["control"]["active_control_seq"], 1983)
+            self.assertIsNotNone(status["active_round"])
+            self.assertEqual(status["active_round"]["state"], "VERIFYING")
+            self.assertEqual(status["active_round"]["job_id"], "job-self-verify-reload")
+            self.assertTrue(codex_hint["active"])
+            self.assertEqual(codex_hint["control_seq"], 1983)
+            self.assertEqual(codex_hint["job_id"], "job-self-verify-reload")
+            self.assertEqual(codex_hint["dispatch_id"], "verify-dispatch-reload")
+            self.assertNotEqual(codex_hint["job_id"], "ctrl-1983")
+            self.assertNotEqual(codex_hint["dispatch_id"], "seq-1983")
+
+            events = [
+                json.loads(line)
+                for line in supervisor.events_path.read_text(encoding="utf-8").splitlines()
+            ]
+            event_types = [event.get("event_type") for event in events]
+            self.assertIn("watcher_self_restart_started", event_types)
+            self.assertIn("watcher_self_restart_completed", event_types)
+
+    def test_source_reload_implement_task_hint_ignores_closed_verify_round_after_watcher_restart(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(
+                root,
+                selected_agents=["Codex"],
+                implement="Codex",
+                verify="Codex",
+                advisory="",
+                advisory_enabled=False,
+                self_verify_allowed=True,
+            )
+            pipeline_dir = root / ".pipeline"
+            state_dir = pipeline_dir / "state"
+            state_dir.mkdir(parents=True, exist_ok=True)
+            run_id = "20260418T010203Z-p556"
+            run_dir = pipeline_dir / "runs" / run_id
+            receipts_dir = run_dir / "receipts"
+            receipts_dir.mkdir(parents=True, exist_ok=True)
+            current_pid = os.getpid()
+            current_fingerprint = _read_proc_starttime_fingerprint(current_pid)
+            pid_path = pipeline_dir / "experimental.pid"
+            pid_path.write_text(str(current_pid), encoding="utf-8")
+            os.utime(pid_path, (1.0, 1.0))
+            (pipeline_dir / "current_run.json").write_text(
+                json.dumps(
+                    {
+                        "run_id": run_id,
+                        "status_path": f".pipeline/runs/{run_id}/status.json",
+                        "events_path": f".pipeline/runs/{run_id}/events.jsonl",
+                        "watcher_pid": current_pid,
+                        "watcher_fingerprint": current_fingerprint,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (pipeline_dir / "implement_handoff.md").write_text(
+                "STATUS: implement\n"
+                "CONTROL_SEQ: 1984\n"
+                "REASON_CODE: task_hint_source_reload_closed_round_replay_guard\n",
+                encoding="utf-8",
+            )
+            (state_dir / "turn_state.json").write_text(
+                json.dumps(
+                    {
+                        "state": "IMPLEMENT_ACTIVE",
+                        "entered_at": 1.0,
+                        "active_control_file": ".pipeline/implement_handoff.md",
+                        "active_control_seq": 1984,
+                        "active_role": "implement",
+                        "active_lane": "Codex",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (state_dir / "job-stale-closed-verify.json").write_text(
+                json.dumps(
+                    {
+                        "job_id": "job-stale-closed-verify",
+                        "run_id": run_id,
+                        "status": "VERIFY_DONE",
+                        "artifact_path": "work/5/19/closed.md",
+                        "artifact_hash": "closed-hash",
+                        "round": 1,
+                        "updated_at": 200.0,
+                        "last_activity_at": 200.0,
+                        "verify_completed_at": 190.0,
+                        "dispatch_id": "stale-verify-dispatch",
+                        "dispatch_control_seq": 1983,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (receipts_dir / "job-stale-closed-verify-r1.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "receipt_id": "job-stale-closed-verify-r1",
+                        "run_id": run_id,
+                        "job_id": "job-stale-closed-verify",
+                        "round": 1,
+                        "target_lane": "codex",
+                        "artifact_path": str(root / "verify" / "5" / "19" / "closed.md"),
+                        "artifact_hash": "sha256:closed",
+                        "verify_result": "passed_by_feedback",
+                        "control_seq": 1983,
+                        "closed_at": "2026-05-19T15:00:00Z",
+                        "emitted_by": "supervisor",
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+            self.assertEqual(supervisor.run_id, run_id)
+            supervisor._runtime_started = True
+
+            def spawn_watcher() -> dict[str, object]:
+                pid_path.write_text(str(current_pid), encoding="utf-8")
+                return {"pid": current_pid, "pane_id": "%99", "window_name": "watcher-exp"}
+
+            with (
+                mock.patch.object(supervisor, "_terminate_pid_file") as terminate_pid,
+                mock.patch.object(
+                    supervisor,
+                    "_spawn_experimental_watcher",
+                    side_effect=spawn_watcher,
+                ) as spawn,
+            ):
+                self.assertTrue(supervisor._maybe_restart_watcher_for_source_change())
+
+            terminate_pid.assert_called_once_with(pid_path)
+            spawn.assert_called_once()
+
+            with (
+                mock.patch.object(supervisor.adapter, "session_exists", return_value=True),
+                mock.patch.object(
+                    supervisor,
+                    "_build_lane_statuses",
+                    return_value=(
+                        [{"name": "Codex", "state": "READY", "attachable": True, "pid": 12, "note": ""}],
+                        {"Codex": {}},
+                    ),
+                ),
+                mock.patch("pipeline_runtime.supervisor.build_lane_read_models", return_value={}),
+                mock.patch.object(
+                    supervisor,
+                    "_build_artifacts",
+                    return_value={"latest_work": {}, "latest_verify": {}},
+                ),
+            ):
+                status = supervisor._write_status()
+
+            codex_hint = json.loads(supervisor._task_hint_path("Codex").read_text(encoding="utf-8"))
+            self.assertEqual(status["runtime_state"], "RUNNING")
+            self.assertEqual(status["control"]["active_control_status"], "implement")
+            self.assertEqual(status["control"]["active_control_seq"], 1984)
+            self.assertEqual(status["active_round"]["state"], "CLOSED")
+            self.assertEqual(status["active_round"]["job_id"], "job-stale-closed-verify")
+            self.assertTrue(codex_hint["active"])
+            self.assertEqual(codex_hint["control_seq"], 1984)
+            self.assertEqual(codex_hint["job_id"], "ctrl-1984")
+            self.assertEqual(codex_hint["dispatch_id"], "seq-1984")
+            self.assertNotEqual(codex_hint["job_id"], "job-stale-closed-verify")
+            self.assertNotEqual(codex_hint["dispatch_id"], "stale-verify-dispatch")
+
+            events = [
+                json.loads(line)
+                for line in supervisor.events_path.read_text(encoding="utf-8").splitlines()
+            ]
+            event_types = [event.get("event_type") for event in events]
+            self.assertIn("watcher_self_restart_started", event_types)
+            self.assertIn("watcher_self_restart_completed", event_types)
+
     def test_supervisor_skips_run_id_inheritance_when_watcher_pid_is_dead(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -6865,6 +8800,44 @@ class RuntimeSupervisorTest(unittest.TestCase):
             (pipeline_dir / "experimental.pid").write_text(str(current_pid), encoding="utf-8")
 
             supervisor = RuntimeSupervisor(root, start_runtime=False)
+            self.assertNotEqual(supervisor.run_id, old_run_id)
+
+    def test_supervisor_skips_run_id_inheritance_when_watcher_disappears_after_fingerprint(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            pipeline_dir = root / ".pipeline"
+            pipeline_dir.mkdir(parents=True, exist_ok=True)
+            old_run_id = "20260418T010203Z-p222"
+            current_pid = os.getpid()
+            fingerprint = "live-fingerprint-before-exit"
+            (pipeline_dir / "current_run.json").write_text(
+                json.dumps(
+                    {
+                        "run_id": old_run_id,
+                        "status_path": f".pipeline/runs/{old_run_id}/status.json",
+                        "watcher_pid": current_pid,
+                        "watcher_fingerprint": fingerprint,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (pipeline_dir / "experimental.pid").write_text(str(current_pid), encoding="utf-8")
+
+            with (
+                mock.patch.object(
+                    RuntimeSupervisor,
+                    "_live_experimental_watcher_pid",
+                    side_effect=[current_pid, 0],
+                ),
+                mock.patch.object(
+                    RuntimeSupervisor,
+                    "_watcher_process_fingerprint",
+                    return_value=fingerprint,
+                ),
+            ):
+                supervisor = RuntimeSupervisor(root, start_runtime=False)
+
             self.assertNotEqual(supervisor.run_id, old_run_id)
 
     def test_supervisor_write_current_run_pointer_records_live_watcher_pid(self) -> None:

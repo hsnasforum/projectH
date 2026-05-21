@@ -42,7 +42,7 @@ function renderSidebar() {
 // ── Agents ──
 function renderAgentsSection(data) {
   const lanes = data.lanes || [];
-  if (!lanes.length) return '<div id="sidebar-agents" class="sidebar-section"><div class="sidebar-section-title">AGENTS</div><div style="font-size:11px;color:#3d5070">\uC5D0\uC774\uC804\uD2B8 \uC5C6\uC74C</div></div>';
+  if (!lanes.length) return '<div id="sidebar-agents" class="sidebar-section"><div class="sidebar-section-title">파티 명부</div><div style="font-size:11px;color:#3d5070">에이전트 없음</div></div>';
   const cards = lanes.map(lane => {
     const s = (lane.state || 'off').toLowerCase(), color = STATE_COLORS[s] || STATE_COLORS.off;
     const role = LANE_ROLES[(lane.name || '').toLowerCase()] || '', note = lane.note || lane.status_note || '';
@@ -65,12 +65,13 @@ function renderRoundSection(data) {
   const control = data.control || {};
   const autonomy = data.autonomy || {};
   return `<div id="sidebar-round" class="sidebar-section">
-    <div class="sidebar-section-title">CURRENT ROUND</div>
-    <div class="info-row"><span class="info-label">Runtime</span><span class="info-value ${pres.runtimeClass}">${esc(pres.runtimeState)}</span></div>
-    <div class="info-row"><span class="info-label">Control</span><span class="info-value ${pres.controlClass}">${esc(pres.controlStatus)}</span></div>
-    <div class="info-row"><span class="info-label">Seq</span><span class="info-value dim">${control.active_control_seq >= 0 ? control.active_control_seq : '\u2014'}</span></div>
-    <div class="info-row"><span class="info-label">Round</span><span class="info-value ${pres.roundClass}">${esc(pres.roundState)}</span></div>
-    ${autonomy.mode && autonomy.mode !== 'normal' ? `<div class="info-row"><span class="info-label">Mode</span><span class="info-value warn">${esc(autonomy.mode)}</span></div>` : ''}
+    <div class="sidebar-section-title">진행 라운드</div>
+    <div class="info-row"><span class="info-label">런타임</span><span class="info-value ${pres.runtimeClass}">${esc(pres.runtimeState)}</span></div>
+    <div class="info-row"><span class="info-label">큐</span><span class="info-value ${pres.pipelineQueueClass}">${esc(pres.pipelineQueueStatus)}</span></div>
+    <div class="info-row"><span class="info-label">제어 상태</span><span class="info-value ${pres.controlClass}">${esc(pres.controlStatus)}</span></div>
+    <div class="info-row"><span class="info-label">시퀀스</span><span class="info-value dim">${control.active_control_seq >= 0 ? control.active_control_seq : '\u2014'}</span></div>
+    <div class="info-row"><span class="info-label">라운드</span><span class="info-value ${pres.roundClass}">${esc(pres.roundState)}</span></div>
+    ${autonomy.mode && autonomy.mode !== 'normal' ? `<div class="info-row"><span class="info-label">모드</span><span class="info-value warn">${esc(autonomy.mode)}</span></div>` : ''}
   </div>`;
 }
 
@@ -80,12 +81,12 @@ function renderArtifactsSection(data) {
   const lw = (data.artifacts || {}).latest_work || {};
   const lv = (data.artifacts || {}).latest_verify || {};
   return `<div id="sidebar-artifacts" class="sidebar-section">
-    <div class="sidebar-section-title">ARTIFACTS</div>
-    <div class="info-row"><span class="info-label">Latest work</span><span class="info-value">${esc(truncate(basename(lw.path), 24))}</span></div>
-    <div class="info-row"><span class="info-label">Latest verify</span><span class="info-value">${esc(truncate(basename(lv.path), 24))}</span></div>
-    ${lr.receipt_id ? `<div class="info-row"><span class="info-label">Receipt ID</span><span class="info-value dim">${esc(lr.receipt_id)}</span></div>` : ''}
-    ${lr.verify_result ? `<div class="info-row"><span class="info-label">Receipt result</span><span class="info-value ${lr.verify_result === 'passed' ? 'ok' : 'warn'}">${esc(lr.verify_result)}</span></div>` : ''}
-    ${lr.close_status ? `<div class="info-row"><span class="info-label">Receipt close</span><span class="info-value">${esc(lr.close_status)}</span></div>` : ''}
+    <div class="sidebar-section-title">산출물</div>
+    <div class="info-row"><span class="info-label">최신 작업 (Work)</span><span class="info-value">${esc(truncate(basename(lw.path), 24))}</span></div>
+    <div class="info-row"><span class="info-label">최신 검증 (Verify)</span><span class="info-value">${esc(truncate(basename(lv.path), 24))}</span></div>
+    ${lr.receipt_id ? `<div class="info-row"><span class="info-label">영수증 ID</span><span class="info-value dim">${esc(lr.receipt_id)}</span></div>` : ''}
+    ${lr.verify_result ? `<div class="info-row"><span class="info-label">영수증 결과</span><span class="info-value ${lr.verify_result === 'passed' ? 'ok' : 'warn'}">${esc(lr.verify_result)}</span></div>` : ''}
+    ${lr.close_status ? `<div class="info-row"><span class="info-label">영수증 종결</span><span class="info-value">${esc(lr.close_status)}</span></div>` : ''}
   </div>`;
 }
 
@@ -95,11 +96,11 @@ function renderIncidentsSection(data) {
   const pres = PipelineState.getPresentation(data);
   const autonomy = data.autonomy || {};
   return `<div id="sidebar-incidents" class="sidebar-section">
-    <div class="sidebar-section-title">INCIDENT ROOM</div>
-    <div class="info-row"><span class="info-label">Watcher</span><span class="info-value ${pres.watcherClass}">${esc(pres.watcherStatus)}</span></div>
-    ${dr.length ? dr.map(r => `<div class="info-row"><span class="info-label">Degraded</span><span class="info-value ${pres.uncertain ? 'warn' : 'err'}">${esc(r)}</span></div>`).join('') : ''}
-    ${autonomy.operator_eligible !== undefined ? `<div class="info-row"><span class="info-label">Operator eligible</span><span class="info-value dim">${autonomy.operator_eligible}</span></div>` : ''}
-    ${autonomy.block_reason ? `<div class="info-row"><span class="info-label">Block</span><span class="info-value warn">${esc(autonomy.block_reason)}</span></div>` : ''}
+    <div class="sidebar-section-title">인시던트 룸</div>
+    <div class="info-row"><span class="info-label">와처</span><span class="info-value ${pres.watcherClass}">${esc(pres.watcherStatus)}</span></div>
+    ${dr.length ? dr.map(r => `<div class="info-row"><span class="info-label">성능 저하</span><span class="info-value ${pres.uncertain ? 'warn' : 'err'}">${esc(r)}</span></div>`).join('') : ''}
+    ${autonomy.operator_eligible !== undefined ? `<div class="info-row"><span class="info-label">운영자 개입 가능</span><span class="info-value dim">${autonomy.operator_eligible}</span></div>` : ''}
+    ${autonomy.block_reason ? `<div class="info-row"><span class="info-label">차단 사유</span><span class="info-value warn">${esc(autonomy.block_reason)}</span></div>` : ''}
   </div>`;
 }
 

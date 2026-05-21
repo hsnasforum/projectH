@@ -1,24 +1,10 @@
 // controller/js/state.js — Runtime state polling and change detection
 import { POLL_MS, INACTIVE_RUNTIME_STATES, UNCERTAIN_RUNTIME_REASONS } from './config.js';
+import './queue-presentation.js';
 
 const MAX_EVENTS = 40;
 
-function liveRoundState(data, turn) {
-  const round = (data && data.active_round) || {};
-  const roundState = String(round.state || '').trim().toUpperCase();
-  const turnState = String((turn || {}).state || '').trim().toUpperCase();
-  if (roundState && roundState !== 'IDLE') return roundState;
-  return turnState || roundState || 'IDLE';
-}
-
-function isSuppressedOperatorCandidate(data, automationHealth, controlStatus) {
-  const autonomy = (data || {}).autonomy || {};
-  const autonomyMode = String(autonomy.mode || '').trim();
-  return controlStatus === 'none'
-    && automationHealth === 'ok'
-    && autonomy.operator_eligible === false
-    && autonomyMode === 'hibernate';
-}
+const QueuePresentation = globalThis.PipelineQueuePresentation;
 
 class _PipelineState {
   constructor() {
@@ -45,52 +31,12 @@ class _PipelineState {
     this._notify('event', { type, msg, time: t });
   }
 
-  _currentTurn(data) {
-    const d = data || this.data || {};
-    if (d.turn_state && typeof d.turn_state === 'object') return d.turn_state;
-    if (d.compat && d.compat.turn_state && typeof d.compat.turn_state === 'object') return d.compat.turn_state;
-    return {};
-  }
-
   getPresentation(data) {
     const d = data || this.data || {};
-    const runtimeState = String(d.runtime_state || 'STOPPED').toUpperCase();
-    const control = d.control || {};
-    const watcher = d.watcher || {};
-    const turn = this._currentTurn(d);
-    const degradedReasons = (d.degraded_reasons || []).filter(Boolean);
-    const degradedReason = degradedReasons[0] || String(d.degraded_reason || '').trim();
-    const automationHealth = String(d.automation_health || 'ok').trim();
-    const automationReason = String(d.automation_reason_code || '').trim();
-    const automationFamily = String(d.automation_incident_family || '').trim();
-    const automationAction = String(d.automation_next_action || 'continue').trim();
-    const automationDetail = String(d.automation_health_detail || '').trim();
-    const controlAgeCycles = Number(d.control_age_cycles || 0);
-    const staleAdvisoryPending = Boolean(d.stale_advisory_pending);
-    const uncertain = runtimeState === 'DEGRADED' && degradedReasons.some(r => UNCERTAIN_RUNTIME_REASONS.has(r));
-    const inactive = INACTIVE_RUNTIME_STATES.has(runtimeState);
-    const showLive = !inactive && !uncertain;
-    const rawControlStatus = showLive ? (control.active_control_status || 'none') : (uncertain ? 'uncertain' : 'none');
-    const suppressedOperatorCandidate = showLive ? isSuppressedOperatorCandidate(d, automationHealth, rawControlStatus) : false;
-    const controlStatus = rawControlStatus;
-    const roundState = showLive ? liveRoundState(d, turn) : (uncertain ? 'uncertain' : 'IDLE');
-    let watcherStatus = 'Dead', watcherClass = 'dim';
-    if (uncertain) { watcherStatus = 'Unknown'; watcherClass = 'warn'; }
-    else if (watcher.alive) { watcherStatus = 'Alive'; watcherClass = 'ok'; }
-    else if (runtimeState === 'BROKEN') { watcherClass = 'err'; }
-    else if (runtimeState === 'STOPPING') { watcherClass = 'neutral'; }
-    const controlClass = controlStatus === 'implement' ? 'ok'
-      : controlStatus === 'needs_operator' || controlStatus === 'uncertain' ? 'warn'
-      : controlStatus === 'none' ? 'dim' : 'neutral';
-    const roundClass = roundState === 'uncertain' ? 'warn' : roundState === 'IDLE' ? 'dim' : 'neutral';
-    const runtimeClass = runtimeState === 'RUNNING' ? 'ok' : runtimeState === 'DEGRADED' ? 'warn'
-      : runtimeState === 'STOPPING' ? 'neutral' : runtimeState === 'BROKEN' ? 'err' : 'dim';
-    const badgeClass = runtimeState === 'RUNNING' ? 'running' : runtimeState === 'DEGRADED' ? 'degraded'
-      : runtimeState === 'STOPPING' ? 'stopping' : runtimeState === 'BROKEN' ? 'broken' : 'stopped';
-    return { runtimeState, runtimeClass, badgeClass, uncertain, inactive, controlStatus, controlClass,
-      roundState, roundClass, watcherStatus, watcherClass, degradedReason, degradedReasons,
-      automationHealth, automationReason, automationFamily, automationAction, automationDetail,
-      controlAgeCycles, staleAdvisoryPending, suppressedOperatorCandidate };
+    return QueuePresentation.buildPresentation(d, {
+      inactiveRuntimeStates: INACTIVE_RUNTIME_STATES,
+      uncertainRuntimeReasons: UNCERTAIN_RUNTIME_REASONS,
+    });
   }
 
   detectChanges(data) {

@@ -307,6 +307,59 @@ class OperatorRequestHeaderSchemaTests(unittest.TestCase):
         self.assertEqual(decision["operator_policy"], "internal_only")
         self.assertEqual(decision["decision_class"], "release_gate")
 
+    def test_dirty_bundle_publication_or_hold_reuses_commit_push_followup(self) -> None:
+        self.assertEqual(
+            normalize_reason_code("dirty_bundle_publication_or_hold_decision"),
+            COMMIT_PUSH_BUNDLE_AUTHORIZATION_REASON,
+        )
+        self.assertEqual(normalize_operator_policy("operator_only_publication_boundary"), "internal_only")
+        self.assertEqual(normalize_decision_class("publication_or_hold"), "release_gate")
+
+        validated = validate_operator_request_headers(
+            control_seq=2072,
+            reason_code="dirty_bundle_publication_or_hold_decision",
+            operator_policy="operator_only_publication_boundary",
+            decision_class="publication_or_hold",
+            decision_required=(
+                "Choose one: keep the current dirty bundle local-only / publication-held, "
+                "or explicitly authorize a separate verify/handoff publication flow."
+            ),
+            based_on_work="work/5/21/2026-05-21-example.md",
+            based_on_verify="verify/5/21/2026-05-21-example.md",
+        )
+        self.assertEqual(validated["reason_code"], COMMIT_PUSH_BUNDLE_AUTHORIZATION_REASON)
+        self.assertEqual(validated["operator_policy"], "internal_only")
+        self.assertEqual(validated["decision_class"], "release_gate")
+
+        decision = classify_operator_candidate(
+            "STATUS: needs_operator\n"
+            "REASON_CODE: dirty_bundle_publication_or_hold_decision\n"
+            "OPERATOR_POLICY: operator_only_publication_boundary\n"
+            "DECISION_CLASS: publication_or_hold\n"
+            "DECISION_REQUIRED: Choose one: keep local-only / publication-held, "
+            "or explicitly authorize publication flow.\n",
+            control_meta={
+                "status": "needs_operator",
+                "reason_code": "dirty_bundle_publication_or_hold_decision",
+                "operator_policy": "operator_only_publication_boundary",
+                "decision_class": "publication_or_hold",
+                "decision_required": (
+                    "Choose one: keep local-only / publication-held, "
+                    "or explicitly authorize publication flow."
+                ),
+            },
+            idle_stable=True,
+            now_ts=1_000.0,
+        )
+
+        self.assertEqual(decision["reason_code"], COMMIT_PUSH_BUNDLE_AUTHORIZATION_REASON)
+        self.assertEqual(decision["mode"], "triage")
+        self.assertEqual(decision["routed_to"], "verify_followup")
+        self.assertEqual(decision["operator_policy"], "internal_only")
+        self.assertEqual(decision["decision_class"], "release_gate")
+        self.assertEqual(decision["classification_source"], "operator_policy")
+        self.assertFalse(decision["operator_eligible"])
+
     def test_pr_creation_gate_routes_to_verify_publish_followup(self) -> None:
         self.assertIn(PR_CREATION_GATE_REASON, SUPPORTED_REASON_CODES)
         self.assertIn("release_gate", SUPPORTED_DECISION_CLASSES)

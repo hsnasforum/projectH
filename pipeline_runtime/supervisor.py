@@ -120,6 +120,7 @@ _DUPLICATE_HANDOFF_BLOCK_REASONS = frozenset({
     "already_done",
     "already_implemented",
 })
+_REISSUE_CONTROL_RE = re.compile(r"^REISSUE\s*:\s*true\b", re.IGNORECASE | re.MULTILINE)
 _WATCHER_SELF_RESTART_COOLDOWN_SEC = 10.0
 _SESSION_RECOVERY_RETRY_LIMIT = 1
 _SESSION_RECOVERY_RESET_STABLE_SEC = 300.0
@@ -790,6 +791,23 @@ class RuntimeSupervisor:
             self._duplicate_marker_cache_key = cache_key
             self._duplicate_marker_cache_result = dict(result) if result is not None else None
             return self._duplicate_marker_cache_result
+
+        stale_age_sec = self.started_at - active_control_updated_at
+        if self._start_runtime and active_control_updated_at > 0 and stale_age_sec > 0:
+            control_text = self._control_text(control)
+            if not _REISSUE_CONTROL_RE.search(control_text):
+                return _cache_result(
+                    {
+                        "control_file": str(snapshot.get("control_file") or ""),
+                        "control_seq": control_seq,
+                        "handoff_sha": handoff_sha,
+                        "reason": "stale_handoff_dispatch_blocked",
+                        "blocked_fingerprint": "",
+                        "routed_to": VERIFY_TRIAGE_ESCALATION,
+                        "source_event": "stale_handoff_age_check",
+                        "stale_age_sec": round(stale_age_sec, 1),
+                    }
+                )
 
         raw_log = self.base_dir / "logs" / "experimental" / "raw.jsonl"
         if not raw_log.exists():
@@ -2434,6 +2452,7 @@ class RuntimeSupervisor:
                 str(duplicate_control.get("control_file") or ""),
                 str(duplicate_control.get("control_seq") or ""),
                 str(duplicate_control.get("handoff_sha") or ""),
+                str(duplicate_control.get("reason") or ""),
                 str(duplicate_control.get("blocked_fingerprint") or ""),
             ]
         )
@@ -2452,6 +2471,17 @@ class RuntimeSupervisor:
                         "verify_path": str(duplicate_control.get("verify_path") or ""),
                     },
                 )
+                if str(duplicate_control.get("reason") or "") == "stale_handoff_dispatch_blocked":
+                    self._append_event(
+                        "stale_handoff_dispatch_blocked",
+                        {
+                            "control_file": str(duplicate_control.get("control_file") or ""),
+                            "control_seq": control_seq_value(duplicate_control.get("control_seq"), default=-1),
+                            "handoff_sha": str(duplicate_control.get("handoff_sha") or ""),
+                            "stale_age_sec": float(duplicate_control.get("stale_age_sec") or 0.0),
+                            "reason": "stale_handoff_dispatch_blocked",
+                        },
+                    )
 
         stale_operator_key = "|".join(
             [

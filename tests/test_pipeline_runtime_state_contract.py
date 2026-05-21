@@ -2,8 +2,14 @@ from __future__ import annotations
 
 import unittest
 
+from pipeline_runtime.lane_catalog import default_role_bindings
 from pipeline_runtime.state_contract import (
     RUNTIME_SNAPSHOT_CONTRACT_VERSION,
+    _extract_autonomy_section,
+    _extract_control_section,
+    _extract_lane_summary,
+    _extract_round_section,
+    _role_owners,
     reduce_runtime_snapshot,
 )
 
@@ -34,6 +40,62 @@ class RuntimeStateContractTests(unittest.TestCase):
         self.assertTrue(snapshot["queue"]["no_queued_pipeline_task"])
         self.assertEqual(snapshot["queue"]["status"], "No queued pipeline task")
         self.assertEqual(snapshot["invariants"]["violations"], [])
+
+    def test_default_role_owners_follow_lane_catalog_defaults(self) -> None:
+        self.assertEqual(dict(_role_owners({})), default_role_bindings())
+
+    def test_extracted_sections_are_independently_testable(self) -> None:
+        status = self._base_status()
+        status["active_round"] = {"state": "VERIFYING", "job_id": "job-1"}
+        status["turn_state"] = {"state": "VERIFY_ACTIVE", "active_role": "verify", "active_lane": "Codex"}
+        status["lanes"] = [{"name": "Codex", "state": "READY", "note": "prompt_visible", "pid": 123}]
+
+        autonomy = _extract_autonomy_section(status)
+        control = _extract_control_section(
+            status,
+            show_live=bool(autonomy["show_live"]),
+            uncertain=bool(autonomy["uncertain"]),
+        )
+        round_section = _extract_round_section(
+            status,
+            show_live=bool(autonomy["show_live"]),
+            uncertain=bool(autonomy["uncertain"]),
+        )
+        lane_summary = _extract_lane_summary(
+            status,
+            round_state=str(round_section["round_state"]),
+            turn_state=round_section["turn_state"],
+        )
+
+        self.assertEqual(autonomy["runtime_state"], "RUNNING")
+        self.assertEqual(control["control_status"], "none")
+        self.assertEqual(round_section["round_state"], "VERIFYING")
+        self.assertEqual(lane_summary["active_lane"], "Codex")
+        self.assertEqual(lane_summary["lanes"][0]["lifecycle"], "ready")
+
+    def test_reduce_runtime_snapshot_preserves_contract_shape(self) -> None:
+        snapshot = reduce_runtime_snapshot(self._base_status())
+
+        self.assertEqual(
+            set(snapshot),
+            {
+                "schema_version",
+                "contract_version",
+                "runtime_state",
+                "show_live",
+                "control_state",
+                "round_state",
+                "active_lane",
+                "health",
+                "queue",
+                "lanes",
+                "invariants",
+                "suppressed_operator_candidate",
+            },
+        )
+        self.assertEqual(set(snapshot["health"]), {"state", "reason_code", "incident_family", "next_action"})
+        self.assertEqual(set(snapshot["queue"]), {"no_queued_pipeline_task", "status", "class_name"})
+        self.assertEqual(set(snapshot["invariants"]), {"violations"})
 
     def test_compat_active_control_prevents_empty_queue_surface(self) -> None:
         status = self._base_status()

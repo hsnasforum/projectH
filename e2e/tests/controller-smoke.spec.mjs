@@ -347,7 +347,7 @@ test.describe("controller office smoke", () => {
     const incidentRoom = page.locator("#tab-content").filter({ hasText: "인시던트 룸" });
     await expect(incidentRoom).toContainText("attention");
     await expect(incidentRoom).toContainText("stale_control_advisory");
-    await expect(incidentRoom).toContainText("stale_advisory_pending");
+    await expect(incidentRoom).toContainText("대기 중");
   });
 
   test("controller renders main operator attention board for needs_operator reason", async ({ page }) => {
@@ -672,7 +672,7 @@ test.describe("controller office smoke", () => {
     await page.goto("/controller");
 
     const marquee = page.locator("#marquee-text");
-    await expect(marquee).toContainText("Runtime RUNNING");
+    await expect(marquee).toContainText("구동 상태 RUNNING");
 
     const readTranslateX = () =>
       page.evaluate(() => {

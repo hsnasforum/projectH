@@ -36,6 +36,7 @@ from .lane_surface import tail_has_busy_indicator as _shared_tail_has_busy_indic
 from .lane_surface import text_is_ready as _shared_text_is_ready
 from .lane_surface import text_matches_markers as _shared_text_matches_markers
 from .schema import atomic_write_json, iso_utc, read_json
+from .state_contract import reduce_runtime_snapshot
 from .supervisor import RuntimeSupervisor
 from .tmux_adapter import TmuxAdapter
 from .wrapper_events import append_wrapper_event
@@ -76,6 +77,7 @@ _RUNTIME_RELOAD_SOURCE_NAMES = (
     "verify_fsm.py",
     "pipeline_runtime/cli.py",
     "pipeline_runtime/supervisor.py",
+    "pipeline_runtime/automation_health.py",
     "pipeline_runtime/tmux_adapter.py",
     "pipeline_runtime/lane_surface.py",
     "pipeline_runtime/lane_catalog.py",
@@ -481,9 +483,10 @@ def _doctor_payload(project_root: Path, session_name: str) -> dict[str, object]:
     checks.append(
         _doctor_check(
             "tmux_session",
-            "ok" if tmux_session_exists else "ok",
+            "ok" if tmux_session_exists else "warn",
             severity="advisory",
             detail=f"{session_name}: {'exists' if tmux_session_exists else 'not found'}",
+            hint="" if tmux_session_exists else "Run: python3 -m pipeline_runtime.cli start",
         )
     )
 
@@ -673,6 +676,7 @@ def _coerce_status_to_stopped(project_root: Path) -> None:
     }
     status["last_heartbeat_at"] = iso_utc()
     status["updated_at"] = iso_utc()
+    status["runtime_snapshot"] = reduce_runtime_snapshot(status)
     atomic_write_json(status_path, status)
     task_hints_dir = status_path.parent / "task-hints"
     if task_hints_dir.exists():
@@ -748,57 +752,79 @@ def _current_run_matches(project_root: Path, run_id: str) -> bool:
 def _spawn_supervisor(args: argparse.Namespace) -> int:
     project_root, mode = _normalize_project_and_mode(args)
     session_name = args.session or _session_name_for(project_root)
-    reload_live_supervisor = _runtime_source_newer_than_supervisor_pidfile(project_root)
-    pid = _reconcile_supervisors(project_root, session_name)
-    if pid is not None:
-        reload_live_supervisor = (
-            reload_live_supervisor
-            or _runtime_source_newer_than_supervisor_pidfile(project_root)
-        )
-        if not reload_live_supervisor:
-            return 0
-        stop_code = _stop_supervisor(args)
-        if stop_code != 0:
-            return stop_code
-        time.sleep(1.0)
-    preflight_failure = start_preflight_failure_message(project_root, session_name)
-    if preflight_failure:
-        print(preflight_failure, file=sys.stderr)
+    lock_path = project_root / ".pipeline" / ".supervisor-start.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        lock_fd = os.open(str(lock_path), os.O_CREAT | os.O_WRONLY)
+    except OSError:
+        lock_fd = -1
+    try:
+        if lock_fd >= 0:
+            try:
+                fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                return 0
+        reload_live_supervisor = _runtime_source_newer_than_supervisor_pidfile(project_root)
+        pid = _reconcile_supervisors(project_root, session_name)
+        if pid is not None:
+            reload_live_supervisor = (
+                reload_live_supervisor
+                or _runtime_source_newer_than_supervisor_pidfile(project_root)
+            )
+            if not reload_live_supervisor:
+                return 0
+            stop_code = _stop_supervisor(args)
+            if stop_code != 0:
+                return stop_code
+            time.sleep(1.0)
+        preflight_failure = start_preflight_failure_message(project_root, session_name)
+        if preflight_failure:
+            print(preflight_failure, file=sys.stderr)
+            return 1
+        run_id = RuntimeSupervisor(project_root, session_name=args.session, mode=mode, start_runtime=False).run_id
+        log_dir = project_root / ".pipeline" / "runs" / run_id / "logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_path = log_dir / "supervisor.log"
+        with log_path.open("a", encoding="utf-8") as handle:
+            process = subprocess.Popen(
+                [
+                    sys.executable,
+                    "-m",
+                    "pipeline_runtime.cli",
+                    "daemon",
+                    "--project-root",
+                    str(project_root),
+                    "--session",
+                    session_name,
+                    "--mode",
+                    mode,
+                    "--run-id",
+                    run_id,
+                ],
+                cwd=str(project_root),
+                stdout=handle,
+                stderr=subprocess.STDOUT,
+                stdin=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+        deadline = time.time() + 20.0
+        while time.time() < deadline:
+            if _current_run_matches(project_root, run_id):
+                return 0
+            if process.poll() is not None:
+                return process.returncode or 1
+            time.sleep(0.25)
         return 1
-    run_id = RuntimeSupervisor(project_root, session_name=args.session, mode=mode, start_runtime=False).run_id
-    log_dir = project_root / ".pipeline" / "runs" / run_id / "logs"
-    log_dir.mkdir(parents=True, exist_ok=True)
-    log_path = log_dir / "supervisor.log"
-    with log_path.open("a", encoding="utf-8") as handle:
-        process = subprocess.Popen(
-            [
-                sys.executable,
-                "-m",
-                "pipeline_runtime.cli",
-                "daemon",
-                "--project-root",
-                str(project_root),
-                "--session",
-                session_name,
-                "--mode",
-                mode,
-                "--run-id",
-                run_id,
-            ],
-            cwd=str(project_root),
-            stdout=handle,
-            stderr=subprocess.STDOUT,
-            stdin=subprocess.DEVNULL,
-            start_new_session=True,
-        )
-    deadline = time.time() + 20.0
-    while time.time() < deadline:
-        if _current_run_matches(project_root, run_id):
-            return 0
-        if process.poll() is not None:
-            return process.returncode or 1
-        time.sleep(0.25)
-    return 1
+    finally:
+        if lock_fd >= 0:
+            try:
+                fcntl.flock(lock_fd, fcntl.LOCK_UN)
+            except OSError:
+                pass
+            try:
+                os.close(lock_fd)
+            except OSError:
+                pass
 
 
 def _stop_supervisor(args: argparse.Namespace) -> int:
@@ -815,6 +841,7 @@ def _stop_supervisor(args: argparse.Namespace) -> int:
             _supervisor_pid_path(project_root).unlink()
         except FileNotFoundError:
             pass
+        _coerce_status_to_stopped(project_root)
         return 0
     for live_pid in sorted(pids):
         _signal_pid(live_pid, signal.SIGTERM)
@@ -823,6 +850,7 @@ def _stop_supervisor(args: argparse.Namespace) -> int:
             _supervisor_pid_path(project_root).unlink()
         except FileNotFoundError:
             pass
+        _coerce_status_to_stopped(project_root)
         return 0
     remaining = set(_list_supervisor_pids(project_root, session_name))
     live_pid = _supervisor_running(project_root)
@@ -897,12 +925,14 @@ class _WrapperEmitter:
         task_hint_dir: Path | None,
         child_pid: int,
         send_child_bytes,
+        jsonl_mode: bool = False,
     ) -> None:
         self.wrapper_dir = wrapper_dir
         self.lane_name = lane_name
         self.task_hint_dir = task_hint_dir
         self.child_pid = child_pid
         self.send_child_bytes = send_child_bytes
+        self.jsonl_mode = jsonl_mode
         self.partial = ""
         self.recent_lines: list[str] = []
         self.ready_emitted = False
@@ -930,6 +960,12 @@ class _WrapperEmitter:
     def feed(self, text: str, *, now: float | None = None) -> None:
         if not text:
             return
+        if self.jsonl_mode:
+            self._feed_jsonl(text, now=now)
+            return
+        self._feed_text(text, now=now)
+
+    def _feed_text(self, text: str, *, now: float | None = None) -> None:
         combined = self.partial + text
         lines = combined.splitlines(keepends=False)
         if combined and not combined.endswith(("\n", "\r")):
@@ -949,13 +985,111 @@ class _WrapperEmitter:
     def tick(self, *, now: float | None = None) -> None:
         self._evaluate([], now=now)
 
+    def finish_stream(self, *, now: float | None = None) -> None:
+        if self.jsonl_mode:
+            self._on_claude_completion("stream_eof")
+
+    def _feed_jsonl(self, text: str, *, now: float | None = None) -> None:
+        combined = self.partial + text
+        lines = combined.splitlines(keepends=False)
+        if combined and not combined.endswith(("\n", "\r")):
+            self.partial = lines.pop() if lines else combined
+        else:
+            self.partial = ""
+
+        for line in lines:
+            cleaned = line.strip()
+            if not cleaned:
+                continue
+            try:
+                event = json.loads(cleaned)
+            except json.JSONDecodeError:
+                self.jsonl_mode = False
+                self.partial = ""
+                self._feed_text(combined, now=now)
+                return
+            if not isinstance(event, dict):
+                continue
+            event_type = str(event.get("type") or "")
+            if event_type == "text" and str(event.get("text") or "").strip():
+                self._on_claude_activity(now=now)
+            elif event_type == "tool_use":
+                self._on_claude_activity(now=now)
+            elif event_type == "result":
+                self._on_claude_completion("claude_result")
+
+    def _active_task_payload_from_hint(self) -> tuple[str, dict[str, object]]:
+        task_hint = _load_task_hint(self.task_hint_dir, self.lane_name)
+        job_id = str(task_hint.get("job_id") or "")
+        dispatch_id = str(task_hint.get("dispatch_id") or "")
+        raw_control_seq = task_hint.get("control_seq")
+        try:
+            control_seq = int(raw_control_seq if raw_control_seq is not None else -1)
+        except (TypeError, ValueError):
+            control_seq = -1
+        attempt = int(task_hint.get("attempt") or 0)
+        task_claimed_active = bool(task_hint.get("active")) and bool(job_id) and bool(dispatch_id)
+        task_key = f"{job_id}|{dispatch_id}" if task_claimed_active else ""
+        if not task_claimed_active:
+            self.done_key = ""
+            return "", {}
+        if self.done_key and task_key != self.done_key:
+            self.done_key = ""
+        if control_seq < 0:
+            self._emit_bridge_diagnostic(
+                task_key,
+                job_id=job_id,
+                dispatch_id=dispatch_id,
+                control_seq=control_seq,
+                code="active_task_hint_metadata_invalid",
+                detail="control_seq_missing_for_active_dispatch",
+            )
+            return "", {}
+        self.bridge_diagnostic_key = ""
+        if self.done_key == task_key:
+            return "", {}
+        return task_key, {
+            "job_id": job_id,
+            "dispatch_id": dispatch_id,
+            "control_seq": control_seq,
+            "attempt": attempt,
+        }
+
+    def _on_claude_activity(self, *, now: float | None = None) -> None:
+        task_key, payload = self._active_task_payload_from_hint()
+        if not task_key or not payload:
+            return
+        now_value = float(now) if now is not None else time.monotonic()
+        if self.seen_key != task_key:
+            self.seen_key = task_key
+            self.seen_payload = dict(payload)
+            self.append("DISPATCH_SEEN", dict(payload), derived_from="task_hint")
+        if self.accepted_key != task_key:
+            self.accepted_key = task_key
+            self.accepted_payload = dict(payload)
+            self.append("TASK_ACCEPTED", dict(payload), derived_from="vendor_output")
+            self._task_inactive_since = 0.0
+        self._last_activity_at = now_value
+        self.busy_state = True
+
+    def _on_claude_completion(self, reason: str) -> None:
+        if not self.accepted_key or not self.accepted_payload:
+            return
+        self._emit_task_done(reason)
+        self._emit_ready()
+
     def _emit_task_done(self, reason: str = "") -> None:
         if not self.accepted_key or not self.accepted_payload:
             return
         completed_key = self.accepted_key
+        raw_control_seq = self.accepted_payload.get("control_seq")
+        try:
+            control_seq = int(raw_control_seq) if raw_control_seq is not None else -1
+        except (TypeError, ValueError):
+            control_seq = -1
         payload = {
             "job_id": str(self.accepted_payload.get("job_id") or ""),
-            "control_seq": int(self.accepted_payload.get("control_seq") or -1),
+            "control_seq": control_seq,
             "dispatch_id": str(self.accepted_payload.get("dispatch_id") or ""),
         }
         if reason:
@@ -1080,13 +1214,12 @@ class _WrapperEmitter:
             if current_task_still_active and not busy_visible and prompt_visible:
                 if not self._task_inactive_since:
                     self._task_inactive_since = now_value
-                if (
-                    self._task_inactive_since
-                    and (now_value - self._last_activity_at) >= _TASK_DONE_SETTLE_SEC
-                    and (now_value - self._task_inactive_since) >= _TASK_DONE_SETTLE_SEC
-                ):
-                    self._emit_task_done()
-                    self._emit_ready()
+                # A visible prompt is only a lane observation while the
+                # supervisor still claims the task hint as active. Completion
+                # requires the matching task hint to clear or another explicit
+                # terminal signal, so prompt-visible output cannot close a
+                # running verify/implement task on its own.
+                self._emit_ready()
                 return
             if current_task_still_active:
                 self._task_inactive_since = 0.0
@@ -1124,7 +1257,13 @@ class _WrapperEmitter:
             return True
         # Choose "Skip until next version" instead of Enter, because Enter would
         # accept the default update action and make unattended runtime startup depend on npm/network.
-        self.send_child_bytes(b"3\r")
+        match = re.search(
+            r"^\s*(?:[›>]\s*)?([1-9][0-9]?)\s*[\.\)]\s*skip until next version\b",
+            text,
+            re.IGNORECASE | re.MULTILINE,
+        )
+        key = f"{match.group(1)}\r".encode("ascii") if match else b"3\r"
+        self.send_child_bytes(key)
         self._auto_actions_sent.add(action_key)
         return True
 
@@ -1165,6 +1304,7 @@ def _lane_wrapper(args: argparse.Namespace) -> int:
         task_hint_dir=task_hint_dir,
         child_pid=child.pid,
         send_child_bytes=lambda data: os.write(master_fd, data),
+        jsonl_mode=args.lane == "Claude",
     )
 
     stop_requested = False
@@ -1219,6 +1359,8 @@ def _lane_wrapper(args: argparse.Namespace) -> int:
                         os.write(sys.stdout.fileno(), chunk)
                         sys.stdout.flush()
                         emitter.feed(chunk.decode("utf-8", errors="replace"))
+                    else:
+                        emitter.finish_stream(now=now)
                 elif fd == stdin_fd:
                     data = os.read(stdin_fd, 1024)
                     if data:
@@ -1233,7 +1375,9 @@ def _lane_wrapper(args: argparse.Namespace) -> int:
                         os.write(sys.stdout.fileno(), chunk)
                         sys.stdout.flush()
                         emitter.feed(chunk.decode("utf-8", errors="replace"))
+                    emitter.finish_stream(now=time.time())
                 except OSError:
+                    emitter.finish_stream(now=time.time())
                     pass
                 break
             if stop_requested:

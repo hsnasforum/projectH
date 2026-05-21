@@ -179,6 +179,8 @@ Long term, projectH aims to become a **teachable local personal agent** with dur
 - `windows-launchers/` wrappers and packaged `.exe` flow
 - `_data/` pipeline/token collector runtime helpers
 - the internal pipeline runtime now uses a supervisor-owned run-scoped status/events/receipt surface; `controller.server`, `pipeline_gui`, and `pipeline-launcher.py` read that surface as thin clients while `tmux` remains an attach/debug adapter, and runtime degradation exposes both a representative `degraded_reason` and a full `degraded_reasons` list for operator tooling
+- the internal runtime status payload exposes reducer-owned `runtime_snapshot` for controller/launcher consumers, and `controller.server` backfills that snapshot when older status payloads omit it
+- the internal controller runtime JSON routes are bounded to `/api/runtime/status`, `/api/runtime/monitor-snapshot`, `/api/runtime/agent-inspector`, `/api/runtime/capture-tail`, POST `/api/runtime/start|stop|restart`, and POST `/api/runtime/send-input`; `send-input` validates object JSON with `lane` and `text`, fails closed for malformed, empty, non-object, blank, or invalid-length input, and does not call the backend sender on invalid input
 - the internal controller Office View reads `role_owners` from `/api/runtime/status`, so desk labels and home-zone anchoring follow the active profile binding (`implement`, `verify`, `advisory`) rather than a fixed `Claude/Codex/Gemini` owner assumption
 - the internal controller now keeps non-working agents (`ready` / `idle` / `off`) in lounge rest zones instead of leaving them parked at the role desks; desk zones remain role anchors for labels and working placement
 - the internal controller Quest Log deduplicates repeated `/api/runtime/status` fetch failures by message and emits one `상태 조회 복구: ...` event when polling succeeds again, so a stopped controller server or transient network cut does not append the same fetch error every second
@@ -1285,6 +1287,8 @@ The first official artifact is the `grounded brief`.
       - `future_reviewed_memory_reversal`
       - `future_reviewed_memory_conflict_visibility`
     - `transition_identity_requirement = canonical_local_transition_id_required`
+    - `transition_mutation_identity_requirement = canonical_transition_id_and_aggregate_fingerprint_required`
+    - the mutation identity marker is stricter than the audit-contract label: every shipped transition mutation request must provide both the `canonical_transition_id` and a matching `aggregate_fingerprint`, where the request fingerprint matches `aggregate_identity_ref.normalized_delta_fingerprint`; this applies to `/api/aggregate-transition-apply`, `/api/aggregate-transition-result`, `/api/aggregate-transition-stop`, `/api/aggregate-transition-reverse`, and `/api/aggregate-transition-conflict-check`
     - `operator_visible_reason_boundary = explicit_reason_or_note_required`
     - `audit_stage = contract_only_not_emitted`
     - `audit_store_boundary = canonical_transition_record_separate_from_task_log`
@@ -1298,6 +1302,7 @@ The first official artifact is the `grounded brief`.
     - one `transition_action` chosen from the shipped `transition_action_vocabulary`
     - `reviewed_scope = same_session_exact_recurrence_aggregate_only`
     - one `aggregate_identity_ref`
+    - apply, result-confirmation, stop, reversal, and conflict-visibility mutations resolve this record only when the requested `aggregate_fingerprint` matches `aggregate_identity_ref.normalized_delta_fingerprint`; wrong-fingerprint requests fail without changing transition stage, `applied_at`, `result_at`, `apply_result`, active effects, stopped/reversed state, or conflict-visibility records
     - exact supporting refs
     - one explicit `operator_reason_or_note`
     - `record_stage = emitted_record_only_not_applied`
@@ -1687,7 +1692,7 @@ The first official artifact is the `grounded brief`.
   - the current preference panel displays those fields only when present and does not treat them as activation, application, rollback, or cross-session memory evidence by themselves; it filters non-rejected preferences by 전체/후보/활성/일시중지 tabs, shows `총 적용 N회 · 총 교정 N회` when active preferences exist, shows `고품질 N개` only when `high_quality_active_count > 0`, shows `신뢰도 높음 N개` only when `highly_reliable_active_count > 0`, shows `충돌 위험 N건` with `data-testid="high-severity-conflict-count"` only when `high_severity_conflict_count > 0`, renders per-card `신뢰도 높음` only when the final projected `is_highly_reliable === true`, shows the `선호도로 자동 저장됨` notice only for correction-submit auto-activation events, elevates the conflict badge to amber only when `conflict_info.conflict_severity === "high"`, and keeps per-card reliability stats, `고품질` badges, and normal conflict behavior unchanged
 - review actor assumption:
   - the same local user on the same machine
-- current repo still does not implement a reviewed memory store or user-level memory store
+- current repo still does not implement a payload-visible reviewed-memory store, broader user-level memory store, or cross-session reviewed-memory application; the shipped same-session reviewed-memory lifecycle remains the narrow local layer described above
 
 #### 11. Scope / Conflict / Rollback Principles
 - these principles remain later than the first source-message `candidate_review_record`

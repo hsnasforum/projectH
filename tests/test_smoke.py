@@ -8671,6 +8671,7 @@ class SmokeTest(unittest.TestCase):
                         "future_reviewed_memory_conflict_visibility",
                     ],
                     "transition_identity_requirement": "canonical_local_transition_id_required",
+                    "transition_mutation_identity_requirement": "canonical_transition_id_and_aggregate_fingerprint_required",
                     "operator_visible_reason_boundary": "explicit_reason_or_note_required",
                     "audit_stage": "contract_only_not_emitted",
                     "audit_store_boundary": "canonical_transition_record_separate_from_task_log",

@@ -102,6 +102,9 @@ Responsibilities:
 - Internal/operator tooling such as `controller.server`, `pipeline_gui`, and `pipeline-launcher.py` stays outside the shipped web release gate, but it still follows a thin-client boundary against the supervisor-owned runtime surface.
 - That runtime surface is the run-scoped `status.json` / `events.jsonl` / `receipt` set plus the watcher-owned export-only `.pipeline/state/turn_state.json` mirror.
 - Thin clients should prefer canonical runtime payloads first and use the turn-state mirror only for current-turn labeling.
+- Runtime status now also exposes `runtime_snapshot`, a reducer-owned consumer contract layered over the legacy top-level fields. It carries `control_state`, `round_state`, `active_lane`, `health`, `queue`, lane lifecycles, and invariant violations so controller/launcher Queue rendering does not re-derive active work from pane text or compatibility slots.
+- Controller JSON routes keep that boundary thin: `/api/runtime/status` returns normalized status and backfills `runtime_snapshot` when the source payload omits it; `/api/runtime/monitor-snapshot`, `/api/runtime/agent-inspector`, and `/api/runtime/capture-tail` are read-oriented JSON surfaces; `/api/runtime/start`, `/api/runtime/stop`, and `/api/runtime/restart` are POST action routes; `/api/runtime/send-input` accepts only object JSON with `lane` and `text` and fails closed for empty, malformed, non-object, or invalid-length bodies without calling the backend sender.
+- Controller shell and static assets stay local to `controller/`; missing or traversal asset paths return JSON 404 rather than exposing filesystem content.
 - `turn_state.json` now carries legacy enum `state` together with `active_role` and `active_lane`, so swapped profiles can surface the actual bound owner lane instead of re-inferencing fixed `Claude` / `Codex` ownership from enum names alone.
 - Start surfaces share the read-only doctor preflight: CLI, GUI, and TUI launch paths block before supervisor spawn when required checks fail.
 - A `STATUS: implement` handoff that is already proven complete by matching `/work` plus `STATUS: verified` `/verify` truth is treated like a duplicate handoff: it remains visible in debug compatibility slots, but canonical `control` drops to `none` and watcher routing returns to verify follow-up for next-control cleanup.
@@ -1016,6 +1019,8 @@ The next phase should standardize one `grounded brief` artifact.
       - `future_reviewed_memory_reversal`
       - `future_reviewed_memory_conflict_visibility`
     - `transition_identity_requirement = canonical_local_transition_id_required`
+    - `transition_mutation_identity_requirement = canonical_transition_id_and_aggregate_fingerprint_required`
+    - the mutation identity guard marker is stricter than that audit-contract label: every shipped transition mutation handler requires both the `canonical_transition_id` and a request `aggregate_fingerprint` matching `aggregate_identity_ref.normalized_delta_fingerprint`; this applies to `/api/aggregate-transition-apply`, `/api/aggregate-transition-result`, `/api/aggregate-transition-stop`, `/api/aggregate-transition-reverse`, and `/api/aggregate-transition-conflict-check`
     - `operator_visible_reason_boundary = explicit_reason_or_note_required`
     - `audit_stage = contract_only_not_emitted`
     - `audit_store_boundary = canonical_transition_record_separate_from_task_log`
@@ -1048,6 +1053,7 @@ The next phase should standardize one `grounded brief` artifact.
     - one `transition_action` from the shipped fixed vocabulary
     - `reviewed_scope = same_session_exact_recurrence_aggregate_only`
     - one `aggregate_identity_ref`
+    - apply, result-confirmation, stop, reverse, and conflict-visibility handlers resolve this record only when `canonical_transition_id` and `aggregate_fingerprint` both match the stored transition identity; wrong-fingerprint requests return 404 and leave transition stage, `applied_at`, `result_at`, `apply_result`, active effects, stopped/reversed records, and conflict-visibility records unchanged
     - exact supporting refs
     - one explicit `operator_reason_or_note`
     - `record_stage = emitted_record_only_not_applied`
@@ -1272,7 +1278,7 @@ The next phase should standardize one `grounded brief` artifact.
   - `edit` is still deferred in UI and persistence
 - the default reviewer assumption is the same local user on the same machine
 - review outcomes should be append-only audit events rather than silent replacement of candidate history
-- current code now has `accept`, `reject`, and `defer` review action APIs but still has no `edit` API, no payload-visible reviewed-memory store, no payload-visible proof-record or proof-boundary surface, and no user-level memory application
+- current code now has `accept`, `reject`, `defer`, and `edit` review action APIs but still has no payload-visible reviewed-memory store, no payload-visible proof-record or proof-boundary surface, and no user-level memory application
 
 ### Scope / Conflict / Rollback Boundary
 

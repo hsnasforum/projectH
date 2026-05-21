@@ -6,6 +6,18 @@ from typing import Any
 
 from .schema import append_jsonl, iso_utc, parse_iso_utc
 
+WRAPPER_EVENT_SCHEMA_VERSION = "1"
+
+ALL_EVENT_TYPES = frozenset({
+    "READY",
+    "HEARTBEAT",
+    "DISPATCH_SEEN",
+    "TASK_ACCEPTED",
+    "TASK_DONE",
+    "BRIDGE_DIAGNOSTIC",
+    "BROKEN",
+})
+
 TASK_EVENT_TYPES = frozenset({
     "DISPATCH_SEEN",
     "TASK_ACCEPTED",
@@ -13,9 +25,41 @@ TASK_EVENT_TYPES = frozenset({
     "BRIDGE_DIAGNOSTIC",
 })
 
+_WRAPPER_EVENT_REQUIRED_FIELDS: dict[str, frozenset[str]] = {
+    "READY": frozenset(),
+    "HEARTBEAT": frozenset({"pid"}),
+    "DISPATCH_SEEN": frozenset({"job_id", "dispatch_id", "control_seq", "attempt"}),
+    "TASK_ACCEPTED": frozenset({"job_id", "dispatch_id", "control_seq", "attempt"}),
+    "TASK_DONE": frozenset({"job_id", "dispatch_id", "control_seq"}),
+    "BRIDGE_DIAGNOSTIC": frozenset({"job_id", "dispatch_id", "control_seq", "code"}),
+    "BROKEN": frozenset(),
+}
+
+_WRAPPER_EVENT_REQUIRED_FIELD_ORDER: dict[str, tuple[str, ...]] = {
+    "HEARTBEAT": ("pid",),
+    "DISPATCH_SEEN": ("job_id", "dispatch_id", "control_seq", "attempt"),
+    "TASK_ACCEPTED": ("job_id", "dispatch_id", "control_seq", "attempt"),
+    "TASK_DONE": ("job_id", "dispatch_id", "control_seq"),
+    "BRIDGE_DIAGNOSTIC": ("job_id", "dispatch_id", "control_seq", "code"),
+}
+
 
 def lane_event_path(wrapper_events_dir: Path, lane_name: str) -> Path:
     return wrapper_events_dir / f"{lane_name.strip().lower()}.jsonl"
+
+
+def validate_wrapper_event_payload(
+    event_type: str,
+    payload: dict[str, Any],
+) -> list[str]:
+    """Return missing required wrapper-event payload fields."""
+    required = _WRAPPER_EVENT_REQUIRED_FIELDS.get(event_type)
+    if required is None:
+        return []
+    ordered_fields = _WRAPPER_EVENT_REQUIRED_FIELD_ORDER.get(event_type, ())
+    missing = [field for field in ordered_fields if field in required and field not in payload]
+    remaining = sorted(field for field in required if field not in payload and field not in ordered_fields)
+    return [*missing, *remaining]
 
 
 def append_wrapper_event(
@@ -31,9 +75,13 @@ def append_wrapper_event(
         "ts": iso_utc(),
         "lane": lane_name,
         "event_type": event_type,
+        "schema_version": WRAPPER_EVENT_SCHEMA_VERSION,
         "source": source,
         "payload": payload,
     }
+    missing_fields = validate_wrapper_event_payload(event_type, payload)
+    if missing_fields:
+        entry["_schema_warnings"] = missing_fields
     if derived_from:
         entry["derived_from"] = derived_from
     append_jsonl(

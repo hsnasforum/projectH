@@ -20,6 +20,7 @@ from config.settings import AppSettings
 from tools.file_reader import FileReaderTool
 from tools.file_search import FileSearchTool
 from tools.write_note import WriteNoteTool
+from tests.local_socket_guard import skip_unless_local_loopback_socket
 
 
 class _FakeWebSearchTool:
@@ -51,6 +52,8 @@ class HTTPIntegrationBase(unittest.TestCase):
     """Base class that boots a real HTTP server on a random port."""
 
     def setUp(self) -> None:
+        skip_unless_local_loopback_socket(self)
+
         self._tmpdir = TemporaryDirectory()
         self.tmp_path = Path(self._tmpdir.name)
 
@@ -83,9 +86,22 @@ class HTTPIntegrationBase(unittest.TestCase):
         self._server_thread.start()
 
     def tearDown(self) -> None:
-        self.server.shutdown()
-        self._server_thread.join(timeout=5)
-        self._tmpdir.cleanup()
+        server = getattr(self, "server", None)
+        server_thread = getattr(self, "_server_thread", None)
+        tmpdir = getattr(self, "_tmpdir", None)
+
+        try:
+            if server is not None:
+                server.shutdown()
+            if server_thread is not None:
+                server_thread.join(timeout=5)
+        finally:
+            try:
+                if server is not None:
+                    server.server_close()
+            finally:
+                if tmpdir is not None:
+                    tmpdir.cleanup()
 
     # ---- helpers ----
 
@@ -125,6 +141,43 @@ class HTTPIntegrationBase(unittest.TestCase):
 
     def read_json(self, resp: http.client.HTTPResponse) -> dict:
         return json.loads(resp.read().decode("utf-8"))
+
+
+class TestHTTPIntegrationBaseCleanup(unittest.TestCase):
+    def test_tear_down_closes_server_resources_without_socket(self) -> None:
+        calls: list[tuple[str, int | None]] = []
+
+        class FakeServer:
+            def shutdown(self) -> None:
+                calls.append(("shutdown", None))
+
+            def server_close(self) -> None:
+                calls.append(("server_close", None))
+
+        class FakeThread:
+            def join(self, timeout: int | None = None) -> None:
+                calls.append(("join", timeout))
+
+        class FakeTemporaryDirectory:
+            def cleanup(self) -> None:
+                calls.append(("cleanup", None))
+
+        case = object.__new__(HTTPIntegrationBase)
+        case.server = FakeServer()
+        case._server_thread = FakeThread()
+        case._tmpdir = FakeTemporaryDirectory()
+
+        HTTPIntegrationBase.tearDown(case)
+
+        self.assertEqual(
+            calls,
+            [
+                ("shutdown", None),
+                ("join", 5),
+                ("server_close", None),
+                ("cleanup", None),
+            ],
+        )
 
 
 # =====================================================================

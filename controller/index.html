@@ -2,20 +2,21 @@
 <html lang="ko">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>🏡 Pipeline Office — Cozy RPG</title>
+<link rel="stylesheet" as="style" crossorigin href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.css" />
 <link rel="stylesheet" href="/controller-assets/css/office.css">
 </head>
 <body>
 
 <!-- Toolbar -->
 <div class="toolbar">
-  <span class="title">Pipeline Office</span>
-  <span class="badge stopped" id="status-badge">Stopped</span>
+  <span class="title">파이프라인 오피스</span>
+  <span class="badge stopped" id="status-badge">중지됨</span>
   <div class="spacer"></div>
-  <button class="btn" id="btn-start">▶ Start</button>
-  <button class="btn" id="btn-stop">■ Stop</button>
-  <button class="btn" id="btn-restart">↻ Restart</button>
+  <button class="btn" id="btn-start">▶ 시작</button>
+  <button class="btn" id="btn-stop">■ 중지</button>
+  <button class="btn" id="btn-restart">↻ 재시작</button>
   <button class="btn" id="mute-btn" title="음소거" style="font-size:13px;padding:6px 10px">🔊</button>
   <button class="btn" id="motion-btn" title="장식 효과 줄이기" style="font-size:13px;padding:6px 10px">✨</button>
   <span class="storage-warn" id="storage-warn" title="localStorage 사용 불가 — 새로고침 시 toolbar 설정이 초기화됩니다">⚠ 설정 비저장</span>
@@ -33,7 +34,7 @@
     </div>
     <section class="operator-attention-board hidden" id="operator-attention-board" aria-live="assertive"></section>
     <div class="marquee-bar">
-      <span class="marquee-badge">📢 NEWS</span>
+      <span class="marquee-badge">📢 소식</span>
       <div class="marquee-track"><span class="marquee-text" id="marquee-text">Welcome to the Pipeline Office ✿ 모두가 각자의 자리에서 즐겁게 일하는 중입니다.</span></div>
     </div>
   </div>
@@ -64,7 +65,7 @@
   <aside class="agent-inspector" id="agent-inspector" aria-live="polite">
     <div class="agent-inspector-header">
       <div>
-        <div class="ai-kicker" id="ai-kicker">Agent Inspector</div>
+        <div class="ai-kicker" id="ai-kicker">에이전트 검사기</div>
         <div class="ai-title" id="ai-title">—</div>
       </div>
       <button class="ai-close" id="ai-close" title="인스펙터 닫기">×</button>
@@ -73,7 +74,7 @@
       <div class="ai-empty">에이전트를 선택하면 세부 상태가 표시됩니다.</div>
     </div>
     <div class="agent-inspector-actions">
-      <button class="ai-action" id="ai-open-log">Terminal</button>
+      <button class="ai-action" id="ai-open-log">터미널 열기</button>
     </div>
   </aside>
 
@@ -81,7 +82,7 @@
   <div class="sidebar">
     <div id="tab-content" class="tab-content"></div>
     <div class="event-log-section">
-      <div class="sidebar-section-title">Quest Log</div>
+      <div class="sidebar-section-title">의뢰 기록</div>
       <div class="event-list" id="event-list">
         <div class="event-item"><span class="event-time">—</span><span class="event-msg">대기 중</span></div>
       </div>
@@ -89,6 +90,7 @@
   </div>
 </div>
 
+<script src="/controller-assets/js/queue-presentation.js"></script>
 <script src="/controller-assets/js/cozy.js"></script>
 </body>
 </html>

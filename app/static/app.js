@@ -2755,6 +2755,12 @@
         const aggregateKey = item.aggregate_key && typeof item.aggregate_key === "object" ? item.aggregate_key : {};
         const capabilityOutcome = String(item.reviewed_memory_capability_status?.capability_outcome || "").trim() || "미확인";
         const auditStage = String(item.reviewed_memory_transition_audit_contract?.audit_stage || "").trim() || "미확인";
+        const transitionMutationRequirement = String(item.reviewed_memory_transition_audit_contract?.transition_mutation_identity_requirement || "").trim();
+        const mutationGuardLabel = transitionMutationRequirement === "canonical_transition_id_and_aggregate_fingerprint_required"
+          ? "mutation canonical_transition_id+aggregate_fingerprint"
+          : transitionMutationRequirement
+          ? `mutation ${transitionMutationRequirement}`
+          : "";
         const planningTargetLabel = String(item.reviewed_memory_planning_target_ref?.target_label || "").trim();
         const card = document.createElement("article");
         card.className = "history-item";
@@ -2775,6 +2781,7 @@
           item.last_seen_at ? `마지막 확인 ${formatWhen(item.last_seen_at)}` : "",
           `capability ${capabilityOutcome}`,
           `audit ${auditStage}`,
+          mutationGuardLabel,
         ].filter(Boolean).join(" · ");
         titleWrap.appendChild(meta);
         header.appendChild(titleWrap);

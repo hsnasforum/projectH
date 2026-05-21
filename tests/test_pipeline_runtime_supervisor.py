@@ -8747,7 +8747,7 @@ class RuntimeSupervisorTest(unittest.TestCase):
             self.assertIn("--run run-123", command)
             self.assertNotIn("--output-format stream-json", command)
 
-    def test_lane_vendor_command_adds_stream_json_for_claude_default(self) -> None:
+    def test_lane_vendor_command_keeps_claude_default_in_pane_text_mode(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             _write_active_profile(root)
@@ -8756,8 +8756,9 @@ class RuntimeSupervisorTest(unittest.TestCase):
                 command = supervisor._lane_vendor_command("Claude")
             self.assertEqual(
                 command,
-                'exec "/usr/bin/claude" --dangerously-skip-permissions --output-format stream-json',
+                'exec "/usr/bin/claude" --dangerously-skip-permissions',
             )
+            self.assertNotIn("--output-format", command)
 
     def test_lane_vendor_command_uses_yolo_for_gemini(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

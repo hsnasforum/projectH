@@ -1304,7 +1304,7 @@ def _lane_wrapper(args: argparse.Namespace) -> int:
         task_hint_dir=task_hint_dir,
         child_pid=child.pid,
         send_child_bytes=lambda data: os.write(master_fd, data),
-        jsonl_mode=args.lane == "Claude",
+        jsonl_mode=False,
     )
 
     stop_requested = False

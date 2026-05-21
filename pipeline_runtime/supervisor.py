@@ -2868,8 +2868,6 @@ class RuntimeSupervisor:
         if command_parts:
             binary = self._find_cli_bin(command_parts[0])
             command_args = list(command_parts[1:])
-            if lane_name == "Claude" and "--output-format" not in command_args:
-                command_args.extend(["--output-format", "stream-json"])
             args = " ".join(shlex.quote(part) for part in command_args)
             if args:
                 return f'exec "{binary}" {args}'

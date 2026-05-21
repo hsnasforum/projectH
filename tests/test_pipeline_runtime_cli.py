@@ -642,6 +642,61 @@ class WrapperEmitterTest(unittest.TestCase):
             self.assertIn("TASK_ACCEPTED", event_types)
             self.assertEqual(events[-1]["payload"]["dispatch_id"], "dispatch-fallback")
 
+    def test_lane_wrapper_initializes_all_lanes_in_text_mode(self) -> None:
+        class FakeChild:
+            pid = 900
+
+            def poll(self) -> int:
+                return 0
+
+            def wait(self) -> int:
+                return 0
+
+        class FakeEmitter:
+            def __init__(
+                self,
+                *,
+                wrapper_dir: Path,
+                lane_name: str,
+                task_hint_dir: Path | None,
+                child_pid: int,
+                send_child_bytes,
+                jsonl_mode: bool = False,
+            ) -> None:
+                modes.append((lane_name, jsonl_mode))
+
+            def tick(self, *, now: float | None = None) -> None:
+                return None
+
+            def feed(self, text: str, *, now: float | None = None) -> None:
+                return None
+
+            def finish_stream(self, *, now: float | None = None) -> None:
+                return None
+
+        modes: list[tuple[str, bool]] = []
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for lane_name in ("Claude", "Codex", "Gemini"):
+                master_fd, slave_fd = os.pipe()
+                args = Namespace(
+                    project_root=str(root),
+                    run_id=f"run-{lane_name.lower()}",
+                    lane=lane_name,
+                    shell_command="true",
+                    task_hint_dir="",
+                    heartbeat_interval=1.0,
+                )
+                with (
+                    patch.object(runtime_cli.pty, "openpty", return_value=(master_fd, slave_fd)),
+                    patch.object(runtime_cli.subprocess, "Popen", return_value=FakeChild()),
+                    patch.object(runtime_cli, "_WrapperEmitter", FakeEmitter),
+                    patch.object(runtime_cli.signal, "signal"),
+                ):
+                    self.assertEqual(runtime_cli._lane_wrapper(args), 0)
+
+        self.assertEqual(modes, [("Claude", False), ("Codex", False), ("Gemini", False)])
+
     def test_active_task_hint_with_invalid_control_seq_emits_bridge_diagnostic(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

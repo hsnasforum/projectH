@@ -49,15 +49,15 @@ function queueRuntimePayload(overrides = {}) {
 async function expectQueuePresentation(page, { text, tone }) {
   const currentRound = page
     .locator("#tab-content .sidebar-section")
-    .filter({ hasText: "Current Round" });
+    .filter({ hasText: "진행 라운드" });
   const queueValue = currentRound
     .locator(".info-row")
-    .filter({ hasText: "Queue" })
+    .filter({ hasText: "큐" })
     .locator(".info-value");
 
   await expect(queueValue).toHaveText(text);
   await expect(queueValue).toHaveClass(new RegExp(`\\b${tone}\\b`));
-  await expect(page.locator("#marquee-text")).toContainText(`Queue ${text}`);
+  await expect(page.locator("#marquee-text")).toContainText(`대기열 ${text}`);
 }
 
 test.describe("controller office smoke", () => {
@@ -240,9 +240,9 @@ test.describe("controller office smoke", () => {
 
     await page.goto("/controller");
 
-    await expect(page.locator("#tab-content")).toContainText("Token HUD");
-    await expect(page.locator("#tab-content")).toContainText("fallback");
-    await expect(page.locator("#tab-content")).toContainText("25%cache");
+    await expect(page.locator("#tab-content")).toContainText("토큰 사용 현황");
+    await expect(page.locator("#tab-content")).toContainText("연결 중");
+    await expect(page.locator("#tab-content")).toContainText("25%캐시");
     const codexRow = page.locator('.token-agent-row[data-agent="Codex"]');
     await expect(codexRow).toContainText("WORKING");
     await expect(codexRow).toContainText("1.5k");
@@ -344,7 +344,7 @@ test.describe("controller office smoke", () => {
     await page.waitForTimeout(700);
 
     await expect(page.locator("#status-badge")).toHaveText("RUNNING");
-    const incidentRoom = page.locator("#tab-content").filter({ hasText: "Incident Room" });
+    const incidentRoom = page.locator("#tab-content").filter({ hasText: "인시던트 룸" });
     await expect(incidentRoom).toContainText("attention");
     await expect(incidentRoom).toContainText("stale_control_advisory");
     await expect(incidentRoom).toContainText("stale_advisory_pending");
@@ -461,8 +461,8 @@ test.describe("controller office smoke", () => {
     await expect(board).toContainText("인증 로그인 필요");
     await expect(board).toContainText("Claude / VERIFY");
     await expect(board).toContainText("implement_handoff.md · #1544");
-    await expect(board.locator(".operator-attention-row").filter({ hasText: "Next" })).toContainText("operator_required");
-    await expect(board.locator(".operator-attention-row").filter({ hasText: "Eligible" })).toContainText("true");
+    await expect(board.locator(".operator-attention-row").filter({ hasText: "다음" })).toContainText("operator_required");
+    await expect(board.locator(".operator-attention-row").filter({ hasText: "자격" })).toContainText("true");
 
     const attention = await page.evaluate(() => window.getOperatorAttentionDebug());
     expect(attention.operatorEligible).toBe(true);

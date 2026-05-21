@@ -55,9 +55,9 @@ const ROLE_ICONS = Object.freeze({
   advisory: '✨',
 });
 const ROLE_OWNER_LABELS = Object.freeze({
-  implement: 'Implement owner',
-  verify: 'Verify owner',
-  advisory: 'Advisory owner',
+  implement: '구현 담당 (Implement)',
+  verify: '검증 담당 (Verify)',
+  advisory: '자문 담당 (Advisory)',
 });
 const LANE_META = {
   Claude: { role: 'implement', zone: 'claude_desk', color: '#5c9a4a' },
@@ -3731,15 +3731,15 @@ function renderOperatorAttentionBoard() {
     <div class="operator-attention-body">
       <div class="operator-attention-row"><span>대상</span><span>${esc(target)}</span></div>
       <div class="operator-attention-row"><span>조치</span><span>${esc(attention.decision)}</span></div>
-      <div class="operator-attention-row"><span>Control</span><span>${esc(attention.controlLabel)}</span></div>
-      ${attention.nextAction ? `<div class="operator-attention-row"><span>Next</span><span>${esc(attention.nextAction)}</span></div>` : ''}
-      ${attention.policy ? `<div class="operator-attention-row"><span>Policy</span><span>${esc(attention.policy)}</span></div>` : ''}
-      ${attention.operatorEligible !== undefined ? `<div class="operator-attention-row"><span>Eligible</span><span>${esc(String(attention.operatorEligible))}</span></div>` : ''}
+      <div class="operator-attention-row"><span>제어</span><span>${esc(attention.controlLabel)}</span></div>
+      ${attention.nextAction ? `<div class="operator-attention-row"><span>다음</span><span>${esc(attention.nextAction)}</span></div>` : ''}
+      ${attention.policy ? `<div class="operator-attention-row"><span>정책</span><span>${esc(attention.policy)}</span></div>` : ''}
+      ${attention.operatorEligible !== undefined ? `<div class="operator-attention-row"><span>자격</span><span>${esc(String(attention.operatorEligible))}</span></div>` : ''}
       <div class="operator-attention-evidence">${esc(attention.evidence)}</div>
     </div>
     <div class="operator-attention-actions">
       <button class="operator-attention-action" id="operator-attention-open-log" ${attention.laneName ? '' : 'disabled'}>${esc(actionLabel)}</button>
-      <button class="operator-attention-action secondary" id="operator-attention-refresh">Refresh</button>
+      <button class="operator-attention-action secondary" id="operator-attention-refresh">새로고침</button>
     </div>
   `;
 }
@@ -3760,7 +3760,7 @@ function renderAgentTokenMeta(agent) {
   const tokens = formatCompactNumber(metric.total_tokens || 0);
   const cost = formatUsd(metric.total_cost_usd || 0);
   const cache = formatPercent(metric.cache_hit_rate);
-  return `<div class="agent-token-meta"><span>${esc(tokens)} tok</span><span>${esc(cost)}</span><span>${esc(cache)} cache</span></div>`;
+  return `<div class="agent-token-meta"><span>${esc(tokens)} 토큰</span><span>${esc(cost)}</span><span>${esc(cache)} 캐시</span></div>`;
 }
 
 function renderTokenHud() {
@@ -3768,8 +3768,8 @@ function renderTokenHud() {
   if (!hud) {
     return `
       <div class="sidebar-section token-hud">
-        <div class="sidebar-section-title">Token HUD</div>
-        <div class="info-row"><span class="info-label">Stream</span><span class="info-value dim">connecting</span></div>
+        <div class="sidebar-section-title">토큰 사용 현황</div>
+        <div class="info-row"><span class="info-label">스트림</span><span class="info-value dim">연결 중</span></div>
       </div>
     `;
   }
@@ -3792,16 +3792,14 @@ function renderTokenHud() {
         <span class="token-agent-cache">${esc(formatPercent(agent.cache_hit_rate))}</span>
       </div>
     `;
-  }).join('') : '<div class="token-agent-empty">usage stream 대기 중</div>';
+  }).join('') : '<div class="token-agent-empty">사용량 스트림 대기 중</div>';
   return `
     <div class="sidebar-section token-hud">
-      <div class="sidebar-section-title">Token HUD</div>
-      <div class="info-row"><span class="info-label">Stream</span><span class="info-value ${streamClass}">${runtimeStateStore.monitor.connected ? 'live' : 'fallback'}</span></div>
-      <div class="info-row"><span class="info-label">Collector</span><span class="info-value ${collectorClass}">${esc(collector.phase || 'missing')}</span></div>
+      <div class="info-row"><span class="info-label">수집기</span><span class="info-value ${collectorClass}">${esc(collector.phase || 'missing')}</span></div>
       <div class="token-total-strip">
-        <span><b>${esc(formatCompactNumber(totals.total_tokens || 0))}</b><em>tokens</em></span>
-        <span><b>${esc(formatUsd(totals.total_cost_usd || 0))}</b><em>cost</em></span>
-        <span><b>${esc(formatPercent(totals.cache_hit_rate))}</b><em>cache</em></span>
+        <span><b>${esc(formatCompactNumber(totals.total_tokens || 0))}</b><em>토큰</em></span>
+        <span><b>${esc(formatUsd(totals.total_cost_usd || 0))}</b><em>비용</em></span>
+        <span><b>${esc(formatPercent(totals.cache_hit_rate))}</b><em>캐시</em></span>
       </div>
       <div class="token-agent-list">${agentRows}</div>
     </div>
@@ -3842,28 +3840,28 @@ function renderAgentInspector() {
   const agentDetail = details?.agent || {};
   body.innerHTML = `
     <div class="ai-section">
-      <div class="ai-section-title">Assignment</div>
-      <div class="ai-row"><span>Role</span><span>${esc(agent?.role || agentDetail.role || '—')}</span></div>
-      <div class="ai-row"><span>State</span><span>${esc(agent?.state || agentDetail.state || '—')}</span></div>
+      <div class="ai-section-title">배정 정보</div>
+      <div class="ai-row"><span>역할</span><span>${esc(agent?.role || agentDetail.role || '—')}</span></div>
+      <div class="ai-row"><span>상태</span><span>${esc(agent?.state || agentDetail.state || '—')}</span></div>
       <div class="ai-row"><span>PID</span><span>${esc(agentDetail.pid || agent?.pid || '—')}</span></div>
-      <div class="ai-row"><span>Last event</span><span>${esc(agentDetail.last_event_at || agent?.lastEventAt || '—')}</span></div>
+      <div class="ai-row"><span>마지막 이벤트</span><span>${esc(agentDetail.last_event_at || agent?.lastEventAt || '—')}</span></div>
     </div>
     <div class="ai-section">
-      <div class="ai-section-title">Usage</div>
-      <div class="ai-row"><span>Tokens</span><span>${esc(formatCompactNumber(metric.total_tokens || agent?.tokenTotal || 0))}</span></div>
-      <div class="ai-row"><span>Cost</span><span>${esc(formatUsd(metric.total_cost_usd || agent?.tokenCost || 0))}</span></div>
-      <div class="ai-row"><span>Cache hit</span><span>${esc(formatPercent(metric.cache_hit_rate))}</span></div>
+      <div class="ai-section-title">사용량</div>
+      <div class="ai-row"><span>토큰 수</span><span>${esc(formatCompactNumber(metric.total_tokens || agent?.tokenTotal || 0))}</span></div>
+      <div class="ai-row"><span>비용</span><span>${esc(formatUsd(metric.total_cost_usd || agent?.tokenCost || 0))}</span></div>
+      <div class="ai-row"><span>캐시 히트율</span><span>${esc(formatPercent(metric.cache_hit_rate))}</span></div>
     </div>
     <div class="ai-section">
-      <div class="ai-section-title">Current Prompt</div>
+      <div class="ai-section-title">현재 프롬프트</div>
       <div class="ai-text">${esc(currentPrompt)}</div>
     </div>
     <div class="ai-section">
-      <div class="ai-section-title">Recent Conversation</div>
+      <div class="ai-section-title">최근 대화 기록</div>
       <div class="ai-conversation">${
         conversation.length
           ? conversation.map((line) => `<div class="ai-conversation-line">${esc(truncate(line, 220))}</div>`).join('')
-          : '<div class="ai-conversation-line">tail 대기 중</div>'
+          : '<div class="ai-conversation-line">대화 기록 대기 중</div>'
       }</div>
     </div>
   `;
@@ -3952,7 +3950,7 @@ function updateMarqueeFromState(data) {
   const latestWork = basename((artifacts.latest_work || {}).path);
   const latestVerify = basename((artifacts.latest_verify || {}).path);
   const projectRoot = payload.project_root || 'runtime loading';
-  setMarqueeText(`Runtime ${presentation.runtimeState} · Queue ${presentation.pipelineQueueStatus} · Control ${presentation.controlStatus} · Work ${latestWork} · Verify ${latestVerify} · ${projectRoot}`);
+  setMarqueeText(`구동 상태 ${presentation.runtimeState} · 대기열 ${presentation.pipelineQueueStatus} · 제어 상태 ${presentation.controlStatus} · 최근 작업 ${latestWork} · 최근 검증 ${latestVerify} · ${projectRoot}`);
 }
 
 function pushEvent(type, msg) {
@@ -4316,7 +4314,7 @@ function roleOwnerRows(data = runtimeStateStore.data) {
   const owners = currentRoleOwners(data);
   return ROLE_NAMES.map((role) => {
     const title = ROLE_OWNER_LABELS[role] || `${role} owner`;
-    const owner = owners[role] || 'Unassigned';
+    const owner = owners[role] || '미배정';
     return `<div class="info-row"><span class="info-label">${esc(title)}</span><span class="info-value neutral">${esc(owner)}</span></div>`;
   }).join('');
 }
@@ -4352,41 +4350,41 @@ function renderSidebar() {
 
   container.innerHTML = `
     <div class="sidebar-section">
-      <div class="sidebar-section-title">Party Roster</div>
+      <div class="sidebar-section-title">파티 명부</div>
       ${laneCards}
     </div>
     ${renderTokenHud()}
     <div class="sidebar-section">
-      <div class="sidebar-section-title">Role Binding</div>
+      <div class="sidebar-section-title">역할 배정</div>
       ${roleOwnerRows(data)}
     </div>
     <div class="sidebar-section">
-      <div class="sidebar-section-title">Current Round</div>
-      <div class="info-row"><span class="info-label">Runtime</span><span class="info-value ${presentation.runtimeClass}">${esc(presentation.runtimeState)}</span></div>
-      <div class="info-row"><span class="info-label">Queue</span><span class="info-value ${presentation.pipelineQueueClass}">${esc(presentation.pipelineQueueStatus)}</span></div>
-      <div class="info-row"><span class="info-label">Control</span><span class="info-value ${presentation.controlClass}">${esc(presentation.controlStatus)}</span></div>
-      <div class="info-row"><span class="info-label">Seq</span><span class="info-value dim">${control.active_control_seq >= 0 ? `#${control.active_control_seq}` : '—'}</span></div>
-      <div class="info-row"><span class="info-label">Round</span><span class="info-value ${presentation.roundClass}">${esc(presentation.roundState)}</span></div>
+      <div class="sidebar-section-title">진행 라운드</div>
+      <div class="info-row"><span class="info-label">런타임</span><span class="info-value ${presentation.runtimeClass}">${esc(presentation.runtimeState)}</span></div>
+      <div class="info-row"><span class="info-label">큐</span><span class="info-value ${presentation.pipelineQueueClass}">${esc(presentation.pipelineQueueStatus)}</span></div>
+      <div class="info-row"><span class="info-label">제어 상태</span><span class="info-value ${presentation.controlClass}">${esc(presentation.controlStatus)}</span></div>
+      <div class="info-row"><span class="info-label">시퀀스</span><span class="info-value dim">${control.active_control_seq >= 0 ? `#${control.active_control_seq}` : '—'}</span></div>
+      <div class="info-row"><span class="info-label">라운드</span><span class="info-value ${presentation.roundClass}">${esc(presentation.roundState)}</span></div>
     </div>
     <div class="sidebar-section">
-      <div class="sidebar-section-title">Artifacts</div>
-      <div class="info-row"><span class="info-label">Latest work</span><span class="info-value">${esc(truncate(basename((artifacts.latest_work || {}).path), 24))}</span></div>
-      <div class="info-row"><span class="info-label">Latest verify</span><span class="info-value">${esc(truncate(basename((artifacts.latest_verify || {}).path), 24))}</span></div>
-      <div class="info-row"><span class="info-label">Receipt ID</span><span class="info-value dim">${esc(lastReceipt.receipt_id || data.last_receipt_id || '—')}</span></div>
-      <div class="info-row"><span class="info-label">Receipt result</span><span class="info-value ${(lastReceipt.verify_result || '') === 'passed' ? 'ok' : (lastReceipt.verify_result ? 'warn' : 'dim')}">${esc(lastReceipt.verify_result || '—')}</span></div>
+      <div class="sidebar-section-title">산출물</div>
+      <div class="info-row"><span class="info-label">최신 작업 (Work)</span><span class="info-value">${esc(truncate(basename((artifacts.latest_work || {}).path), 24))}</span></div>
+      <div class="info-row"><span class="info-label">최신 검증 (Verify)</span><span class="info-value">${esc(truncate(basename((artifacts.latest_verify || {}).path), 24))}</span></div>
+      <div class="info-row"><span class="info-label">영수증 ID</span><span class="info-value dim">${esc(lastReceipt.receipt_id || data.last_receipt_id || '—')}</span></div>
+      <div class="info-row"><span class="info-label">영수증 결과</span><span class="info-value ${(lastReceipt.verify_result || '') === 'passed' ? 'ok' : (lastReceipt.verify_result ? 'warn' : 'dim')}">${esc(lastReceipt.verify_result || '—')}</span></div>
     </div>
     <div class="sidebar-section">
-      <div class="sidebar-section-title">Incident Room</div>
-      <div class="info-row"><span class="info-label">Watcher</span><span class="info-value ${presentation.watcherClass}">${esc(presentation.watcherStatus)}</span></div>
-      <div class="info-row"><span class="info-label">Automation</span><span class="info-value ${presentation.automationHealth === 'ok' ? 'ok' : 'warn'}">${esc(presentation.automationHealth)}</span></div>
-      ${presentation.automationReason ? `<div class="info-row"><span class="info-label">Reason</span><span class="info-value warn">${esc(presentation.automationReason)}</span></div>` : ''}
-      ${presentation.automationFamily ? `<div class="info-row"><span class="info-label">Family</span><span class="info-value neutral">${esc(presentation.automationFamily)}</span></div>` : ''}
-      ${presentation.automationAction ? `<div class="info-row"><span class="info-label">Next action</span><span class="info-value neutral">${esc(presentation.automationAction)}</span></div>` : ''}
-      ${presentation.automationDetail ? `<div class="info-row"><span class="info-label">Detail</span><span class="info-value warn">${esc(presentation.automationDetail)}</span></div>` : ''}
-      ${presentation.controlAgeCycles ? `<div class="info-row"><span class="info-label">Control age</span><span class="info-value dim">${esc(String(presentation.controlAgeCycles))}</span></div>` : ''}
-      ${presentation.staleAdvisoryPending ? `<div class="info-row"><span class="info-label">Advisory</span><span class="info-value warn">stale_advisory_pending</span></div>` : ''}
-      <div class="info-row"><span class="info-label">Operator eligible</span><span class="info-value dim">${esc(String(autonomy.operator_eligible ?? false))}</span></div>
-      ${degradedReasons.map((reason) => `<div class="info-row"><span class="info-label">Degraded</span><span class="info-value warn">${esc(reason)}</span></div>`).join('')}
+      <div class="sidebar-section-title">인시던트 룸</div>
+      <div class="info-row"><span class="info-label">와처</span><span class="info-value ${presentation.watcherClass}">${esc(presentation.watcherStatus)}</span></div>
+      <div class="info-row"><span class="info-label">자동화 상태</span><span class="info-value ${presentation.automationHealth === 'ok' ? 'ok' : 'warn'}">${esc(presentation.automationHealth)}</span></div>
+      ${presentation.automationReason ? `<div class="info-row"><span class="info-label">사유</span><span class="info-value warn">${esc(presentation.automationReason)}</span></div>` : ''}
+      ${presentation.automationFamily ? `<div class="info-row"><span class="info-label">패밀리</span><span class="info-value neutral">${esc(presentation.automationFamily)}</span></div>` : ''}
+      ${presentation.automationAction ? `<div class="info-row"><span class="info-label">다음 조치</span><span class="info-value neutral">${esc(presentation.automationAction)}</span></div>` : ''}
+      ${presentation.automationDetail ? `<div class="info-row"><span class="info-label">상세 정보</span><span class="info-value warn">${esc(presentation.automationDetail)}</span></div>` : ''}
+      ${presentation.controlAgeCycles ? `<div class="info-row"><span class="info-label">제어 주기</span><span class="info-value dim">${esc(String(presentation.controlAgeCycles))}</span></div>` : ''}
+      ${presentation.staleAdvisoryPending ? `<div class="info-row"><span class="info-label">자문 대기</span><span class="info-value warn">대기 중</span></div>` : ''}
+      <div class="info-row"><span class="info-label">운영자 개입 가능</span><span class="info-value dim">${esc(String(autonomy.operator_eligible ?? false))}</span></div>
+      ${degradedReasons.map((reason) => `<div class="info-row"><span class="info-label">성능 저하</span><span class="info-value warn">${esc(reason)}</span></div>`).join('')}
     </div>
   `;
 }

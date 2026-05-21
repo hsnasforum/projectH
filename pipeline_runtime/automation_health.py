@@ -17,6 +17,9 @@ from .operator_autonomy import (
 STALE_CONTROL_CYCLE_THRESHOLD = 900
 STALE_ADVISORY_GRACE_CYCLES = 60
 IMPLEMENT_READY_IDLE_CYCLE_THRESHOLD = 120
+AUTOMATION_HEALTH_RULESET_VERSION = "2026-05-20.active_verify_round_status_v1"
+AUTOMATION_HEALTH_DERIVED_BY = "pipeline_runtime.automation_health.derive_automation_health"
+LOCAL_SOCKET_GUARD_AUTO_HELD_REASON = "local_socket_guard_auto_held"
 
 AUTOMATION_HEALTH_VALUES = frozenset({"ok", "recovering", "attention", "needs_operator"})
 AUTOMATION_NEXT_ACTION_VALUES = frozenset({
@@ -35,6 +38,7 @@ REAL_RISK_REASONS = frozenset({
     "security_incident",
     "destructive_risk",
     "auth_login_required",
+    "codex_verify_dispatch_failure_loop",
 })
 
 PR_BOUNDARY_REASONS = PUBLICATION_BOUNDARY_REASON_CODES
@@ -58,6 +62,7 @@ VERIFY_FOLLOWUP_REASONS = frozenset({
     "waiting_next_control",
     "verify_followup_no_next_control",
     "verified_blockers_resolved",
+    LOCAL_SOCKET_GUARD_AUTO_HELD_REASON,
     "pr_merge_completed",
     "pr_merge_head_mismatch",
     OPERATOR_APPROVAL_COMPLETED_REASON,
@@ -75,7 +80,9 @@ RECOVERY_REASONS = frozenset({
 VERIFY_PENDING_DISPATCH_STALL_STAGES = frozenset({
     "dispatch_seen_missing",
     "task_accept_missing",
+    "dispatch_failed_submit",
 })
+ACTIVE_VERIFY_ROUND_STATES = frozenset({"VERIFY_PENDING", "VERIFYING"})
 
 
 def _clean(value: object) -> str:
@@ -114,7 +121,7 @@ def automation_incident_family(reason_code: object) -> str:
         return "idle_release_pending"
     if reason == "post_accept_completion_stall" or reason.startswith("receipt_"):
         return "completion_stall"
-    if reason == "dispatch_stall":
+    if reason in {"dispatch_stall", "codex_verify_dispatch_failure_loop"}:
         return "dispatch_stall"
     if reason == "signal_mismatch":
         return "signal_mismatch"
@@ -126,7 +133,15 @@ def automation_incident_family(reason_code: object) -> str:
         return "session_recovery_exhausted"
     if reason == "lane_recovery_exhausted" or reason.endswith("_recovery_failed") or reason.endswith("_broken"):
         return "lane_recovery_exhausted"
-    return reason
+    if reason == "runtime_stopped" or reason in (
+        REAL_RISK_REASONS
+        | PR_BOUNDARY_REASONS
+        | ADVISORY_FOLLOWUP_REASONS
+        | VERIFY_FOLLOWUP_REASONS
+        | RECOVERY_REASONS
+    ):
+        return reason
+    return ""
 
 
 def _is_real_risk_reason(reason: str) -> bool:
@@ -203,6 +218,14 @@ def _active_verify_dispatch_wait_stage(status: Mapping[str, Any]) -> str:
     return stage
 
 
+def _active_verify_round_state(status: Mapping[str, Any]) -> str:
+    active_round = status.get("active_round")
+    if not isinstance(active_round, Mapping):
+        return ""
+    state = _clean(active_round.get("state"))
+    return state if state in ACTIVE_VERIFY_ROUND_STATES else ""
+
+
 def _active_round_degraded_reason(status: Mapping[str, Any]) -> str:
     active_round = status.get("active_round")
     if not isinstance(active_round, Mapping):
@@ -221,12 +244,52 @@ def _first_recovery_exhaustion(degraded_reasons: list[str]) -> str:
     return ""
 
 
+def _advisory_enabled(status: Mapping[str, Any]) -> bool:
+    runtime_controls = status.get("runtime_controls")
+    if isinstance(runtime_controls, Mapping) and "advisory_enabled" in runtime_controls:
+        return bool(runtime_controls.get("advisory_enabled"))
+    return True
+
+
+def _followup_action(status: Mapping[str, Any], reason: str) -> str:
+    if reason in VERIFY_FOLLOWUP_REASONS:
+        return "verify_followup"
+    return "advisory_followup" if _advisory_enabled(status) else "verify_followup"
+
+
+def _automation_health_source(
+    status: Mapping[str, Any] | None,
+    payload: Mapping[str, object],
+) -> dict[str, object]:
+    runtime_state = ""
+    active_round_state = ""
+    turn_state_name = ""
+    if isinstance(status, Mapping):
+        runtime_state = _clean(status.get("runtime_state"))
+        active_round = status.get("active_round")
+        if isinstance(active_round, Mapping):
+            active_round_state = _clean(active_round.get("state"))
+        turn_state = status.get("turn_state")
+        if isinstance(turn_state, Mapping):
+            turn_state_name = _clean(turn_state.get("state"))
+    return {
+        "ruleset_version": AUTOMATION_HEALTH_RULESET_VERSION,
+        "derived_by": AUTOMATION_HEALTH_DERIVED_BY,
+        "runtime_state": runtime_state,
+        "active_round_state": active_round_state,
+        "turn_state": turn_state_name,
+        "reason_code": _clean(payload.get("automation_reason_code")),
+        "next_action": _clean(payload.get("automation_next_action")),
+    }
+
+
 def _payload(
     *,
     health: str,
     reason_code: str = "",
     next_action: str = "continue",
     control_age_cycles: int = 0,
+    status: Mapping[str, Any] | None = None,
 ) -> dict[str, object]:
     family = automation_incident_family(reason_code)
     normalized_control_age = _nonnegative_int(control_age_cycles)
@@ -240,7 +303,7 @@ def _payload(
         if stale_control_seq
         else ""
     )
-    return {
+    result = {
         "automation_health": health if health in AUTOMATION_HEALTH_VALUES else "attention",
         "automation_reason_code": reason_code,
         "automation_incident_family": family,
@@ -254,6 +317,8 @@ def _payload(
         "stale_advisory_pending": stale_advisory_pending,
         "automation_health_detail": health_detail,
     }
+    result["automation_health_source"] = _automation_health_source(status, result)
+    return result
 
 
 def _control_age_from_status(status: Mapping[str, Any]) -> int:
@@ -283,6 +348,7 @@ def derive_automation_health(status: Mapping[str, Any] | None) -> dict[str, obje
             reason_code=reason_code,
             next_action=next_action,
             control_age_cycles=control_age_cycles,
+            status=status,
         )
 
     runtime_state = _clean(status.get("runtime_state")) or "STOPPED"
@@ -322,6 +388,12 @@ def derive_automation_health(status: Mapping[str, Any] | None) -> dict[str, obje
         return payload(health="needs_operator", reason_code=degraded_reason, next_action=next_action)
 
     if runtime_state == "BROKEN":
+        if degraded_reason == LOCAL_SOCKET_GUARD_AUTO_HELD_REASON:
+            return payload(
+                health="attention",
+                reason_code=degraded_reason,
+                next_action="verify_followup",
+            )
         return payload(
             health="needs_operator",
             reason_code=degraded_reason or "runtime_broken",
@@ -330,7 +402,7 @@ def derive_automation_health(status: Mapping[str, Any] | None) -> dict[str, obje
 
     if autonomy_mode == "triage":
         reason = autonomy_reason or "operator_candidate_pending"
-        action = "verify_followup" if reason in VERIFY_FOLLOWUP_REASONS else "advisory_followup"
+        action = _followup_action(status, reason)
         return payload(health="attention", reason_code=reason, next_action=action)
 
     if autonomy_mode == "recovery":
@@ -340,7 +412,7 @@ def derive_automation_health(status: Mapping[str, Any] | None) -> dict[str, obje
 
     if autonomy_mode == "pending_operator":
         reason = autonomy_reason or "operator_candidate_pending"
-        return payload(health="attention", reason_code=reason, next_action="advisory_followup")
+        return payload(health="attention", reason_code=reason, next_action=_followup_action(status, reason))
 
     if autonomy_mode == "hibernate":
         reason = autonomy_reason or degraded_reason or "idle_hibernate"
@@ -370,6 +442,19 @@ def derive_automation_health(status: Mapping[str, Any] | None) -> dict[str, obje
                 reason_code="dispatch_stall",
                 next_action="verify_followup",
             )
+        return payload(
+            health="recovering",
+            reason_code="dispatch_stall",
+            next_action="retrying",
+        )
+
+    active_verify_round_state = _active_verify_round_state(status)
+    if (
+        runtime_state not in {"STOPPED", "STOPPING", "BROKEN"}
+        and not degraded_reason
+        and turn_name == "IDLE"
+        and active_verify_round_state
+    ):
         return payload(
             health="recovering",
             reason_code="dispatch_stall",
@@ -427,10 +512,10 @@ def derive_automation_health(status: Mapping[str, Any] | None) -> dict[str, obje
     if degraded_reason:
         if degraded_reason in RECOVERY_REASONS:
             return payload(health="recovering", reason_code=degraded_reason, next_action="retrying")
-        if degraded_reason in VERIFY_FOLLOWUP_REASONS or degraded_reason.startswith("receipt_"):
+        if degraded_reason.startswith("receipt_"):
             action = "verify_followup"
         else:
-            action = "advisory_followup"
+            action = _followup_action(status, degraded_reason)
         return payload(health="attention", reason_code=degraded_reason, next_action=action)
 
     if runtime_state in {"STARTING", "STOPPING"}:
@@ -448,7 +533,7 @@ def derive_automation_health(status: Mapping[str, Any] | None) -> dict[str, obje
         return payload(
             health="attention",
             reason_code="stale_control_advisory",
-            next_action="advisory_followup",
+            next_action=_followup_action(status, "stale_control_advisory"),
         )
 
     return payload(health="ok")

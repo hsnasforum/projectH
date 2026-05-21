@@ -3,7 +3,9 @@ from __future__ import annotations
 import unittest
 
 from pipeline_runtime.automation_health import (
+    AUTOMATION_HEALTH_RULESET_VERSION,
     IMPLEMENT_READY_IDLE_CYCLE_THRESHOLD,
+    LOCAL_SOCKET_GUARD_AUTO_HELD_REASON,
     STALE_ADVISORY_GRACE_CYCLES,
     STALE_CONTROL_CYCLE_THRESHOLD,
     derive_automation_health,
@@ -14,6 +16,113 @@ from pipeline_runtime.operator_autonomy import (
     PR_CREATION_GATE_REASON,
     PR_MERGE_GATE_REASON,
 )
+
+
+class AutomationHealthTest(unittest.TestCase):
+    def test_advisory_disabled_attention_routes_to_verify_followup(self) -> None:
+        health = derive_automation_health(
+            {
+                "runtime_state": "RUNNING",
+                "runtime_controls": {"advisory_enabled": False},
+                "autonomy": {"mode": "triage", "reason_code": "slice_ambiguity"},
+            }
+        )
+
+        self.assertEqual(health["automation_health"], "attention")
+        self.assertEqual(health["automation_reason_code"], "slice_ambiguity")
+        self.assertEqual(health["automation_next_action"], "verify_followup")
+
+    def test_advisory_disabled_pending_operator_routes_to_verify_followup(self) -> None:
+        health = derive_automation_health(
+            {
+                "runtime_state": "RUNNING",
+                "runtime_controls": {"advisory_enabled": False},
+                "autonomy": {"mode": "pending_operator", "reason_code": "slice_ambiguity"},
+            }
+        )
+
+        self.assertEqual(health["automation_health"], "attention")
+        self.assertEqual(health["automation_reason_code"], "slice_ambiguity")
+        self.assertEqual(health["automation_next_action"], "verify_followup")
+
+    def test_advisory_disabled_degraded_fallback_routes_to_verify_followup(self) -> None:
+        health = derive_automation_health(
+            {
+                "runtime_state": "DEGRADED",
+                "runtime_controls": {"advisory_enabled": False},
+                "degraded_reason": "slice_ambiguity",
+                "degraded_reasons": ["slice_ambiguity"],
+            }
+        )
+
+        self.assertEqual(health["automation_health"], "attention")
+        self.assertEqual(health["automation_reason_code"], "slice_ambiguity")
+        self.assertEqual(health["automation_next_action"], "verify_followup")
+
+    def test_advisory_disabled_stale_control_grace_routes_to_verify_followup(self) -> None:
+        health = derive_automation_health(
+            {
+                "runtime_state": "RUNNING",
+                "runtime_controls": {"advisory_enabled": False},
+                "control_age_cycles": STALE_CONTROL_CYCLE_THRESHOLD + STALE_ADVISORY_GRACE_CYCLES,
+            }
+        )
+
+        self.assertEqual(health["automation_health"], "attention")
+        self.assertEqual(health["automation_reason_code"], "stale_control_advisory")
+        self.assertEqual(health["automation_next_action"], "verify_followup")
+        self.assertTrue(health["stale_advisory_pending"])
+
+    def test_slice_ambiguity_routes_to_advisory_followup(self) -> None:
+        health = derive_automation_health(
+            {
+                "runtime_state": "RUNNING",
+                "autonomy": {"mode": "triage", "reason_code": "slice_ambiguity"},
+            }
+        )
+
+        self.assertEqual(health["automation_health"], "attention")
+        self.assertEqual(health["automation_reason_code"], "slice_ambiguity")
+        self.assertEqual(health["automation_next_action"], "advisory_followup")
+
+    def test_advisory_disabled_advisory_followup_reasons_route_to_verify_followup(self) -> None:
+        for reason in (
+            "context_exhaustion",
+            "session_rollover",
+            "continue_vs_switch",
+            "operator_retriage_no_next_control",
+        ):
+            with self.subTest(reason=reason):
+                health = derive_automation_health(
+                    {
+                        "runtime_state": "RUNNING",
+                        "runtime_controls": {"advisory_enabled": False},
+                        "autonomy": {"mode": "triage", "reason_code": reason},
+                    }
+                )
+
+                self.assertEqual(health["automation_health"], "attention")
+                self.assertEqual(health["automation_reason_code"], reason)
+                self.assertEqual(health["automation_next_action"], "verify_followup")
+
+    def test_advisory_enabled_advisory_followup_reasons_stay_advisory_followup(self) -> None:
+        for reason in (
+            "context_exhaustion",
+            "session_rollover",
+            "continue_vs_switch",
+            "operator_retriage_no_next_control",
+        ):
+            with self.subTest(reason=reason):
+                health = derive_automation_health(
+                    {
+                        "runtime_state": "RUNNING",
+                        "autonomy": {"mode": "triage", "reason_code": reason},
+                    }
+                )
+
+                self.assertEqual(health["automation_health"], "attention")
+                self.assertEqual(health["automation_reason_code"], reason)
+                self.assertEqual(health["automation_next_action"], "advisory_followup")
 
 
 class PipelineRuntimeAutomationHealthTest(unittest.TestCase):
@@ -32,6 +141,33 @@ class PipelineRuntimeAutomationHealthTest(unittest.TestCase):
         self.assertEqual(health["automation_incident_family"], "runtime_stopped")
         self.assertEqual(health["automation_next_action"], "operator_required")
 
+    def test_broken_local_socket_guard_routes_to_verify_followup(self) -> None:
+        health = derive_automation_health(
+            {
+                "runtime_state": "BROKEN",
+                "degraded_reason": LOCAL_SOCKET_GUARD_AUTO_HELD_REASON,
+                "degraded_reasons": [LOCAL_SOCKET_GUARD_AUTO_HELD_REASON],
+            }
+        )
+
+        self.assertEqual(health["automation_health"], "attention")
+        self.assertEqual(health["automation_reason_code"], LOCAL_SOCKET_GUARD_AUTO_HELD_REASON)
+        self.assertEqual(health["automation_incident_family"], LOCAL_SOCKET_GUARD_AUTO_HELD_REASON)
+        self.assertEqual(health["automation_next_action"], "verify_followup")
+
+    def test_generic_broken_runtime_still_requires_operator(self) -> None:
+        health = derive_automation_health(
+            {
+                "runtime_state": "BROKEN",
+                "degraded_reason": "runtime_launch_failed:RuntimeError",
+                "degraded_reasons": ["runtime_launch_failed:RuntimeError"],
+            }
+        )
+
+        self.assertEqual(health["automation_health"], "needs_operator")
+        self.assertEqual(health["automation_reason_code"], "runtime_launch_failed:RuntimeError")
+        self.assertEqual(health["automation_next_action"], "operator_required")
+
     def test_dispatch_stall_maps_to_verify_attention(self) -> None:
         health = derive_automation_health(
             {
@@ -46,6 +182,25 @@ class PipelineRuntimeAutomationHealthTest(unittest.TestCase):
         self.assertEqual(health["automation_incident_family"], "dispatch_stall")
         self.assertEqual(health["automation_next_action"], "verify_followup")
 
+    def test_codex_verify_dispatch_failure_loop_requires_operator(self) -> None:
+        health = derive_automation_health(
+            {
+                "runtime_state": "DEGRADED",
+                "degraded_reason": "codex_verify_dispatch_failure_loop",
+                "degraded_reasons": ["codex_verify_dispatch_failure_loop"],
+                "active_round": {
+                    "state": "VERIFY_PENDING",
+                    "dispatch_stage": "dispatch_failed_submit",
+                    "degraded_reason": "codex_verify_dispatch_failure_loop",
+                },
+            }
+        )
+
+        self.assertEqual(health["automation_health"], "needs_operator")
+        self.assertEqual(health["automation_reason_code"], "codex_verify_dispatch_failure_loop")
+        self.assertEqual(health["automation_incident_family"], "dispatch_stall")
+        self.assertEqual(health["automation_next_action"], "operator_required")
+
     def test_completion_stall_maps_to_canonical_family(self) -> None:
         health = derive_automation_health(
             {
@@ -58,6 +213,18 @@ class PipelineRuntimeAutomationHealthTest(unittest.TestCase):
         self.assertEqual(health["automation_health"], "attention")
         self.assertEqual(health["automation_incident_family"], "completion_stall")
         self.assertEqual(health["automation_next_action"], "verify_followup")
+
+    def test_unknown_reason_code_returns_empty_family(self) -> None:
+        health = derive_automation_health(
+            {
+                "runtime_state": "DEGRADED",
+                "degraded_reason": "totally_unknown_reason_xyz",
+                "degraded_reasons": ["totally_unknown_reason_xyz"],
+            }
+        )
+
+        self.assertEqual(health["automation_reason_code"], "totally_unknown_reason_xyz")
+        self.assertEqual(health["automation_incident_family"], "")
 
     def test_operator_approval_completed_recovery_routes_to_verify_followup(self) -> None:
         health = derive_automation_health(
@@ -88,6 +255,34 @@ class PipelineRuntimeAutomationHealthTest(unittest.TestCase):
             health["automation_reason_code"],
             COMMIT_PUSH_BUNDLE_AUTHORIZATION_REASON,
         )
+        self.assertEqual(health["automation_next_action"], "verify_followup")
+
+    def test_waiting_next_control_retriage_surface_is_not_operator_wait(self) -> None:
+        health = derive_automation_health(
+            {
+                "runtime_state": "RUNNING",
+                "runtime_controls": {"advisory_enabled": False},
+                "control": {"active_control_status": "none"},
+                "autonomy": {
+                    "mode": "triage",
+                    "reason_code": "waiting_next_control",
+                    "operator_policy": "internal_only",
+                    "decision_class": "next_slice_selection",
+                    "operator_eligible": False,
+                },
+                "turn_state": {
+                    "state": "VERIFY_FOLLOWUP",
+                    "reason": "operator_request_gated",
+                    "active_control_file": "",
+                    "active_control_seq": 1994,
+                    "active_role": "verify",
+                    "active_lane": "Codex",
+                },
+            }
+        )
+
+        self.assertEqual(health["automation_health"], "attention")
+        self.assertEqual(health["automation_reason_code"], "waiting_next_control")
         self.assertEqual(health["automation_next_action"], "verify_followup")
 
     def test_control_age_below_threshold_is_not_stale(self) -> None:
@@ -384,6 +579,68 @@ class PipelineRuntimeAutomationHealthTest(unittest.TestCase):
         self.assertEqual(health["automation_reason_code"], "dispatch_stall")
         self.assertEqual(health["automation_incident_family"], "dispatch_stall")
         self.assertEqual(health["automation_next_action"], "retrying")
+        source = health["automation_health_source"]
+        self.assertEqual(source["ruleset_version"], AUTOMATION_HEALTH_RULESET_VERSION)
+        self.assertEqual(source["derived_by"], "pipeline_runtime.automation_health.derive_automation_health")
+        self.assertEqual(source["runtime_state"], "RUNNING")
+        self.assertEqual(source["active_round_state"], "VERIFY_PENDING")
+        self.assertEqual(source["turn_state"], "")
+        self.assertEqual(source["reason_code"], "dispatch_stall")
+        self.assertEqual(source["next_action"], "retrying")
+
+    def test_idle_verify_pending_round_is_not_ok_continue(self) -> None:
+        health = derive_automation_health(
+            {
+                "runtime_state": "RUNNING",
+                "control": {"active_control_status": "implement"},
+                "turn_state": {"state": "IDLE", "reason": "verify_lease_released"},
+                "active_round": {
+                    "state": "VERIFY_PENDING",
+                    "dispatch_stage": "",
+                    "degraded_reason": "",
+                },
+            }
+        )
+
+        self.assertEqual(health["automation_health"], "recovering")
+        self.assertEqual(health["automation_reason_code"], "dispatch_stall")
+        self.assertEqual(health["automation_incident_family"], "dispatch_stall")
+        self.assertEqual(health["automation_next_action"], "retrying")
+        source = health["automation_health_source"]
+        self.assertEqual(source["ruleset_version"], AUTOMATION_HEALTH_RULESET_VERSION)
+        self.assertEqual(source["derived_by"], "pipeline_runtime.automation_health.derive_automation_health")
+        self.assertEqual(source["runtime_state"], "RUNNING")
+        self.assertEqual(source["active_round_state"], "VERIFY_PENDING")
+        self.assertEqual(source["turn_state"], "IDLE")
+        self.assertEqual(source["reason_code"], "dispatch_stall")
+        self.assertEqual(source["next_action"], "retrying")
+
+    def test_idle_verifying_round_is_not_ok_continue(self) -> None:
+        health = derive_automation_health(
+            {
+                "runtime_state": "RUNNING",
+                "control": {"active_control_status": "implement"},
+                "turn_state": {"state": "IDLE", "reason": "implement_activity_detected"},
+                "active_round": {
+                    "state": "VERIFYING",
+                    "completion_stage": "receipt_close_pending",
+                    "degraded_reason": "",
+                },
+            }
+        )
+
+        self.assertEqual(health["automation_health"], "recovering")
+        self.assertEqual(health["automation_reason_code"], "dispatch_stall")
+        self.assertEqual(health["automation_incident_family"], "dispatch_stall")
+        self.assertEqual(health["automation_next_action"], "retrying")
+        source = health["automation_health_source"]
+        self.assertEqual(source["ruleset_version"], AUTOMATION_HEALTH_RULESET_VERSION)
+        self.assertEqual(source["derived_by"], "pipeline_runtime.automation_health.derive_automation_health")
+        self.assertEqual(source["runtime_state"], "RUNNING")
+        self.assertEqual(source["active_round_state"], "VERIFYING")
+        self.assertEqual(source["turn_state"], "IDLE")
+        self.assertEqual(source["reason_code"], "dispatch_stall")
+        self.assertEqual(source["next_action"], "retrying")
 
     def test_active_implement_lane_ready_too_long_is_not_silent_ok(self) -> None:
         health = derive_automation_health(
@@ -462,9 +719,9 @@ class PipelineRuntimeAutomationHealthTest(unittest.TestCase):
             }
         )
 
-        self.assertEqual(health["automation_health"], "ok")
-        self.assertEqual(health["automation_reason_code"], "")
-        self.assertEqual(health["automation_next_action"], "continue")
+        self.assertEqual(health["automation_health"], "recovering")
+        self.assertEqual(health["automation_reason_code"], "dispatch_stall")
+        self.assertEqual(health["automation_next_action"], "retrying")
 
 
 if __name__ == "__main__":

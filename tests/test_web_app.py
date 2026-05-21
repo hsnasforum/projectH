@@ -1,6 +1,7 @@
 import base64
 import hashlib
 import json
+import os
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -15,6 +16,7 @@ from storage.web_search_store import WebSearchStore
 from tools.file_reader import FileReaderTool
 from tools.file_search import FileSearchTool
 from tools.write_note import WriteNoteTool
+from tests.local_socket_guard import requires_local_loopback_socket as _requires_local_loopback_socket
 
 
 class _FakePdfPage:
@@ -1471,6 +1473,94 @@ class WebAppServiceTest(unittest.TestCase):
                 candidate["supporting_signal_refs"],
             )
 
+    @_requires_local_loopback_socket
+    def test_session_http_payload_exposes_transition_mutation_identity_requirement(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            first_source_path = tmp_path / "http-session-source-a.md"
+            second_source_path = tmp_path / "http-session-source-b.md"
+            shared_body = "# HTTP Session Payload\n\nhello world"
+            first_source_path.write_text(shared_body, encoding="utf-8")
+            second_source_path.write_text(shared_body, encoding="utf-8")
+
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                model_provider="mock",
+            )
+            service = WebAppService(settings=settings)
+            session_id = "reviewed-memory-session-http-payload-marker"
+            corrected_text = "수정본입니다.\n핵심만 남겼습니다."
+
+            first = service.handle_chat(
+                {
+                    "session_id": session_id,
+                    "source_path": str(first_source_path),
+                    "provider": "mock",
+                }
+            )
+            service.submit_correction(
+                {
+                    "session_id": session_id,
+                    "message_id": first["response"]["source_message_id"],
+                    "corrected_text": corrected_text,
+                }
+            )
+            second = service.handle_chat(
+                {
+                    "session_id": session_id,
+                    "source_path": str(second_source_path),
+                    "provider": "mock",
+                }
+            )
+            service.submit_correction(
+                {
+                    "session_id": session_id,
+                    "message_id": second["response"]["source_message_id"],
+                    "corrected_text": corrected_text,
+                }
+            )
+
+            import http.client
+            import threading
+
+            server = LocalOnlyHTTPServer(("127.0.0.1", 0), service)
+            port = server.server_address[1]
+            thread = threading.Thread(target=server.handle_request, daemon=True)
+            thread.start()
+
+            try:
+                conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+                conn.request(
+                    "GET",
+                    f"/api/session?session_id={session_id}",
+                    headers={
+                        "Host": f"127.0.0.1:{port}",
+                        "Origin": f"http://127.0.0.1:{port}",
+                    },
+                )
+                resp = conn.getresponse()
+                status = resp.status
+                resp_body = json.loads(resp.read().decode("utf-8"))
+                conn.close()
+            finally:
+                server.server_close()
+                thread.join(timeout=5)
+
+            self.assertEqual(status, 200)
+            self.assertTrue(resp_body["ok"])
+            aggregate = resp_body["session"]["recurrence_aggregate_candidates"][0]
+            audit_contract = aggregate["reviewed_memory_transition_audit_contract"]
+            self.assertEqual(
+                audit_contract["transition_identity_requirement"],
+                "canonical_local_transition_id_required",
+            )
+            self.assertEqual(
+                audit_contract["transition_mutation_identity_requirement"],
+                "canonical_transition_id_and_aggregate_fingerprint_required",
+            )
+
     def test_recurrence_aggregate_candidates_require_two_distinct_source_messages_and_ignore_same_anchor_replays(self) -> None:
         with TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
@@ -1641,6 +1731,7 @@ class WebAppServiceTest(unittest.TestCase):
                         "future_reviewed_memory_conflict_visibility",
                     ],
                     "transition_identity_requirement": "canonical_local_transition_id_required",
+                    "transition_mutation_identity_requirement": "canonical_transition_id_and_aggregate_fingerprint_required",
                     "operator_visible_reason_boundary": "explicit_reason_or_note_required",
                     "audit_stage": "contract_only_not_emitted",
                     "audit_store_boundary": "canonical_transition_record_separate_from_task_log",
@@ -2957,6 +3048,7 @@ class WebAppServiceTest(unittest.TestCase):
                         "future_reviewed_memory_conflict_visibility",
                     ],
                     "transition_identity_requirement": "canonical_local_transition_id_required",
+                    "transition_mutation_identity_requirement": "canonical_transition_id_and_aggregate_fingerprint_required",
                     "operator_visible_reason_boundary": "explicit_reason_or_note_required",
                     "audit_stage": "contract_only_not_emitted",
                     "audit_store_boundary": "canonical_transition_record_separate_from_task_log",
@@ -8637,6 +8729,10 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertTrue(payload["response"]["response_origin"]["verification_label"])
             self.assertIn("source_role", payload["response"]["evidence"][0])
 
+    @unittest.skipUnless(
+        os.environ.get("OLLAMA_LIVE_TESTS") == "1",
+        "requires OLLAMA_LIVE_TESTS=1 and a loaded Ollama model (e.g. qwen2.5:3b)",
+    )
     def test_handle_chat_external_fact_info_uses_web_search_when_enabled(self) -> None:
         with TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
@@ -8736,6 +8832,10 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertEqual(payload["response"]["response_origin"]["provider"], "web")
             self.assertIn("웹 검색 요약: 붉은사막", payload["response"]["text"])
 
+    @unittest.skipUnless(
+        os.environ.get("OLLAMA_LIVE_TESTS") == "1",
+        "requires OLLAMA_LIVE_TESTS=1 and a loaded Ollama model (e.g. qwen2.5:3b)",
+    )
     def test_handle_chat_external_fact_who_question_uses_web_search_when_enabled(self) -> None:
         with TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
@@ -8785,6 +8885,10 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertIn("김창섭", payload["response"]["text"])
             self.assertGreaterEqual(len(payload["response"].get("claim_coverage") or []), 1)
 
+    @unittest.skipUnless(
+        os.environ.get("OLLAMA_LIVE_TESTS") == "1",
+        "requires OLLAMA_LIVE_TESTS=1 and a loaded Ollama model (e.g. qwen2.5:3b)",
+    )
     def test_handle_chat_external_fact_who_question_with_spaced_question_mark_uses_web_search_when_enabled(self) -> None:
         with TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
@@ -8834,6 +8938,10 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertIn("김창섭", payload["response"]["text"])
             self.assertGreaterEqual(len(payload["response"].get("claim_coverage") or []), 1)
 
+    @unittest.skipUnless(
+        os.environ.get("OLLAMA_LIVE_TESTS") == "1",
+        "requires OLLAMA_LIVE_TESTS=1 and a loaded Ollama model (e.g. qwen2.5:3b)",
+    )
     def test_handle_chat_external_fact_colloquial_info_questions_use_web_search_when_enabled(self) -> None:
         with TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
@@ -8904,6 +9012,10 @@ class WebAppServiceTest(unittest.TestCase):
                         self.assertIn("김창섭", payload["response"]["text"])
                         self.assertGreaterEqual(len(payload["response"].get("claim_coverage") or []), 1)
 
+    @unittest.skipUnless(
+        os.environ.get("OLLAMA_LIVE_TESTS") == "1",
+        "requires OLLAMA_LIVE_TESTS=1 and a loaded Ollama model (e.g. qwen2.5:3b)",
+    )
     def test_handle_chat_low_confidence_external_fact_question_returns_search_suggestion(self) -> None:
         with TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
@@ -13714,6 +13826,388 @@ class WebAppServiceTest(unittest.TestCase):
                 )
             self.assertEqual(ctx.exception.status_code, 400)
 
+    def test_reviewed_memory_transition_actions_reject_mismatched_aggregate_fingerprint(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                model_provider="mock",
+            )
+            service = WebAppService(settings=settings)
+            session_id = "reviewed-memory-fingerprint-guard-session"
+            aggregate_fingerprint = "sha256:actual-reviewed-memory-aggregate"
+            wrong_fingerprint = "sha256:wrong-reviewed-memory-aggregate"
+            canonical_transition_id = "transition-local-fingerprint-guard"
+            aggregate_identity_ref = {
+                "candidate_family": "correction_rewrite_preference",
+                "key_scope": "correction_rewrite_recurrence",
+                "key_version": "explicit_pair_rewrite_delta_v1",
+                "derivation_source": "explicit_corrected_pair",
+                "normalized_delta_fingerprint": aggregate_fingerprint,
+            }
+
+            session = service.session_store.get_session(session_id)
+            session["reviewed_memory_emitted_transition_records"] = [
+                {
+                    "transition_record_version": "first_reviewed_memory_transition_record_v1",
+                    "canonical_transition_id": canonical_transition_id,
+                    "transition_action": "future_reviewed_memory_apply",
+                    "aggregate_identity_ref": dict(aggregate_identity_ref),
+                    "supporting_source_message_refs": [],
+                    "supporting_candidate_refs": [],
+                    "operator_reason_or_note": "fingerprint guard test",
+                    "record_stage": "applied_with_result",
+                    "task_log_mirror_relation": "mirror_allowed_not_canonical",
+                    "emitted_at": "2026-05-19T00:00:00+00:00",
+                    "applied_at": "2026-05-19T00:01:00+00:00",
+                    "result_at": "2026-05-19T00:02:00+00:00",
+                    "apply_result": {
+                        "result_version": "first_reviewed_memory_apply_result_v1",
+                        "applied_effect_kind": "reviewed_memory_correction_pattern",
+                        "applied_scope": "same_session_exact_recurrence_aggregate_only",
+                        "aggregate_identity_ref": dict(aggregate_identity_ref),
+                        "transition_ref": canonical_transition_id,
+                        "result_stage": "effect_active",
+                        "result_at": "2026-05-19T00:02:00+00:00",
+                    },
+                }
+            ]
+            session["reviewed_memory_active_effects"] = [
+                {
+                    "effect_kind": "reviewed_memory_correction_pattern",
+                    "aggregate_fingerprint": aggregate_fingerprint,
+                    "aggregate_identity_ref": dict(aggregate_identity_ref),
+                    "transition_ref": canonical_transition_id,
+                    "operator_reason_or_note": "fingerprint guard test",
+                    "activated_at": "2026-05-19T00:02:00+00:00",
+                }
+            ]
+            service.session_store._save(session_id, session)
+
+            with self.assertRaises(WebApiError) as stop_ctx:
+                service.stop_apply_aggregate_transition(
+                    {
+                        "session_id": session_id,
+                        "aggregate_fingerprint": wrong_fingerprint,
+                        "canonical_transition_id": canonical_transition_id,
+                    }
+                )
+            self.assertEqual(stop_ctx.exception.status_code, 404)
+            reloaded_session = service.session_store.get_session(session_id)
+            stored_record = reloaded_session["reviewed_memory_emitted_transition_records"][0]
+            self.assertEqual(stored_record["record_stage"], "applied_with_result")
+            self.assertEqual(stored_record["apply_result"]["result_stage"], "effect_active")
+            self.assertEqual(len(reloaded_session["reviewed_memory_active_effects"]), 1)
+
+            stop_result = service.stop_apply_aggregate_transition(
+                {
+                    "session_id": session_id,
+                    "aggregate_fingerprint": aggregate_fingerprint,
+                    "canonical_transition_id": canonical_transition_id,
+                }
+            )
+            self.assertEqual(stop_result["transition_record"]["record_stage"], "stopped")
+
+            with self.assertRaises(WebApiError) as reverse_ctx:
+                service.reverse_aggregate_transition(
+                    {
+                        "session_id": session_id,
+                        "aggregate_fingerprint": wrong_fingerprint,
+                        "canonical_transition_id": canonical_transition_id,
+                    }
+                )
+            self.assertEqual(reverse_ctx.exception.status_code, 404)
+            reloaded_session = service.session_store.get_session(session_id)
+            stored_record = reloaded_session["reviewed_memory_emitted_transition_records"][0]
+            self.assertEqual(stored_record["record_stage"], "stopped")
+            self.assertEqual(stored_record["apply_result"]["result_stage"], "effect_stopped")
+
+            reverse_result = service.reverse_aggregate_transition(
+                {
+                    "session_id": session_id,
+                    "aggregate_fingerprint": aggregate_fingerprint,
+                    "canonical_transition_id": canonical_transition_id,
+                }
+            )
+            self.assertEqual(reverse_result["transition_record"]["record_stage"], "reversed")
+
+            with self.assertRaises(WebApiError) as conflict_ctx:
+                service.check_aggregate_conflict_visibility(
+                    {
+                        "session_id": session_id,
+                        "aggregate_fingerprint": wrong_fingerprint,
+                        "canonical_transition_id": canonical_transition_id,
+                    }
+                )
+            self.assertEqual(conflict_ctx.exception.status_code, 404)
+            reloaded_session = service.session_store.get_session(session_id)
+            stored_records = reloaded_session["reviewed_memory_emitted_transition_records"]
+            self.assertEqual(stored_records[0]["record_stage"], "reversed")
+            self.assertEqual(stored_records[0]["apply_result"]["result_stage"], "effect_reversed")
+            self.assertEqual(
+                [
+                    record for record in stored_records
+                    if record.get("transition_action") == "future_reviewed_memory_conflict_visibility"
+                ],
+                [],
+            )
+
+    @_requires_local_loopback_socket
+    def test_reviewed_memory_transition_http_apply_result_reject_mismatched_aggregate_fingerprint(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                model_provider="mock",
+            )
+            service = WebAppService(settings=settings)
+            session_id = "reviewed-memory-http-apply-result-fingerprint-guard-session"
+            aggregate_fingerprint = "sha256:actual-reviewed-memory-http-apply-result-aggregate"
+            wrong_fingerprint = "sha256:wrong-reviewed-memory-http-apply-result-aggregate"
+            canonical_transition_id = "transition-local-http-apply-result-fingerprint-guard"
+            aggregate_identity_ref = {
+                "candidate_family": "correction_rewrite_preference",
+                "key_scope": "correction_rewrite_recurrence",
+                "key_version": "explicit_pair_rewrite_delta_v1",
+                "derivation_source": "explicit_corrected_pair",
+                "normalized_delta_fingerprint": aggregate_fingerprint,
+            }
+
+            session = service.session_store.get_session(session_id)
+            session["reviewed_memory_emitted_transition_records"] = [
+                {
+                    "transition_record_version": "first_reviewed_memory_transition_record_v1",
+                    "canonical_transition_id": canonical_transition_id,
+                    "transition_action": "future_reviewed_memory_apply",
+                    "aggregate_identity_ref": dict(aggregate_identity_ref),
+                    "supporting_source_message_refs": [],
+                    "supporting_candidate_refs": [],
+                    "operator_reason_or_note": "http apply/result fingerprint guard test",
+                    "record_stage": "emitted_record_only_not_applied",
+                    "task_log_mirror_relation": "mirror_allowed_not_canonical",
+                    "emitted_at": "2026-05-19T00:00:00+00:00",
+                }
+            ]
+            session["reviewed_memory_active_effects"] = []
+            service.session_store._save(session_id, session)
+
+            import http.client
+            import threading
+
+            def post_transition(path: str, aggregate_fingerprint_value: str) -> tuple[int, dict]:
+                server = LocalOnlyHTTPServer(("127.0.0.1", 0), service)
+                port = server.server_address[1]
+                thread = threading.Thread(target=server.handle_request, daemon=True)
+                thread.start()
+                try:
+                    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+                    body = json.dumps({
+                        "session_id": session_id,
+                        "aggregate_fingerprint": aggregate_fingerprint_value,
+                        "canonical_transition_id": canonical_transition_id,
+                    }).encode("utf-8")
+                    conn.request(
+                        "POST",
+                        path,
+                        body=body,
+                        headers={
+                            "Content-Type": "application/json",
+                            "Content-Length": str(len(body)),
+                            "Host": f"127.0.0.1:{port}",
+                            "Origin": f"http://127.0.0.1:{port}",
+                        },
+                    )
+                    resp = conn.getresponse()
+                    status = resp.status
+                    resp_body = json.loads(resp.read().decode("utf-8"))
+                    conn.close()
+                finally:
+                    server.server_close()
+                    thread.join(timeout=5)
+                return status, resp_body
+
+            status, resp_body = post_transition("/api/aggregate-transition-apply", wrong_fingerprint)
+            self.assertEqual(status, 404)
+            self.assertFalse(resp_body.get("ok", True))
+            self.assertIn("error", resp_body)
+            reloaded_session = service.session_store.get_session(session_id)
+            stored_record = reloaded_session["reviewed_memory_emitted_transition_records"][0]
+            self.assertEqual(stored_record["record_stage"], "emitted_record_only_not_applied")
+            self.assertNotIn("applied_at", stored_record)
+            self.assertNotIn("apply_result", stored_record)
+            self.assertFalse(reloaded_session.get("reviewed_memory_active_effects") or [])
+
+            status, resp_body = post_transition("/api/aggregate-transition-apply", aggregate_fingerprint)
+            self.assertEqual(status, 200)
+            self.assertTrue(resp_body.get("ok"))
+            self.assertEqual(resp_body["transition_record"]["record_stage"], "applied_pending_result")
+
+            status, resp_body = post_transition("/api/aggregate-transition-result", wrong_fingerprint)
+            self.assertEqual(status, 404)
+            self.assertFalse(resp_body.get("ok", True))
+            self.assertIn("error", resp_body)
+            reloaded_session = service.session_store.get_session(session_id)
+            stored_record = reloaded_session["reviewed_memory_emitted_transition_records"][0]
+            self.assertEqual(stored_record["record_stage"], "applied_pending_result")
+            self.assertIn("applied_at", stored_record)
+            self.assertNotIn("result_at", stored_record)
+            self.assertNotIn("apply_result", stored_record)
+            self.assertFalse(reloaded_session.get("reviewed_memory_active_effects") or [])
+
+    @_requires_local_loopback_socket
+    def test_reviewed_memory_transition_http_actions_reject_mismatched_aggregate_fingerprint(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = AppSettings(
+                sessions_dir=str(tmp_path / "sessions"),
+                task_log_path=str(tmp_path / "task_log.jsonl"),
+                notes_dir=str(tmp_path / "notes"),
+                model_provider="mock",
+            )
+            service = WebAppService(settings=settings)
+            session_id = "reviewed-memory-http-fingerprint-guard-session"
+            aggregate_fingerprint = "sha256:actual-reviewed-memory-http-aggregate"
+            wrong_fingerprint = "sha256:wrong-reviewed-memory-http-aggregate"
+            canonical_transition_id = "transition-local-http-fingerprint-guard"
+            aggregate_identity_ref = {
+                "candidate_family": "correction_rewrite_preference",
+                "key_scope": "correction_rewrite_recurrence",
+                "key_version": "explicit_pair_rewrite_delta_v1",
+                "derivation_source": "explicit_corrected_pair",
+                "normalized_delta_fingerprint": aggregate_fingerprint,
+            }
+
+            session = service.session_store.get_session(session_id)
+            session["reviewed_memory_emitted_transition_records"] = [
+                {
+                    "transition_record_version": "first_reviewed_memory_transition_record_v1",
+                    "canonical_transition_id": canonical_transition_id,
+                    "transition_action": "future_reviewed_memory_apply",
+                    "aggregate_identity_ref": dict(aggregate_identity_ref),
+                    "supporting_source_message_refs": [],
+                    "supporting_candidate_refs": [],
+                    "operator_reason_or_note": "http fingerprint guard test",
+                    "record_stage": "applied_with_result",
+                    "task_log_mirror_relation": "mirror_allowed_not_canonical",
+                    "emitted_at": "2026-05-19T00:00:00+00:00",
+                    "applied_at": "2026-05-19T00:01:00+00:00",
+                    "result_at": "2026-05-19T00:02:00+00:00",
+                    "apply_result": {
+                        "result_version": "first_reviewed_memory_apply_result_v1",
+                        "applied_effect_kind": "reviewed_memory_correction_pattern",
+                        "applied_scope": "same_session_exact_recurrence_aggregate_only",
+                        "aggregate_identity_ref": dict(aggregate_identity_ref),
+                        "transition_ref": canonical_transition_id,
+                        "result_stage": "effect_active",
+                        "result_at": "2026-05-19T00:02:00+00:00",
+                    },
+                }
+            ]
+            session["reviewed_memory_active_effects"] = [
+                {
+                    "effect_kind": "reviewed_memory_correction_pattern",
+                    "aggregate_fingerprint": aggregate_fingerprint,
+                    "aggregate_identity_ref": dict(aggregate_identity_ref),
+                    "transition_ref": canonical_transition_id,
+                    "operator_reason_or_note": "http fingerprint guard test",
+                    "activated_at": "2026-05-19T00:02:00+00:00",
+                }
+            ]
+            service.session_store._save(session_id, session)
+
+            import http.client
+            import threading
+
+            def post_transition(path: str, aggregate_fingerprint_value: str) -> tuple[int, dict]:
+                server = LocalOnlyHTTPServer(("127.0.0.1", 0), service)
+                port = server.server_address[1]
+                thread = threading.Thread(target=server.handle_request, daemon=True)
+                thread.start()
+                try:
+                    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+                    body = json.dumps({
+                        "session_id": session_id,
+                        "aggregate_fingerprint": aggregate_fingerprint_value,
+                        "canonical_transition_id": canonical_transition_id,
+                    }).encode("utf-8")
+                    conn.request(
+                        "POST",
+                        path,
+                        body=body,
+                        headers={
+                            "Content-Type": "application/json",
+                            "Content-Length": str(len(body)),
+                            "Host": f"127.0.0.1:{port}",
+                            "Origin": f"http://127.0.0.1:{port}",
+                        },
+                    )
+                    resp = conn.getresponse()
+                    status = resp.status
+                    resp_body = json.loads(resp.read().decode("utf-8"))
+                    conn.close()
+                finally:
+                    server.server_close()
+                    thread.join(timeout=5)
+                return status, resp_body
+
+            status, resp_body = post_transition("/api/aggregate-transition-stop", wrong_fingerprint)
+            self.assertEqual(status, 404)
+            self.assertFalse(resp_body.get("ok", True))
+            self.assertIn("error", resp_body)
+            reloaded_session = service.session_store.get_session(session_id)
+            stored_record = reloaded_session["reviewed_memory_emitted_transition_records"][0]
+            self.assertEqual(stored_record["record_stage"], "applied_with_result")
+            self.assertEqual(stored_record["apply_result"]["result_stage"], "effect_active")
+            self.assertEqual(len(reloaded_session["reviewed_memory_active_effects"]), 1)
+
+            stop_result = service.stop_apply_aggregate_transition(
+                {
+                    "session_id": session_id,
+                    "aggregate_fingerprint": aggregate_fingerprint,
+                    "canonical_transition_id": canonical_transition_id,
+                }
+            )
+            self.assertEqual(stop_result["transition_record"]["record_stage"], "stopped")
+
+            status, resp_body = post_transition("/api/aggregate-transition-reverse", wrong_fingerprint)
+            self.assertEqual(status, 404)
+            self.assertFalse(resp_body.get("ok", True))
+            self.assertIn("error", resp_body)
+            reloaded_session = service.session_store.get_session(session_id)
+            stored_record = reloaded_session["reviewed_memory_emitted_transition_records"][0]
+            self.assertEqual(stored_record["record_stage"], "stopped")
+            self.assertEqual(stored_record["apply_result"]["result_stage"], "effect_stopped")
+
+            reverse_result = service.reverse_aggregate_transition(
+                {
+                    "session_id": session_id,
+                    "aggregate_fingerprint": aggregate_fingerprint,
+                    "canonical_transition_id": canonical_transition_id,
+                }
+            )
+            self.assertEqual(reverse_result["transition_record"]["record_stage"], "reversed")
+
+            status, resp_body = post_transition("/api/aggregate-transition-conflict-check", wrong_fingerprint)
+            self.assertEqual(status, 404)
+            self.assertFalse(resp_body.get("ok", True))
+            self.assertIn("error", resp_body)
+            reloaded_session = service.session_store.get_session(session_id)
+            stored_records = reloaded_session["reviewed_memory_emitted_transition_records"]
+            self.assertEqual(stored_records[0]["record_stage"], "reversed")
+            self.assertEqual(stored_records[0]["apply_result"]["result_stage"], "effect_reversed")
+            self.assertEqual(
+                [
+                    record for record in stored_records
+                    if record.get("transition_action") == "future_reviewed_memory_conflict_visibility"
+                ],
+                [],
+            )
+
+    @_requires_local_loopback_socket
     def test_handler_dispatches_aggregate_transition_stop_to_service(self) -> None:
         with TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
@@ -13762,6 +14256,7 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertFalse(resp_body.get("ok", True))
             self.assertIn("error", resp_body)
 
+    @_requires_local_loopback_socket
     def test_handler_dispatches_aggregate_transition_stop_returns_ok(self) -> None:
         with TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
@@ -13864,6 +14359,7 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertIn("canonical_transition_id", resp_body)
             self.assertEqual(resp_body["transition_record"]["record_stage"], "stopped")
 
+    @_requires_local_loopback_socket
     def test_handler_dispatches_aggregate_transition_reverse_to_service(self) -> None:
         with TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
@@ -13914,6 +14410,7 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertFalse(resp_body.get("ok", True))
             self.assertIn("error", resp_body)
 
+    @_requires_local_loopback_socket
     def test_handler_dispatches_aggregate_transition_reverse_returns_ok(self) -> None:
         with TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
@@ -14019,6 +14516,7 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertIn("canonical_transition_id", resp_body)
             self.assertEqual(resp_body["transition_record"]["record_stage"], "reversed")
 
+    @_requires_local_loopback_socket
     def test_handler_dispatches_aggregate_transition_conflict_check_to_service(self) -> None:
         with TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
@@ -14069,6 +14567,7 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertFalse(resp_body.get("ok", True))
             self.assertIn("error", resp_body)
 
+    @_requires_local_loopback_socket
     def test_handler_dispatches_aggregate_transition_conflict_check_returns_ok(self) -> None:
         with TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
@@ -14190,6 +14689,7 @@ class WebAppServiceTest(unittest.TestCase):
         handler._send_json(200, {"ok": True})
 
 
+    @_requires_local_loopback_socket
     def test_handler_returns_400_for_malformed_utf8_request_body(self) -> None:
         """malformed UTF-8 요청 본문이 500이 아닌 400으로 응답됩니다."""
         with TemporaryDirectory() as tmp_dir:
@@ -14235,6 +14735,7 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertFalse(resp_body.get("ok", True))
             self.assertIn("UTF-8", resp_body["error"]["message"])
 
+    @_requires_local_loopback_socket
     def test_handler_returns_400_for_malformed_json_syntax_request_body(self) -> None:
         """valid UTF-8이지만 JSON 문법이 깨진 요청 본문이 400으로 응답됩니다."""
         with TemporaryDirectory() as tmp_dir:
@@ -14280,6 +14781,7 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertFalse(resp_body.get("ok", True))
             self.assertIn("JSON", resp_body["error"]["message"])
 
+    @_requires_local_loopback_socket
     def test_handler_returns_400_for_empty_request_body(self) -> None:
         """빈 요청 본문이 400으로 응답됩니다."""
         with TemporaryDirectory() as tmp_dir:
@@ -14324,6 +14826,7 @@ class WebAppServiceTest(unittest.TestCase):
             self.assertFalse(resp_body.get("ok", True))
             self.assertIn("요청 본문", resp_body["error"]["message"])
 
+    @_requires_local_loopback_socket
     def test_handler_returns_400_for_non_object_json_request_body(self) -> None:
         """JSON array 같은 non-object 본문이 400으로 응답됩니다."""
         with TemporaryDirectory() as tmp_dir:

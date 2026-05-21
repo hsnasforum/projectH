@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import io
@@ -85,6 +86,57 @@ class WrapperEmitterTest(unittest.TestCase):
             if wrapper_log.exists():
                 self.assertNotIn('"event_type": "READY"', wrapper_log.read_text(encoding="utf-8"))
 
+    def test_codex_update_auto_dismiss_uses_parsed_number_not_hardcoded(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            sent: list[bytes] = []
+            emitter = _WrapperEmitter(
+                wrapper_dir=Path(tmp),
+                lane_name="Codex",
+                task_hint_dir=None,
+                child_pid=125,
+                send_child_bytes=sent.append,
+            )
+
+            emitter.feed(
+                "\n".join(
+                    [
+                        "update available",
+                        "1) Install now",
+                        "2) skip until next version",
+                        "3) Cancel",
+                    ]
+                )
+                + "\n"
+            )
+
+            self.assertEqual(sent, [b"2\r"])
+
+    def test_emit_task_done_falls_back_for_invalid_control_seq(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            emitter = _WrapperEmitter(
+                wrapper_dir=Path(tmp),
+                lane_name="Codex",
+                task_hint_dir=None,
+                child_pid=126,
+                send_child_bytes=lambda _data: None,
+            )
+            emitter.accepted_key = "job-bad-seq|dispatch-bad|not-int|1"
+            emitter.accepted_payload = {
+                "job_id": "job-bad-seq",
+                "dispatch_id": "dispatch-bad",
+                "control_seq": object(),
+            }
+
+            emitter._emit_task_done()
+
+            events = [
+                json.loads(line)
+                for line in (Path(tmp) / "codex.jsonl").read_text(encoding="utf-8").splitlines()
+            ]
+            task_done = [event for event in events if event.get("event_type") == "TASK_DONE"]
+            self.assertEqual(len(task_done), 1)
+            self.assertEqual(task_done[0]["payload"]["control_seq"], -1)
+
     def test_codex_prompt_visible_emits_ready_when_not_blocked(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             sent: list[bytes] = []
@@ -166,7 +218,7 @@ class WrapperEmitterTest(unittest.TestCase):
 
             emitter.feed("❯\n", now=3.0)
             log_text = wrapper_log.read_text(encoding="utf-8")
-            self.assertIn('"event_type": "TASK_DONE"', log_text)
+            self.assertNotIn('"event_type": "TASK_DONE"', log_text)
             self.assertIn('"dispatch_id": "dispatch-42"', log_text)
             self.assertGreaterEqual(log_text.count('"event_type": "READY"'), 2)
             self.assertEqual(log_text.count('"event_type": "DISPATCH_SEEN"'), 1)
@@ -253,7 +305,7 @@ class WrapperEmitterTest(unittest.TestCase):
             self.assertIn('"event_type": "TASK_ACCEPTED"', log_text)
             self.assertIn('"dispatch_id": "dispatch-visible-busy"', log_text)
 
-    def test_ready_prompt_after_busy_tail_allows_task_done(self) -> None:
+    def test_ready_prompt_after_busy_tail_keeps_active_task_open(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             task_hint_dir = root / "task-hints"
@@ -286,10 +338,11 @@ class WrapperEmitterTest(unittest.TestCase):
             wrapper_log = root / "claude.jsonl"
             log_text = wrapper_log.read_text(encoding="utf-8")
             self.assertIn('"event_type": "TASK_ACCEPTED"', log_text)
-            self.assertIn('"event_type": "TASK_DONE"', log_text)
+            self.assertNotIn('"event_type": "TASK_DONE"', log_text)
+            self.assertIn('"event_type": "READY"', log_text)
             self.assertIn('"dispatch_id": "dispatch-busy-then-ready"', log_text)
 
-    def test_ready_prompt_without_trailing_newline_allows_task_done(self) -> None:
+    def test_ready_prompt_without_trailing_newline_keeps_active_task_open(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             task_hint_dir = root / "task-hints"
@@ -322,7 +375,8 @@ class WrapperEmitterTest(unittest.TestCase):
             wrapper_log = root / "claude.jsonl"
             log_text = wrapper_log.read_text(encoding="utf-8")
             self.assertIn('"event_type": "TASK_ACCEPTED"', log_text)
-            self.assertIn('"event_type": "TASK_DONE"', log_text)
+            self.assertNotIn('"event_type": "TASK_DONE"', log_text)
+            self.assertIn('"event_type": "READY"', log_text)
             self.assertIn('"dispatch_id": "dispatch-partial-ready"', log_text)
 
     def test_codex_bullet_activity_emits_task_accepted(self) -> None:
@@ -603,6 +657,47 @@ class SupervisorCliTest(unittest.TestCase):
             self.assertIn("No current run yet", checks["runtime_status"]["detail"])
             self.assertEqual(checks["agent_cli:codex"]["status"], "ok")
 
+    def test_doctor_reports_tmux_warn_when_session_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project_root = Path(tmp)
+            (project_root / "AGENTS.md").write_text("# Agents\n", encoding="utf-8")
+            profile_path = project_root / ".pipeline" / "config" / "agent_profile.json"
+            profile_path.parent.mkdir(parents=True, exist_ok=True)
+            profile_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "selected_agents": ["Codex"],
+                        "role_bindings": {"implement": "Codex", "verify": "Codex", "advisory": ""},
+                        "role_options": {
+                            "advisory_enabled": False,
+                            "operator_stop_enabled": True,
+                            "session_arbitration_enabled": False,
+                        },
+                        "mode_flags": {
+                            "single_agent_mode": True,
+                            "self_verify_allowed": True,
+                            "self_advisory_allowed": False,
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            adapter = Mock()
+            adapter.session_exists.return_value = False
+
+            with (
+                patch.object(runtime_cli, "_find_cli_bin", return_value=True),
+                patch.object(runtime_cli, "_list_supervisor_pids", return_value=[]),
+                patch.object(runtime_cli, "TmuxAdapter", return_value=adapter),
+            ):
+                payload = runtime_cli._doctor_payload(project_root, "aip-test")
+
+            checks = {item["name"]: item for item in payload["checks"]}
+            self.assertEqual(checks["tmux_session"]["status"], "warn")
+            self.assertIn("not found", checks["tmux_session"]["detail"])
+            self.assertIn("start", checks["tmux_session"]["hint"])
+
     def test_doctor_fails_when_active_profile_is_missing(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             project_root = Path(tmp)
@@ -793,6 +888,22 @@ class SupervisorCliTest(unittest.TestCase):
 
             self.assertTrue(runtime_cli._runtime_source_newer_than_supervisor_pidfile(project_root))
 
+    def test_automation_health_source_newer_than_supervisor_pidfile_requests_reload(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project_root = Path(tmp)
+            pid_path = project_root / ".pipeline" / "supervisor.pid"
+            source_path = project_root / "pipeline_runtime" / "automation_health.py"
+            pid_path.parent.mkdir(parents=True, exist_ok=True)
+            source_path.parent.mkdir(parents=True, exist_ok=True)
+            pid_path.write_text("1234", encoding="utf-8")
+            source_path.write_text("# updated automation health\n", encoding="utf-8")
+            old_ts = 10.0
+            new_ts = 20.0
+            os.utime(pid_path, (old_ts, old_ts))
+            os.utime(source_path, (new_ts, new_ts))
+
+            self.assertTrue(runtime_cli._runtime_source_newer_than_supervisor_pidfile(project_root))
+
     def test_spawn_supervisor_replaces_live_daemon_when_runtime_source_changed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             project_root = Path(tmp)
@@ -821,6 +932,50 @@ class SupervisorCliTest(unittest.TestCase):
             self.assertEqual(code, 0)
             stop_supervisor.assert_called_once_with(args)
             popen.assert_called_once()
+
+    def test_spawn_supervisor_returns_success_when_start_lock_is_held(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project_root = Path(tmp)
+            lock_path = project_root / ".pipeline" / ".supervisor-start.lock"
+            lock_path.parent.mkdir(parents=True, exist_ok=True)
+            first_fd = os.open(str(lock_path), os.O_CREAT | os.O_WRONLY)
+            second_fd = os.open(str(lock_path), os.O_CREAT | os.O_WRONLY)
+            args = Namespace(
+                project_root=str(project_root),
+                legacy_mode="",
+                mode="experimental",
+                session="aip-projectH",
+            )
+
+            try:
+                fcntl.flock(first_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                with self.assertRaises(BlockingIOError):
+                    fcntl.flock(second_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+                with (
+                    patch.object(runtime_cli, "_runtime_source_newer_than_supervisor_pidfile") as source_newer,
+                    patch.object(runtime_cli, "_reconcile_supervisors", return_value=None) as reconcile,
+                    patch.object(
+                        runtime_cli,
+                        "start_preflight_failure_message",
+                        return_value="pipeline doctor should not run while start lock is held",
+                    ) as preflight,
+                    patch.object(runtime_cli.subprocess, "Popen") as popen,
+                ):
+                    code = runtime_cli._spawn_supervisor(args)
+
+                self.assertEqual(code, 0)
+                source_newer.assert_not_called()
+                reconcile.assert_not_called()
+                preflight.assert_not_called()
+                popen.assert_not_called()
+            finally:
+                try:
+                    fcntl.flock(first_fd, fcntl.LOCK_UN)
+                except OSError:
+                    pass
+                os.close(second_fd)
+                os.close(first_fd)
 
     def test_spawn_supervisor_blocks_when_start_preflight_fails(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -978,6 +1133,50 @@ class SupervisorCliTest(unittest.TestCase):
             cleanup.assert_called_once_with(project_root, "aip-projectH")
             self.assertFalse(pid_path.exists())
 
+    def test_stop_supervisor_coerces_status_when_no_process_is_running(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project_root = Path(tmp)
+            run_dir = project_root / ".pipeline" / "runs" / "run-1"
+            run_dir.mkdir(parents=True, exist_ok=True)
+            (project_root / ".pipeline" / "current_run.json").write_text(
+                json.dumps(
+                    {
+                        "run_id": "run-1",
+                        "status_path": ".pipeline/runs/run-1/status.json",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            status_path = run_dir / "status.json"
+            status_path.write_text(
+                json.dumps(
+                    {
+                        "run_id": "run-1",
+                        "runtime_state": "RUNNING",
+                        "watcher": {"alive": True, "pid": 111},
+                        "lanes": [
+                            {"name": "Codex", "state": "READY", "pid": 222, "attachable": True}
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            args = Namespace(project_root=str(project_root), legacy_mode="", session="aip-projectH")
+
+            with (
+                patch.object(runtime_cli, "_list_supervisor_pids", return_value=[]),
+                patch.object(runtime_cli, "_supervisor_running", return_value=None),
+                patch.object(runtime_cli, "_orphan_runtime_needs_cleanup", return_value=False),
+            ):
+                code = runtime_cli._stop_supervisor(args)
+
+            self.assertEqual(code, 0)
+            repaired = json.loads(status_path.read_text(encoding="utf-8"))
+            self.assertEqual(repaired["runtime_state"], "STOPPED")
+            self.assertEqual(repaired["watcher"], {"alive": False, "pid": None})
+            self.assertEqual(repaired["runtime_snapshot"]["runtime_state"], "STOPPED")
+            self.assertEqual(repaired["runtime_snapshot"]["queue"]["status"], "Runtime inactive")
+
     def test_coerce_status_to_stopped_clears_live_runtime_fields(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             project_root = Path(tmp)
@@ -1047,6 +1246,8 @@ class SupervisorCliTest(unittest.TestCase):
             self.assertEqual(repaired["autonomy"]["mode"], "normal")
             self.assertEqual(repaired["lanes"][0]["state"], "OFF")
             self.assertEqual(repaired["lanes"][0]["pid"], None)
+            self.assertEqual(repaired["runtime_snapshot"]["runtime_state"], "STOPPED")
+            self.assertEqual(repaired["runtime_snapshot"]["queue"]["status"], "Runtime inactive")
             self.assertFalse(repaired_hint["active"])
             self.assertEqual(repaired_hint["job_id"], "")
             self.assertEqual(repaired_hint["dispatch_id"], "")

@@ -35,6 +35,9 @@ class JobStatus(str, Enum):
 
 TERMINAL_STATES: set[JobStatus] = {JobStatus.VERIFY_DONE}
 
+CODEX_VERIFY_DISPATCH_FAILURE_LOOP_REASON = "codex_verify_dispatch_failure_loop"
+DISPATCH_FAILED_SUBMIT_STAGE = "dispatch_failed_submit"
+
 
 @dataclass
 class JobState:
@@ -529,6 +532,30 @@ class StateMachine:
             return False
         return pane_text_has_unsubmitted_pasted_content(current_pane)
 
+    def _codex_snapshot_has_pasted_content(self, text: str) -> bool:
+        if self.verify_pane_type != "codex":
+            return False
+        snapshot = str(text or "")
+        return "[Pasted Content" in snapshot or pane_text_has_unsubmitted_pasted_content(snapshot)
+
+    def _mark_codex_dispatch_failure_loop(
+        self,
+        job: JobState,
+        *,
+        now: float,
+    ) -> None:
+        job.dispatch_fail_count = max(job.dispatch_fail_count, max(1, job.retry_budget))
+        fingerprint = self._dispatch_stall_fingerprint(job, DISPATCH_FAILED_SUBMIT_STAGE)
+        if fingerprint == job.dispatch_stall_fingerprint:
+            job.dispatch_stall_count += 1
+        else:
+            job.dispatch_stall_fingerprint = fingerprint
+            job.dispatch_stall_count = 1
+        job.dispatch_stall_detected_at = now
+        job.dispatch_stall_stage = DISPATCH_FAILED_SUBMIT_STAGE
+        job.degraded_reason = CODEX_VERIFY_DISPATCH_FAILURE_LOOP_REASON
+        job.lane_note = CODEX_VERIFY_DISPATCH_FAILURE_LOOP_REASON
+
     def _clear_failed_dispatch_input_if_possible(self, job: JobState, slot: str, reason: str) -> bool:
         if self.clear_failed_dispatch_input is None:
             return False
@@ -789,15 +816,19 @@ class StateMachine:
             except (TypeError, ValueError):
                 job.dispatch_control_seq = -1
 
-        if job.degraded_reason in {"dispatch_stall", "post_accept_completion_stall"}:
+        degraded_suppression_reasons = {
+            "dispatch_stall": "dispatch_stall_degraded",
+            "post_accept_completion_stall": "completion_stall_degraded",
+            CODEX_VERIFY_DISPATCH_FAILURE_LOOP_REASON: "dispatch_failure_loop_degraded",
+        }
+        degraded_suppression_reason = degraded_suppression_reasons.get(job.degraded_reason)
+        if degraded_suppression_reason:
             self.dedupe.mark_suppressed(
                 job.job_id,
                 job.round,
                 job.artifact_hash,
                 slot,
-                "dispatch_stall_degraded"
-                if job.degraded_reason == "dispatch_stall"
-                else "completion_stall_degraded",
+                degraded_suppression_reason,
             )
             return job
 
@@ -810,6 +841,26 @@ class StateMachine:
             if job.last_failed_dispatch_snapshot:
                 current_pane = self.capture_pane_text(self.verify_pane_target)
                 current_snapshot = self._failed_dispatch_snapshot_for_pane(current_pane)
+                if self._codex_snapshot_has_pasted_content(
+                    job.last_failed_dispatch_snapshot
+                ) or self._codex_snapshot_has_pasted_content(current_pane):
+                    now = time.time()
+                    job.last_failed_dispatch_at = now
+                    job.last_failed_dispatch_snapshot = (
+                        current_snapshot
+                        or current_pane.rstrip()
+                        or job.last_failed_dispatch_snapshot
+                    )
+                    self._mark_codex_dispatch_failure_loop(job, now=now)
+                    job.save(self.state_dir)
+                    self.dedupe.mark_suppressed(
+                        job.job_id,
+                        job.round,
+                        job.artifact_hash,
+                        slot,
+                        "dispatch_failure_loop_degraded",
+                    )
+                    return job
                 clearable_pasted_prompt = self._current_pane_is_clearable_pasted_prompt(
                     current_pane,
                     job.last_failed_dispatch_snapshot,
@@ -908,7 +959,8 @@ class StateMachine:
             if self.dry_run:
                 self._release_verify_lease(slot, job, reason="dispatch_dry_run")
         else:
-            job.last_failed_dispatch_at = time.time()
+            now = time.time()
+            job.last_failed_dispatch_at = now
             job.dispatch_fail_count += 1
             job.last_failed_dispatch_snapshot = self.capture_pane_text(self.verify_pane_target)
             job.dispatch_id = ""
@@ -918,8 +970,14 @@ class StateMachine:
             job.accepted_dispatch_id = ""
             job.accepted_at = 0.0
             self._clear_done_tracking(job)
+            release_reason = "dispatch_failed"
+            if self._codex_snapshot_has_pasted_content(
+                job.last_failed_dispatch_snapshot
+            ) or job.dispatch_fail_count >= max(1, job.retry_budget):
+                self._mark_codex_dispatch_failure_loop(job, now=now)
+                release_reason = "dispatch_failure_loop_degraded"
             job.save(self.state_dir)
-            self._release_verify_lease(slot, job, reason="dispatch_failed")
+            self._release_verify_lease(slot, job, reason=release_reason)
         return job
 
     def _handle_verify_running(self, job: JobState) -> JobState:

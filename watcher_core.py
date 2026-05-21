@@ -1161,6 +1161,7 @@ class WatcherCore:
             "turn_state": self._current_turn_state.value,
             "legacy_turn_state": legacy_turn_state_name(self._current_turn_state.value),
             "degraded_reason": "",
+            "runtime_controls": dict(self.runtime_controls),
             "control": control_block_from_snapshot(
                 control_snapshot,
                 control_age_cycles=self._control_seq_age_cycles,
@@ -3754,7 +3755,11 @@ class WatcherCore:
             "implement",
         )
         handoff_path = handoff_control.path if handoff_control is not None else self.implement_handoff_path
-        handoff_sig = handoff_control.sig if handoff_control is not None else self._get_path_sig(self.implement_handoff_path)
+        handoff_sig = (
+            handoff_control.sig
+            if handoff_control is not None
+            else (self._get_path_sig(self.implement_handoff_path) if active_control is None else "")
+        )
         if handoff_sig and handoff_sig != self._last_implement_handoff_sig:
             self._last_implement_handoff_sig = handoff_sig
             status = self._read_status_from_path(handoff_path) or "missing"

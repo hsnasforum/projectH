@@ -358,6 +358,9 @@ class WatcherDispatchQueue:
         )
 
     def dispatch(self, intent: DispatchIntent, *, from_pending: bool = False) -> bool:
+        if not from_pending and self._drop_dispatch_if_active_control_mismatch(intent):
+            return False
+
         ready, defer_reason = self.lane_prompt_readiness(intent.target)
         if not ready:
             if defer_reason == "prompt_contains_pasted_content":
@@ -379,48 +382,7 @@ class WatcherDispatchQueue:
                         notify_kind=intent.notify_kind,
                     )
                     return False
-                self.emit_stale_pasted_prompt_replaced(
-                    lane=lane,
-                    lane_id=intent.lane_id,
-                    functional_role=intent.functional_role or intent.lane_role,
-                    agent_kind=intent.agent_kind,
-                    model_alias=intent.model_alias,
-                    path=intent.prompt_path,
-                    reason=intent.reason,
-                    control_seq=intent.control_seq,
-                    notify_kind=intent.notify_kind,
-                )
-                ok = self._send_keys(intent.target, intent.prompt, intent.pane_type)
-                if ok:
-                    if self._codex_paste_still_blocked(intent):
-                        self._defer_stale_paste_blocked(intent, lane=lane, from_pending=from_pending)
-                        return False
-                    self.pending_notifications.pop(intent.pending_key, None)
-                    self.last_lane_input_defer_at.pop(intent.pending_key, None)
-                    self.stale_paste_blocked_until.pop(intent.pending_key, None)
-                    return True
-                if not from_pending:
-                    self.pending_notifications[intent.pending_key] = self._pending_record(intent)
-                try:
-                    snapshot = self._capture_pane_text(intent.target)
-                except Exception:
-                    snapshot = ""
-                if intent.pane_type == "codex" and pane_text_has_unsubmitted_pasted_content(snapshot):
-                    self._defer_stale_paste_blocked(intent, lane=lane, from_pending=from_pending)
-                    return False
-                self.emit_lane_input_deferred(
-                    key=intent.pending_key,
-                    lane=lane,
-                    lane_id=intent.lane_id,
-                    functional_role=intent.functional_role or intent.lane_role,
-                    agent_kind=intent.agent_kind,
-                    model_alias=intent.model_alias,
-                    path=intent.prompt_path,
-                    reason=intent.reason,
-                    defer_reason="dispatch_window_blocked",
-                    control_seq=intent.control_seq,
-                    notify_kind=intent.notify_kind,
-                )
+                self._defer_stale_paste_blocked(intent, lane=lane, from_pending=from_pending)
                 return False
             self.pending_notifications[intent.pending_key] = self._pending_record(intent)
             self.emit_lane_input_deferred(
@@ -644,6 +606,45 @@ class WatcherDispatchQueue:
             "active_status": str(active_control.status) if active_control else "",
             "active_control": active_control.kind if active_control else "none",
         }
+
+    def _drop_dispatch_if_active_control_mismatch(self, intent: DispatchIntent) -> bool:
+        pending = self._pending_record(intent)
+        active_control = self._get_active_control_signal()
+        reason_code = self.pending_notification_control_mismatch_reason(pending, active_control)
+        if reason_code is None:
+            expected_status = str(intent.expected_status or "").strip()
+            if (
+                intent.require_active_control
+                and expected_status
+                and not self._is_active_control(intent.prompt_path, expected_status)
+            ):
+                reason_code = "active_control_mismatch"
+            else:
+                return False
+        if reason_code == "active_control_missing":
+            expected_status = str(intent.expected_status or "").strip()
+            if expected_status and self._is_active_control(intent.prompt_path, expected_status):
+                return False
+            if not intent.require_active_control:
+                return False
+            reason_code = "active_control_mismatch"
+        payload = self._control_mismatch_payload(
+            pending,
+            prompt_path=intent.prompt_path,
+            active_control=active_control,
+            reason_code=reason_code,
+        )
+        self.pending_notifications.pop(intent.pending_key, None)
+        self.last_lane_input_defer_at.pop(intent.pending_key, None)
+        self.stale_paste_blocked_until.pop(intent.pending_key, None)
+        self._log_raw(
+            "lane_input_deferred_dropped",
+            str(intent.prompt_path),
+            "turn_signal",
+            payload,
+        )
+        self._append_runtime_event("lane_input_deferred_dropped", payload)
+        return True
 
     def flush_pending(self) -> None:
         if not self.pending_notifications:
@@ -1051,7 +1052,7 @@ def _send_literal_text_to_pane(pane_target: str, text: str, *, chunk_size: int =
         if not chunk:
             continue
         subprocess.run(
-            ["tmux", "send-keys", "-l", "-t", pane_target, chunk],
+            ["tmux", "send-keys", "-l", "-t", pane_target, "--", chunk],
             check=True,
             capture_output=True,
         )
@@ -1182,25 +1183,17 @@ def _dispatch_codex(pane_target: str, command: str) -> bool:
     subprocess.run(["tmux", "paste-buffer", "-t", pane_target], check=True, capture_output=True)
     pasted_snapshot = _shared_capture_pane_text(pane_target)
     time.sleep(2.0)
-    snapshot = ""
-    submit_keys = ["Enter", "C-j"]
-    for attempt, submit_key in enumerate(submit_keys):
-        subprocess.run(
-            ["tmux", "send-keys", "-t", pane_target, submit_key],
-            check=True,
-            capture_output=True,
-        )
-        time.sleep(1.5)
-        snapshot = _shared_capture_pane_text(pane_target)
-        if not pane_text_has_unsubmitted_pasted_content(snapshot):
-            break
-        if attempt == 0:
-            log.info("codex pasted prompt still visible after first submit; retrying with C-j once")
-            time.sleep(2.0)
-            continue
-        log.info("codex pasted prompt still visible after C-j submit retry")
-        _clear_codex_failed_dispatch_input(pane_target, "pasted_prompt_after_submit_retry")
-        return _dispatch_codex_literal_fallback(pane_target, command)
+    subprocess.run(
+        ["tmux", "send-keys", "-t", pane_target, "Enter"],
+        check=True,
+        capture_output=True,
+    )
+    time.sleep(1.5)
+    snapshot = _shared_capture_pane_text(pane_target)
+    if pane_text_has_unsubmitted_pasted_content(snapshot):
+        log.info("codex pasted prompt still visible after submit; fail-closed")
+        _clear_codex_failed_dispatch_input(pane_target, "pasted_prompt_after_submit")
+        return False
     if not _shared_pane_text_has_input_cursor(snapshot):
         log.info("codex prompt consumed")
         deadline = time.time() + 6.0

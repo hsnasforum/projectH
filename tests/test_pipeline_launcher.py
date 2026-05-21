@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import importlib.util
+import subprocess
 import sys
 import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -172,6 +175,47 @@ class TestPipelineLauncherSessionContract(unittest.TestCase):
                 ["stop", str(project), "--session", expected_session],
             )
 
+    def test_run_runtime_cli_timeout_returns_failed_completed_process(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="projH-stop-timeout-") as tmp:
+            project = Path(tmp).resolve()
+
+            with mock.patch.object(
+                pipeline_launcher.subprocess,
+                "run",
+                side_effect=subprocess.TimeoutExpired(["pipeline_runtime.cli", "stop"], timeout=3.0),
+            ):
+                result = pipeline_launcher._run_runtime_cli(project, ["stop"], timeout=3.0)
+
+            self.assertEqual(result.returncode, 124)
+            self.assertIn("timeout", result.stderr.lower())
+
+    def test_background_stop_action_returns_before_pipeline_stop_finishes(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="projH-stop-bg-") as tmp:
+            project = Path(tmp).resolve()
+            started = threading.Event()
+            release = threading.Event()
+
+            def blocking_stop(_project: Path, _session: str) -> str:
+                started.set()
+                release.wait(1.0)
+                return "중지 완료"
+
+            with mock.patch.object(pipeline_launcher, "pipeline_stop", side_effect=blocking_stop):
+                task = pipeline_launcher.start_pipeline_stop_task(project, "aip-test")
+                self.assertTrue(started.wait(0.5))
+                self.assertIsNone(task.poll())
+                self.assertEqual(task.pending_message, "STOP: 중지 중...")
+                release.set()
+                deadline = time.time() + 1.0
+                result = None
+                while time.time() < deadline:
+                    result = task.poll()
+                    if result is not None:
+                        break
+                    time.sleep(0.01)
+
+            self.assertEqual(result, "STOP: 중지 완료")
+
     def test_pipeline_restart_reuses_same_resolved_session(self) -> None:
         with tempfile.TemporaryDirectory(prefix="projH-restart-") as tmp:
             project = Path(tmp).resolve()
@@ -191,6 +235,34 @@ class TestPipelineLauncherSessionContract(unittest.TestCase):
             self.assertEqual(message, "재시작 요청됨")
             stop.assert_called_once_with(project, expected_session)
             start.assert_called_once_with(project, expected_session)
+
+    def test_fit_text_uses_cjk_display_width(self) -> None:
+        self.assertEqual(pipeline_launcher._display_width("한글A"), 5)
+        self.assertEqual(pipeline_launcher._fit_text("한글abc", 5), "한글…")
+        self.assertEqual(pipeline_launcher._fit_text("한", 3), "한 ")
+
+    def test_safe_addstr_clips_by_cjk_display_width(self) -> None:
+        screen = FakeCursesScreen(height=3, width=4)
+
+        pipeline_launcher.safe_addstr(screen, 0, 0, "한글abc")
+
+        self.assertEqual(screen.writes, ["한글"])
+
+    def test_handle_resize_marks_screen_for_redraw(self) -> None:
+        class ResizeScreen(FakeCursesScreen):
+            def __init__(self) -> None:
+                super().__init__()
+                self.clearok_values: list[bool] = []
+
+            def clearok(self, value: bool) -> None:
+                self.clearok_values.append(value)
+
+        screen = ResizeScreen()
+        with mock.patch.object(pipeline_launcher.curses, "update_lines_cols") as update:
+            pipeline_launcher.handle_resize(screen)
+
+        update.assert_called_once()
+        self.assertEqual(screen.clearok_values, [True])
 
     def test_runtime_views_and_attach_use_same_session(self) -> None:
         with tempfile.TemporaryDirectory(prefix="projH-runtime-") as tmp:

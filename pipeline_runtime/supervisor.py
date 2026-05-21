@@ -187,6 +187,7 @@ class RuntimeSupervisor:
         self._last_automation_incident_key = ""
         self._last_autonomy_key = ""
         self._last_dispatch_selection_key = ""
+        self._last_pane_fallback_key: dict[str, str] = {}
         self._last_lane_states: dict[str, str] = {}
         self._last_degraded_reason = ""
         self._lane_restart_counts: dict[str, int] = {}
@@ -1698,16 +1699,26 @@ class RuntimeSupervisor:
                 "attachable": False,
                 "pane_id": None,
             }
-            failure_reason = self._detect_active_lane_failure_reason(
-                lane_name,
-                active_lane=active_lane,
-                health=health,
-            )
-            if failure_reason:
-                model["failure_reason"] = failure_reason
             note = str(model.get("note") or "")
             last_event_at = str(model.get("last_event_at") or "")
             last_heartbeat_at = str(model.get("last_heartbeat_at") or "")
+            model_state = str(model.get("state") or "")
+            done_control_seq = control_seq_value(done_task.get("control_seq"), default=-1)
+            has_done_task = bool(str(done_task.get("job_id") or ""))
+            wrapper_status_decisive = (
+                has_accepted_task
+                or (model_state == "READY" and has_done_task)
+                or model_state == "BROKEN"
+            )
+            failure_reason = ""
+            if enabled and not wrapper_status_decisive:
+                failure_reason = self._detect_active_lane_failure_reason(
+                    lane_name,
+                    active_lane=active_lane,
+                    health=health,
+                )
+                if failure_reason:
+                    model["failure_reason"] = failure_reason
             if not enabled:
                 state = "OFF"
             elif (
@@ -1716,6 +1727,23 @@ class RuntimeSupervisor:
             ):
                 state = "READY"
                 note = "waiting_next_control"
+            elif wrapper_status_decisive:
+                if has_accepted_task:
+                    state = "WORKING"
+                    if lane_name == implement_owner and control_status == "implement":
+                        note = "implement"
+                    elif lane_name == verify_owner:
+                        active_round_note = str((active_round or {}).get("note") or "")
+                        round_state_note = str((active_round or {}).get("state") or "").strip().lower()
+                        note = active_round_note or round_state_note or note or "working"
+                    elif note in {"", "prompt_visible"}:
+                        note = "working"
+                elif model_state == "READY" and has_done_task:
+                    state = "READY"
+                    if done_control_seq >= 0 and done_control_seq == active_control_seq and not note:
+                        note = "waiting_next_control"
+                else:
+                    state = "BROKEN"
             elif not health.get("alive"):
                 state = "BROKEN" if model.get("state") else "OFF"
                 if not note and state == "BROKEN":
@@ -1724,7 +1752,6 @@ class RuntimeSupervisor:
                 state = "BROKEN"
                 note = failure_reason
             else:
-                model_state = str(model.get("state") or "")
                 active_round_note = str((active_round or {}).get("note") or "")
                 tail_text = ""
                 tail_surface = ""
@@ -1752,16 +1779,22 @@ class RuntimeSupervisor:
                     except Exception:
                         tail_text = ""
                     tail_surface = self._tail_surface_state(lane_name, tail_text)
-                if has_accepted_task:
-                    state = "WORKING"
-                    if lane_name == implement_owner and control_status == "implement":
-                        note = "implement"
-                    elif lane_name == verify_owner:
-                        round_state_note = str((active_round or {}).get("state") or "").strip().lower()
-                        note = active_round_note or round_state_note or note or "working"
-                    elif note in {"", "prompt_visible"}:
-                        note = "working"
-                elif (
+                telemetry_control_status = control_status or "none"
+                pane_fallback_key = f"{model_state}|{telemetry_control_status}|{bool(should_capture_tail)}"
+                if self._last_pane_fallback_key.get(lane_name) != pane_fallback_key:
+                    self._last_pane_fallback_key[lane_name] = pane_fallback_key
+                    self._append_event(
+                        "pane_text_fallback_used",
+                        {
+                            "lane": lane_name,
+                            "model_state": model_state,
+                            "active_lane": active_lane,
+                            "control_status": telemetry_control_status,
+                            "tail_captured": bool(should_capture_tail),
+                            "surface_reason": tail_surface or "",
+                        },
+                    )
+                if (
                     duplicate_control is None
                     and lane_name == implement_owner
                     and control_status == "implement"
@@ -2758,7 +2791,10 @@ class RuntimeSupervisor:
         command_parts = lane_vendor_command_parts(lane_name)
         if command_parts:
             binary = self._find_cli_bin(command_parts[0])
-            args = " ".join(shlex.quote(part) for part in command_parts[1:])
+            command_args = list(command_parts[1:])
+            if lane_name == "Claude" and "--output-format" not in command_args:
+                command_args.extend(["--output-format", "stream-json"])
+            args = " ".join(shlex.quote(part) for part in command_args)
             if args:
                 return f'exec "{binary}" {args}'
             return f'exec "{binary}"'

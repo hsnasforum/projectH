@@ -25,7 +25,13 @@ from pipeline_runtime.operator_autonomy import (
 from pipeline_runtime.pr_merge_state import PrMergeGateResolution
 from pipeline_runtime.receipts import receipt_path
 from pipeline_runtime.supervisor import RuntimeSupervisor
-from pipeline_runtime.wrapper_events import append_wrapper_event, build_lane_read_models
+from pipeline_runtime.wrapper_events import (
+    ALL_EVENT_TYPES,
+    WRAPPER_EVENT_SCHEMA_VERSION,
+    append_wrapper_event,
+    build_lane_read_models,
+    validate_wrapper_event_payload,
+)
 from watcher_prompt_assembly import (
     DEFAULT_ADVISORY_PROMPT,
     DEFAULT_FOLLOWUP_PROMPT,
@@ -2525,6 +2531,92 @@ class RuntimeSupervisorTest(unittest.TestCase):
             self.assertEqual(stale_models["Codex"]["state"], "BROKEN")
             self.assertEqual(stale_models["Codex"]["note"], "heartbeat_timeout")
 
+    def test_wrapper_event_schema_validation_contract(self) -> None:
+        self.assertIn("TASK_ACCEPTED", ALL_EVENT_TYPES)
+        self.assertEqual(
+            validate_wrapper_event_payload("TASK_ACCEPTED", {}),
+            ["job_id", "dispatch_id", "control_seq", "attempt"],
+        )
+        self.assertEqual(
+            validate_wrapper_event_payload(
+                "TASK_ACCEPTED",
+                {
+                    "job_id": "job-42",
+                    "dispatch_id": "dispatch-42",
+                    "control_seq": 19,
+                    "attempt": 1,
+                },
+            ),
+            [],
+        )
+        self.assertEqual(validate_wrapper_event_payload("FUTURE_EVENT", {}), [])
+
+    def test_append_wrapper_event_records_schema_version_and_warnings(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            wrapper_dir = Path(tmp)
+            append_wrapper_event(
+                wrapper_dir,
+                "Codex",
+                "TASK_ACCEPTED",
+                {
+                    "job_id": "job-42",
+                    "dispatch_id": "dispatch-42",
+                    "control_seq": 19,
+                    "attempt": 1,
+                },
+                source="wrapper",
+            )
+            append_wrapper_event(
+                wrapper_dir,
+                "Codex",
+                "TASK_ACCEPTED",
+                {},
+                source="wrapper",
+            )
+
+            entries = [
+                json.loads(line)
+                for line in (wrapper_dir / "codex.jsonl").read_text(encoding="utf-8").splitlines()
+            ]
+
+            self.assertEqual(entries[0]["schema_version"], WRAPPER_EVENT_SCHEMA_VERSION)
+            self.assertNotIn("_schema_warnings", entries[0])
+            self.assertEqual(entries[1]["schema_version"], WRAPPER_EVENT_SCHEMA_VERSION)
+            self.assertEqual(
+                entries[1]["_schema_warnings"],
+                ["job_id", "dispatch_id", "control_seq", "attempt"],
+            )
+
+    def test_build_lane_read_models_accepts_legacy_events_without_schema_version(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            wrapper_dir = Path(tmp)
+            wrapper_dir.mkdir(parents=True, exist_ok=True)
+            (wrapper_dir / "codex.jsonl").write_text(
+                json.dumps(
+                    {
+                        "ts": "2026-05-21T00:00:00Z",
+                        "lane": "Codex",
+                        "event_type": "TASK_ACCEPTED",
+                        "source": "wrapper",
+                        "payload": {
+                            "job_id": "job-legacy",
+                            "dispatch_id": "dispatch-legacy",
+                            "control_seq": 77,
+                            "attempt": 2,
+                        },
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            models = build_lane_read_models(wrapper_dir, heartbeat_timeout_sec=3600.0, now_ts=1.0)
+
+            self.assertEqual(models["Codex"]["state"], "WORKING")
+            self.assertEqual(models["Codex"]["accepted_task"]["job_id"], "job-legacy")
+            self.assertEqual(models["Codex"]["accepted_task"]["dispatch_id"], "dispatch-legacy")
+            self.assertEqual(models["Codex"]["accepted_task"]["control_seq"], 77)
+
     def test_build_lane_read_models_tracks_task_done_dispatch_id(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             wrapper_dir = Path(tmp)
@@ -3765,6 +3857,316 @@ class RuntimeSupervisorTest(unittest.TestCase):
             codex = next(lane for lane in lanes if lane["name"] == "Codex")
             self.assertEqual(codex["state"], "WORKING")
             self.assertEqual(codex["note"], "verify_pending")
+
+    def test_wrapper_accepted_task_skips_tail_capture_and_marks_working(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+            with (
+                mock.patch.object(
+                    supervisor.adapter,
+                    "lane_health",
+                    return_value={"alive": True, "pid": 4242, "attachable": True, "pane_id": "%2"},
+                ),
+                mock.patch.object(supervisor.adapter, "capture_tail", return_value="• Working") as capture_tail,
+            ):
+                lanes, _models = supervisor._build_lane_statuses(
+                    wrapper_models={
+                        "Codex": {
+                            "state": "WORKING",
+                            "note": "seq 205",
+                            "accepted_task": {
+                                "job_id": "job-42",
+                                "dispatch_id": "dispatch-42",
+                                "control_seq": 205,
+                                "attempt": 1,
+                            },
+                            "last_event_at": "2026-04-16T12:38:57.552104Z",
+                            "last_heartbeat_at": "2026-04-16T12:38:57.552104Z",
+                        }
+                    },
+                    active_lane="Codex",
+                    active_round={
+                        "job_id": "job-42",
+                        "state": "VERIFY_PENDING",
+                        "status": "VERIFY_PENDING",
+                    },
+                    turn_state={"state": "IDLE"},
+                )
+
+            codex = next(lane for lane in lanes if lane["name"] == "Codex")
+            self.assertEqual(codex["state"], "WORKING")
+            self.assertEqual(codex["note"], "verify_pending")
+            capture_tail.assert_not_called()
+
+    def test_wrapper_done_task_skips_tail_capture_and_marks_ready(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root, implement="Codex", verify="Claude")
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+            with (
+                mock.patch.object(
+                    supervisor.adapter,
+                    "lane_health",
+                    return_value={"alive": True, "pid": 31337, "attachable": True, "pane_id": "%1"},
+                ),
+                mock.patch.object(supervisor.adapter, "capture_tail", return_value="• Working") as capture_tail,
+            ):
+                lanes, _models = supervisor._build_lane_statuses(
+                    wrapper_models={
+                        "Codex": {
+                            "state": "READY",
+                            "note": "",
+                            "done_task": {
+                                "job_id": "ctrl-205",
+                                "dispatch_id": "seq-205",
+                                "control_seq": 205,
+                            },
+                            "last_event_at": "2026-04-21T09:00:00.000000Z",
+                            "last_heartbeat_at": "2026-04-21T09:00:01.000000Z",
+                        }
+                    },
+                    active_lane="",
+                    active_round=None,
+                    turn_state={"state": "IDLE"},
+                    control={"active_control_status": "implement", "active_control_seq": 205},
+                )
+
+            codex = next(lane for lane in lanes if lane["name"] == "Codex")
+            self.assertEqual(codex["state"], "READY")
+            self.assertEqual(codex["note"], "waiting_next_control")
+            capture_tail.assert_not_called()
+
+    def test_lane_statuses_use_pane_text_fallback_without_decisive_wrapper_event(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+            with (
+                mock.patch.object(
+                    supervisor.adapter,
+                    "lane_health",
+                    return_value={"alive": True, "pid": 4242, "attachable": True, "pane_id": "%2"},
+                ),
+                mock.patch.object(
+                    supervisor.adapter,
+                    "capture_tail",
+                    side_effect=lambda lane_name, lines=80: (
+                        "• Working (22s • esc to interrupt)\n"
+                        if lane_name == "Codex"
+                        else ""
+                    ),
+                ) as capture_tail,
+            ):
+                lanes, _models = supervisor._build_lane_statuses(
+                    wrapper_models={
+                        "Codex": {
+                            "state": "READY",
+                            "note": "prompt_visible",
+                            "last_event_at": "2026-04-15T08:33:21.218699Z",
+                            "last_heartbeat_at": "2026-04-15T08:33:27.312433Z",
+                        }
+                    },
+                    active_lane="Codex",
+                    active_round={
+                        "job_id": "job-42",
+                        "state": "VERIFYING",
+                        "status": "VERIFY_RUNNING",
+                    },
+                )
+
+            codex = next(lane for lane in lanes if lane["name"] == "Codex")
+            self.assertEqual(codex["state"], "WORKING")
+            self.assertEqual(codex["note"], "verifying")
+            self.assertIn(mock.call("Codex", lines=80), capture_tail.call_args_list)
+
+    def test_pane_text_fallback_telemetry_is_not_emitted_for_decisive_wrapper_event(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+
+            with (
+                mock.patch.object(
+                    supervisor.adapter,
+                    "lane_health",
+                    side_effect=lambda lane_name: {
+                        "alive": lane_name == "Codex",
+                        "pid": 4242 if lane_name == "Codex" else None,
+                        "attachable": lane_name == "Codex",
+                        "pane_id": "%2" if lane_name == "Codex" else None,
+                    },
+                ),
+                mock.patch.object(supervisor.adapter, "capture_tail", return_value="• Working") as capture_tail,
+            ):
+                supervisor._build_lane_statuses(
+                    wrapper_models={
+                        "Codex": {
+                            "state": "WORKING",
+                            "note": "seq 2099",
+                            "accepted_task": {
+                                "job_id": "job-2099",
+                                "dispatch_id": "dispatch-2099",
+                                "control_seq": 2099,
+                                "attempt": 1,
+                            },
+                        }
+                    },
+                    active_lane="Codex",
+                    active_round={"job_id": "job-2099", "state": "VERIFY_PENDING"},
+                )
+
+            capture_tail.assert_not_called()
+            if supervisor.events_path.exists():
+                events = [
+                    json.loads(line)
+                    for line in supervisor.events_path.read_text(encoding="utf-8").splitlines()
+                    if line.strip()
+                ]
+                self.assertNotIn("pane_text_fallback_used", [event.get("event_type") for event in events])
+
+    def test_pane_text_fallback_telemetry_records_without_raw_tail_text(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+            raw_tail_marker = "SECRET_RAW_PANE_TEXT"
+
+            with (
+                mock.patch.object(
+                    supervisor.adapter,
+                    "lane_health",
+                    side_effect=lambda lane_name: {
+                        "alive": lane_name == "Codex",
+                        "pid": 4242 if lane_name == "Codex" else None,
+                        "attachable": lane_name == "Codex",
+                        "pane_id": "%2" if lane_name == "Codex" else None,
+                    },
+                ),
+                mock.patch.object(
+                    supervisor.adapter,
+                    "capture_tail",
+                    return_value=f"• Working (22s • esc to interrupt) {raw_tail_marker}\n",
+                ),
+            ):
+                supervisor._build_lane_statuses(
+                    wrapper_models={
+                        "Codex": {
+                            "state": "READY",
+                            "note": "prompt_visible",
+                            "last_event_at": "2026-04-15T08:33:21.218699Z",
+                            "last_heartbeat_at": "2026-04-15T08:33:27.312433Z",
+                        }
+                    },
+                    active_lane="Codex",
+                    active_round={"job_id": "job-42", "state": "VERIFYING"},
+                )
+
+            event_text = supervisor.events_path.read_text(encoding="utf-8")
+            self.assertNotIn(raw_tail_marker, event_text)
+            events = [json.loads(line) for line in event_text.splitlines() if line.strip()]
+            fallback_events = [event for event in events if event.get("event_type") == "pane_text_fallback_used"]
+            self.assertEqual(len(fallback_events), 1)
+            payload = fallback_events[0]["payload"]
+            self.assertEqual(payload["lane"], "Codex")
+            self.assertEqual(payload["model_state"], "READY")
+            self.assertEqual(payload["active_lane"], "Codex")
+            self.assertEqual(payload["control_status"], "none")
+            self.assertTrue(payload["tail_captured"])
+            self.assertEqual(payload["surface_reason"], "WORKING")
+            self.assertNotIn("tail_text", payload)
+            self.assertNotIn(raw_tail_marker, json.dumps(payload, ensure_ascii=False))
+
+    def test_pane_text_fallback_telemetry_dedupes_same_lane_key(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+
+            with (
+                mock.patch.object(
+                    supervisor.adapter,
+                    "lane_health",
+                    side_effect=lambda lane_name: {
+                        "alive": lane_name == "Codex",
+                        "pid": 4242 if lane_name == "Codex" else None,
+                        "attachable": lane_name == "Codex",
+                        "pane_id": "%2" if lane_name == "Codex" else None,
+                    },
+                ),
+                mock.patch.object(
+                    supervisor.adapter,
+                    "capture_tail",
+                    return_value="• Working (22s • esc to interrupt)\n",
+                ),
+            ):
+                for _index in range(2):
+                    supervisor._build_lane_statuses(
+                        wrapper_models={
+                            "Codex": {
+                                "state": "READY",
+                                "note": "prompt_visible",
+                                "last_event_at": "2026-04-15T08:33:21.218699Z",
+                                "last_heartbeat_at": "2026-04-15T08:33:27.312433Z",
+                            }
+                        },
+                        active_lane="Codex",
+                        active_round={"job_id": "job-42", "state": "VERIFYING"},
+                    )
+
+            events = [
+                json.loads(line)
+                for line in supervisor.events_path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            fallback_events = [event for event in events if event.get("event_type") == "pane_text_fallback_used"]
+            self.assertEqual(len(fallback_events), 1)
+
+    def test_pane_text_fallback_telemetry_reemits_when_key_changes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+
+            with (
+                mock.patch.object(
+                    supervisor.adapter,
+                    "lane_health",
+                    side_effect=lambda lane_name: {
+                        "alive": lane_name == "Codex",
+                        "pid": 4242 if lane_name == "Codex" else None,
+                        "attachable": lane_name == "Codex",
+                        "pane_id": "%2" if lane_name == "Codex" else None,
+                    },
+                ),
+                mock.patch.object(
+                    supervisor.adapter,
+                    "capture_tail",
+                    return_value="• Working (22s • esc to interrupt)\n",
+                ),
+            ):
+                for model_state in ("READY", "WORKING"):
+                    supervisor._build_lane_statuses(
+                        wrapper_models={
+                            "Codex": {
+                                "state": model_state,
+                                "note": "prompt_visible",
+                                "last_event_at": "2026-04-15T08:33:21.218699Z",
+                                "last_heartbeat_at": "2026-04-15T08:33:27.312433Z",
+                            }
+                        },
+                        active_lane="Codex",
+                        active_round={"job_id": "job-42", "state": "VERIFYING"},
+                    )
+
+            events = [
+                json.loads(line)
+                for line in supervisor.events_path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            fallback_events = [event for event in events if event.get("event_type") == "pane_text_fallback_used"]
+            self.assertEqual([event["payload"]["model_state"] for event in fallback_events], ["READY", "WORKING"])
 
     def test_dispatch_stall_active_round_surfaces_machine_note_on_codex_lane(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

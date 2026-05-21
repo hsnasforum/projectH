@@ -16,6 +16,35 @@ from pipeline_runtime.cli import _WrapperEmitter
 
 
 class WrapperEmitterTest(unittest.TestCase):
+    def _write_task_hint(
+        self,
+        task_hint_dir: Path,
+        *,
+        lane: str = "Claude",
+        job_id: str = "job-jsonl",
+        dispatch_id: str = "dispatch-jsonl",
+        control_seq: int = 410,
+        attempt: int = 1,
+        active: bool = True,
+    ) -> None:
+        task_hint_dir.mkdir(parents=True, exist_ok=True)
+        (task_hint_dir / f"{lane.lower()}.json").write_text(
+            json.dumps(
+                {
+                    "lane": lane,
+                    "active": active,
+                    "job_id": job_id,
+                    "dispatch_id": dispatch_id,
+                    "control_seq": control_seq,
+                    "attempt": attempt,
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    def _read_wrapper_events(self, path: Path) -> list[dict[str, object]]:
+        return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+
     def test_codex_update_prompt_is_auto_dismissed_with_skip_until_next_version(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             sent: list[bytes] = []
@@ -449,6 +478,169 @@ class WrapperEmitterTest(unittest.TestCase):
             self.assertIn('"event_type": "TASK_ACCEPTED"', log_text)
             self.assertIn('"dispatch_id": "dispatch-codex-working"', log_text)
             self.assertNotIn('"event_type": "TASK_DONE"', log_text)
+
+    def test_claude_jsonl_text_event_emits_task_accepted(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            task_hint_dir = root / "task-hints"
+            self._write_task_hint(task_hint_dir)
+            emitter = _WrapperEmitter(
+                wrapper_dir=root,
+                lane_name="Claude",
+                task_hint_dir=task_hint_dir,
+                child_pid=800,
+                send_child_bytes=lambda _data: None,
+                jsonl_mode=True,
+            )
+
+            emitter.feed(json.dumps({"type": "text", "text": "작업을 시작합니다."}) + "\n", now=1.0)
+
+            events = self._read_wrapper_events(root / "claude.jsonl")
+            event_types = [str(event.get("event_type") or "") for event in events]
+            self.assertEqual(event_types, ["DISPATCH_SEEN", "TASK_ACCEPTED"])
+            self.assertEqual(events[-1]["payload"]["dispatch_id"], "dispatch-jsonl")
+
+    def test_claude_jsonl_tool_use_event_emits_task_accepted(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            task_hint_dir = root / "task-hints"
+            self._write_task_hint(
+                task_hint_dir,
+                job_id="job-tool",
+                dispatch_id="dispatch-tool",
+                control_seq=411,
+            )
+            emitter = _WrapperEmitter(
+                wrapper_dir=root,
+                lane_name="Claude",
+                task_hint_dir=task_hint_dir,
+                child_pid=801,
+                send_child_bytes=lambda _data: None,
+                jsonl_mode=True,
+            )
+
+            emitter.feed(
+                json.dumps({"type": "tool_use", "id": "tool-1", "name": "Read", "input": {"file_path": "x"}})
+                + "\n",
+                now=1.0,
+            )
+
+            events = self._read_wrapper_events(root / "claude.jsonl")
+            event_types = [str(event.get("event_type") or "") for event in events]
+            self.assertEqual(event_types, ["DISPATCH_SEEN", "TASK_ACCEPTED"])
+            self.assertEqual(events[-1]["payload"]["dispatch_id"], "dispatch-tool")
+
+    def test_claude_jsonl_result_event_emits_task_done(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            task_hint_dir = root / "task-hints"
+            self._write_task_hint(
+                task_hint_dir,
+                job_id="job-result",
+                dispatch_id="dispatch-result",
+                control_seq=412,
+            )
+            emitter = _WrapperEmitter(
+                wrapper_dir=root,
+                lane_name="Claude",
+                task_hint_dir=task_hint_dir,
+                child_pid=802,
+                send_child_bytes=lambda _data: None,
+                jsonl_mode=True,
+            )
+
+            emitter.feed(json.dumps({"type": "text", "text": "done soon"}) + "\n", now=1.0)
+            emitter.feed(json.dumps({"type": "result"}) + "\n", now=2.0)
+
+            events = self._read_wrapper_events(root / "claude.jsonl")
+            task_done = [event for event in events if event.get("event_type") == "TASK_DONE"]
+            self.assertEqual(len(task_done), 1)
+            self.assertEqual(task_done[0]["payload"]["dispatch_id"], "dispatch-result")
+            self.assertEqual(task_done[0]["payload"]["reason"], "claude_result")
+            self.assertEqual(events[-1]["event_type"], "READY")
+
+    def test_claude_jsonl_stream_finish_emits_task_done(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            task_hint_dir = root / "task-hints"
+            self._write_task_hint(
+                task_hint_dir,
+                job_id="job-eof",
+                dispatch_id="dispatch-eof",
+                control_seq=413,
+            )
+            emitter = _WrapperEmitter(
+                wrapper_dir=root,
+                lane_name="Claude",
+                task_hint_dir=task_hint_dir,
+                child_pid=803,
+                send_child_bytes=lambda _data: None,
+                jsonl_mode=True,
+            )
+
+            emitter.feed(json.dumps({"type": "text", "text": "working"}) + "\n", now=1.0)
+            emitter.finish_stream(now=2.0)
+
+            events = self._read_wrapper_events(root / "claude.jsonl")
+            task_done = [event for event in events if event.get("event_type") == "TASK_DONE"]
+            self.assertEqual(len(task_done), 1)
+            self.assertEqual(task_done[0]["payload"]["dispatch_id"], "dispatch-eof")
+            self.assertEqual(task_done[0]["payload"]["reason"], "stream_eof")
+
+    def test_jsonl_mode_false_keeps_codex_text_parsing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            task_hint_dir = root / "task-hints"
+            self._write_task_hint(
+                task_hint_dir,
+                lane="Codex",
+                job_id="job-codex-text",
+                dispatch_id="dispatch-codex-text",
+                control_seq=414,
+            )
+            emitter = _WrapperEmitter(
+                wrapper_dir=root,
+                lane_name="Codex",
+                task_hint_dir=task_hint_dir,
+                child_pid=804,
+                send_child_bytes=lambda _data: None,
+                jsonl_mode=False,
+            )
+
+            emitter.feed("OpenAI Codex\n› Type your message\n", now=0.0)
+            emitter.feed("• Working (22s • esc to interrupt)\n", now=1.0)
+
+            events = self._read_wrapper_events(root / "codex.jsonl")
+            event_types = [str(event.get("event_type") or "") for event in events]
+            self.assertIn("TASK_ACCEPTED", event_types)
+            self.assertEqual(events[-1]["payload"]["dispatch_id"], "dispatch-codex-text")
+
+    def test_claude_jsonl_invalid_output_falls_back_to_text_parsing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            task_hint_dir = root / "task-hints"
+            self._write_task_hint(
+                task_hint_dir,
+                job_id="job-fallback",
+                dispatch_id="dispatch-fallback",
+                control_seq=415,
+            )
+            emitter = _WrapperEmitter(
+                wrapper_dir=root,
+                lane_name="Claude",
+                task_hint_dir=task_hint_dir,
+                child_pid=805,
+                send_child_bytes=lambda _data: None,
+                jsonl_mode=True,
+            )
+
+            emitter.feed("Working (stream-json unsupported fallback)\n", now=1.0)
+
+            events = self._read_wrapper_events(root / "claude.jsonl")
+            event_types = [str(event.get("event_type") or "") for event in events]
+            self.assertFalse(emitter.jsonl_mode)
+            self.assertIn("TASK_ACCEPTED", event_types)
+            self.assertEqual(events[-1]["payload"]["dispatch_id"], "dispatch-fallback")
 
     def test_active_task_hint_with_invalid_control_seq_emits_bridge_diagnostic(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

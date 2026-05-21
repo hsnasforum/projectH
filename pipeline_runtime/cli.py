@@ -925,12 +925,14 @@ class _WrapperEmitter:
         task_hint_dir: Path | None,
         child_pid: int,
         send_child_bytes,
+        jsonl_mode: bool = False,
     ) -> None:
         self.wrapper_dir = wrapper_dir
         self.lane_name = lane_name
         self.task_hint_dir = task_hint_dir
         self.child_pid = child_pid
         self.send_child_bytes = send_child_bytes
+        self.jsonl_mode = jsonl_mode
         self.partial = ""
         self.recent_lines: list[str] = []
         self.ready_emitted = False
@@ -958,6 +960,12 @@ class _WrapperEmitter:
     def feed(self, text: str, *, now: float | None = None) -> None:
         if not text:
             return
+        if self.jsonl_mode:
+            self._feed_jsonl(text, now=now)
+            return
+        self._feed_text(text, now=now)
+
+    def _feed_text(self, text: str, *, now: float | None = None) -> None:
         combined = self.partial + text
         lines = combined.splitlines(keepends=False)
         if combined and not combined.endswith(("\n", "\r")):
@@ -976,6 +984,99 @@ class _WrapperEmitter:
 
     def tick(self, *, now: float | None = None) -> None:
         self._evaluate([], now=now)
+
+    def finish_stream(self, *, now: float | None = None) -> None:
+        if self.jsonl_mode:
+            self._on_claude_completion("stream_eof")
+
+    def _feed_jsonl(self, text: str, *, now: float | None = None) -> None:
+        combined = self.partial + text
+        lines = combined.splitlines(keepends=False)
+        if combined and not combined.endswith(("\n", "\r")):
+            self.partial = lines.pop() if lines else combined
+        else:
+            self.partial = ""
+
+        for line in lines:
+            cleaned = line.strip()
+            if not cleaned:
+                continue
+            try:
+                event = json.loads(cleaned)
+            except json.JSONDecodeError:
+                self.jsonl_mode = False
+                self.partial = ""
+                self._feed_text(combined, now=now)
+                return
+            if not isinstance(event, dict):
+                continue
+            event_type = str(event.get("type") or "")
+            if event_type == "text" and str(event.get("text") or "").strip():
+                self._on_claude_activity(now=now)
+            elif event_type == "tool_use":
+                self._on_claude_activity(now=now)
+            elif event_type == "result":
+                self._on_claude_completion("claude_result")
+
+    def _active_task_payload_from_hint(self) -> tuple[str, dict[str, object]]:
+        task_hint = _load_task_hint(self.task_hint_dir, self.lane_name)
+        job_id = str(task_hint.get("job_id") or "")
+        dispatch_id = str(task_hint.get("dispatch_id") or "")
+        raw_control_seq = task_hint.get("control_seq")
+        try:
+            control_seq = int(raw_control_seq if raw_control_seq is not None else -1)
+        except (TypeError, ValueError):
+            control_seq = -1
+        attempt = int(task_hint.get("attempt") or 0)
+        task_claimed_active = bool(task_hint.get("active")) and bool(job_id) and bool(dispatch_id)
+        task_key = f"{job_id}|{dispatch_id}" if task_claimed_active else ""
+        if not task_claimed_active:
+            self.done_key = ""
+            return "", {}
+        if self.done_key and task_key != self.done_key:
+            self.done_key = ""
+        if control_seq < 0:
+            self._emit_bridge_diagnostic(
+                task_key,
+                job_id=job_id,
+                dispatch_id=dispatch_id,
+                control_seq=control_seq,
+                code="active_task_hint_metadata_invalid",
+                detail="control_seq_missing_for_active_dispatch",
+            )
+            return "", {}
+        self.bridge_diagnostic_key = ""
+        if self.done_key == task_key:
+            return "", {}
+        return task_key, {
+            "job_id": job_id,
+            "dispatch_id": dispatch_id,
+            "control_seq": control_seq,
+            "attempt": attempt,
+        }
+
+    def _on_claude_activity(self, *, now: float | None = None) -> None:
+        task_key, payload = self._active_task_payload_from_hint()
+        if not task_key or not payload:
+            return
+        now_value = float(now) if now is not None else time.monotonic()
+        if self.seen_key != task_key:
+            self.seen_key = task_key
+            self.seen_payload = dict(payload)
+            self.append("DISPATCH_SEEN", dict(payload), derived_from="task_hint")
+        if self.accepted_key != task_key:
+            self.accepted_key = task_key
+            self.accepted_payload = dict(payload)
+            self.append("TASK_ACCEPTED", dict(payload), derived_from="vendor_output")
+            self._task_inactive_since = 0.0
+        self._last_activity_at = now_value
+        self.busy_state = True
+
+    def _on_claude_completion(self, reason: str) -> None:
+        if not self.accepted_key or not self.accepted_payload:
+            return
+        self._emit_task_done(reason)
+        self._emit_ready()
 
     def _emit_task_done(self, reason: str = "") -> None:
         if not self.accepted_key or not self.accepted_payload:
@@ -1203,6 +1304,7 @@ def _lane_wrapper(args: argparse.Namespace) -> int:
         task_hint_dir=task_hint_dir,
         child_pid=child.pid,
         send_child_bytes=lambda data: os.write(master_fd, data),
+        jsonl_mode=args.lane == "Claude",
     )
 
     stop_requested = False
@@ -1257,6 +1359,8 @@ def _lane_wrapper(args: argparse.Namespace) -> int:
                         os.write(sys.stdout.fileno(), chunk)
                         sys.stdout.flush()
                         emitter.feed(chunk.decode("utf-8", errors="replace"))
+                    else:
+                        emitter.finish_stream(now=now)
                 elif fd == stdin_fd:
                     data = os.read(stdin_fd, 1024)
                     if data:
@@ -1271,7 +1375,9 @@ def _lane_wrapper(args: argparse.Namespace) -> int:
                         os.write(sys.stdout.fileno(), chunk)
                         sys.stdout.flush()
                         emitter.feed(chunk.decode("utf-8", errors="replace"))
+                    emitter.finish_stream(now=time.time())
                 except OSError:
+                    emitter.finish_stream(now=time.time())
                     pass
                 break
             if stop_requested:

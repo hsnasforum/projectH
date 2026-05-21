@@ -10,6 +10,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+from pipeline_runtime import role_routes
 from pipeline_runtime import schema as schema_module
 from pipeline_runtime.schema import (
     JOB_STATE_DIR_NAME,
@@ -34,6 +35,45 @@ from pipeline_runtime.schema import (
     sha256_file,
     snapshot_control_seq,
 )
+
+
+class RoleRoutesTest(unittest.TestCase):
+    def test_route_specs_preserve_legacy_constant_compatibility(self) -> None:
+        route_pairs = [
+            ("VERIFY_FOLLOWUP", "VERIFY_FOLLOWUP_ROUTE", "VERIFY_FOLLOWUP_ROUTE_ALIASES"),
+            ("VERIFY_TRIAGE", "VERIFY_TRIAGE_ESCALATION", "VERIFY_TRIAGE_ESCALATION_ALIASES"),
+            ("VERIFY_TRIAGE_ONLY", "VERIFY_TRIAGE_ONLY_REASON", "VERIFY_TRIAGE_ONLY_REASON_ALIASES"),
+            ("IMPLEMENT_HANDOFF", "IMPLEMENT_HANDOFF_NOTIFY", "IMPLEMENT_HANDOFF_NOTIFY_ALIASES"),
+            ("ADVISORY_REQUEST", "ADVISORY_REQUEST_NOTIFY", "ADVISORY_REQUEST_NOTIFY_ALIASES"),
+            (
+                "ADVISORY_ADVICE_FOLLOWUP",
+                "ADVISORY_ADVICE_FOLLOWUP_NOTIFY",
+                "ADVISORY_ADVICE_FOLLOWUP_NOTIFY_ALIASES",
+            ),
+            ("ADVISORY_RECOVERY", "ADVISORY_RECOVERY_NOTIFY", "ADVISORY_RECOVERY_NOTIFY_ALIASES"),
+        ]
+
+        for spec_name, canonical_name, aliases_name in route_pairs:
+            with self.subTest(spec=spec_name):
+                spec = getattr(role_routes, spec_name)
+                self.assertIsInstance(spec, role_routes.RouteSpec)
+                self.assertIsInstance(spec.canonical, str)
+                self.assertIsInstance(spec.aliases, frozenset)
+                self.assertIn(spec.canonical, spec.aliases)
+                self.assertEqual(getattr(role_routes, canonical_name), spec.canonical)
+                self.assertEqual(getattr(role_routes, aliases_name), spec.aliases)
+
+    def test_canonical_notify_kind_map_covers_all_legacy_constants(self) -> None:
+        legacy_values = {
+            value
+            for name, value in vars(role_routes).items()
+            if name.startswith("LEGACY_") and isinstance(value, str)
+        }
+
+        self.assertEqual(set(role_routes._CANONICAL_NOTIFY_KIND_BY_LEGACY), legacy_values)
+        self.assertEqual(role_routes.normalize_notify_kind("codex_followup"), role_routes.VERIFY_FOLLOWUP_ROUTE)
+        self.assertEqual(role_routes.normalize_notify_kind("codex_triage"), role_routes.VERIFY_TRIAGE_ESCALATION)
+        self.assertEqual(role_routes.normalize_notify_kind("codex_triage_only"), role_routes.VERIFY_TRIAGE_ONLY_REASON)
 
 
 class RuntimeSchemaTest(unittest.TestCase):

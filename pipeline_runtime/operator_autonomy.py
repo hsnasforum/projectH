@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 import time
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any, Iterable, Mapping
 
 from .role_routes import (
@@ -24,6 +26,17 @@ PUBLICATION_BOUNDARY_REASON_CODES = frozenset({
     "external_publication_boundary",
     PR_MERGE_GATE_REASON,
 })
+PUBLICATION_DEFAULT_HOLD_REASON_CODES = frozenset(
+    reason for reason in PUBLICATION_BOUNDARY_REASON_CODES if reason != PR_MERGE_GATE_REASON
+)
+_POLICY_PUBLICATION_HOLD_ALIAS_REASON_CODES = frozenset(
+    {
+        "publish_boundary_accumulated_dirty_tree",
+        "accumulated_dirty_tree_publish_boundary",
+        "dirty_tree_publish_boundary",
+        "dirty_bundle_publication_or_hold_decision",
+    }
+)
 
 _SPACE_RE = re.compile(r"\s+")
 _NON_REASON_CODE_RE = re.compile(r"[^a-z0-9_]+")
@@ -239,6 +252,15 @@ SUPPORTED_DECISION_CLASSES: frozenset[str] = frozenset(
         "red_test_family_scope_decision",
     }
 )
+
+
+def load_runtime_policy(project_root: Path) -> dict[str, Any]:
+    path = project_root / ".pipeline" / "config" / "runtime_policy.json"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
 
 _REASON_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("safety_stop", ("safety_stop", "safety stop", "immediate safety stop")),
@@ -856,6 +878,41 @@ def _normalize_meta(meta: Mapping[str, Any] | None) -> dict[str, Any]:
     return lowered
 
 
+def _publication_default_hold_marker(
+    decision: Mapping[str, Any],
+    *,
+    control_meta: Mapping[str, Any] | None,
+    control_file: str,
+    control_seq: int,
+    runtime_policy: Mapping[str, Any] | None,
+) -> dict[str, object] | None:
+    if not isinstance(runtime_policy, Mapping):
+        return None
+    if str(runtime_policy.get("publication_default") or "").strip().lower() != "hold":
+        return None
+
+    reason_code = str(decision.get("reason_code") or "")
+    if reason_code == PR_MERGE_GATE_REASON:
+        return None
+
+    meta = _normalize_meta(control_meta)
+    raw_reason_code = _normalize_control_token(meta.get("reason_code"))
+    applies = (
+        reason_code in PUBLICATION_DEFAULT_HOLD_REASON_CODES
+        or raw_reason_code in _POLICY_PUBLICATION_HOLD_ALIAS_REASON_CODES
+    )
+    if not applies:
+        return None
+    return {
+        "control_file": control_file,
+        "control_seq": control_seq,
+        "reason": "publication_default_hold",
+        "routed_to": VERIFY_FOLLOWUP_ROUTE,
+        "resolved_work_paths": [],
+        "policy_source": "runtime_policy.json",
+    }
+
+
 def classify_operator_candidate(
     control_text: str,
     *,
@@ -1055,6 +1112,7 @@ def resolve_operator_control(
     idle_stable: bool = False,
     first_seen_ts: float | None = None,
     now_ts: float | None = None,
+    runtime_policy: Mapping[str, Any] | None = None,
 ) -> dict[str, object]:
     """Resolve an active operator control using the shared recovery/gate truth.
 
@@ -1088,6 +1146,14 @@ def resolve_operator_control(
         turn_reason=turn_reason,
         turn_control_seq=turn_control_seq,
     )
+    if stale_marker is None:
+        stale_marker = _publication_default_hold_marker(
+            decision,
+            control_meta=control_meta,
+            control_file=control_file,
+            control_seq=control_seq,
+            runtime_policy=runtime_policy,
+        )
     fingerprint = str(decision.get("fingerprint") or "")
     gate_marker = operator_gate_marker_from_decision(
         decision,
@@ -1095,6 +1161,8 @@ def resolve_operator_control(
         control_seq=control_seq,
         fingerprint=fingerprint,
     )
+    if stale_marker is not None and str(stale_marker.get("reason") or "") == "publication_default_hold":
+        gate_marker = None
     return {
         "decision": decision,
         "stale_marker": stale_marker,

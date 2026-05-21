@@ -1268,6 +1268,193 @@ class _WrapperEmitter:
         return True
 
 
+_CLAUDE_PRINT_JSONL_ARGS = ("--print", "--verbose", "--output-format", "stream-json")
+
+
+class ClaudePrintPromptSourceError(ValueError):
+    def __init__(self, code: str, path: Path) -> None:
+        super().__init__(code)
+        self.code = code
+        self.path = path
+
+
+def _decode_subprocess_stream(data: bytes | str | None) -> str:
+    if data is None:
+        return ""
+    if isinstance(data, bytes):
+        return data.decode("utf-8", errors="replace")
+    return data
+
+
+def _resolve_claude_print_prompt_path(*, prompt_path: str | Path, allowed_root: Path) -> tuple[Path, Path]:
+    root = allowed_root.resolve(strict=False)
+    candidate = Path(prompt_path)
+    if not candidate.is_absolute():
+        candidate = root / candidate
+    resolved = candidate.resolve(strict=False)
+    try:
+        resolved.relative_to(root)
+    except ValueError as exc:
+        raise ClaudePrintPromptSourceError("prompt_path_outside_root", resolved) from exc
+    return resolved, root
+
+
+def _load_claude_print_jsonl_prompt(*, prompt_path: str | Path, allowed_root: Path) -> tuple[str, Path]:
+    resolved, root = _resolve_claude_print_prompt_path(prompt_path=prompt_path, allowed_root=allowed_root)
+    if not resolved.exists():
+        raise ClaudePrintPromptSourceError("prompt_path_missing", resolved)
+    if resolved.is_dir():
+        raise ClaudePrintPromptSourceError("prompt_path_directory", resolved)
+    text = resolved.read_text(encoding="utf-8")
+    if not text.strip():
+        raise ClaudePrintPromptSourceError("prompt_empty", resolved)
+    return text, root
+
+
+def _run_claude_print_jsonl_pipe(
+    *,
+    prompt: str,
+    wrapper_dir: Path,
+    task_hint_dir: Path | None,
+    claude_bin: str = "claude",
+    cwd: Path | None = None,
+    now: float | None = None,
+) -> tuple[int, str]:
+    """Inactive scaffold for a non-PTY Claude JSONL path.
+
+    The normal lane wrapper intentionally remains pane-text based. This helper is
+    only used by direct tests and future explicit wiring.
+    """
+    command = [claude_bin, *_CLAUDE_PRINT_JSONL_ARGS]
+    process = subprocess.Popen(
+        command,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        cwd=str(cwd) if cwd is not None else None,
+    )
+    stdout_data, stderr_data = process.communicate(input=prompt.encode("utf-8"))
+    emitter = _WrapperEmitter(
+        wrapper_dir=wrapper_dir,
+        lane_name="Claude",
+        task_hint_dir=task_hint_dir,
+        child_pid=int(getattr(process, "pid", 0) or 0),
+        send_child_bytes=lambda _data: None,
+        jsonl_mode=True,
+    )
+    stdout_text = _decode_subprocess_stream(stdout_data)
+    if stdout_text:
+        emitter.feed(stdout_text, now=now)
+    emitter.finish_stream(now=now)
+    returncode = process.returncode
+    if returncode is None:
+        returncode = process.wait()
+    return int(returncode or 0), _decode_subprocess_stream(stderr_data)
+
+
+def _run_claude_print_jsonl_pipe_from_prompt_file(
+    *,
+    prompt_path: str | Path,
+    allowed_root: Path,
+    wrapper_dir: Path,
+    task_hint_dir: Path | None,
+    claude_bin: str = "claude",
+    cwd: Path | None = None,
+    now: float | None = None,
+) -> tuple[int, str]:
+    prompt, root = _load_claude_print_jsonl_prompt(prompt_path=prompt_path, allowed_root=allowed_root)
+    return _run_claude_print_jsonl_pipe(
+        prompt=prompt,
+        wrapper_dir=wrapper_dir,
+        task_hint_dir=task_hint_dir,
+        claude_bin=claude_bin,
+        cwd=cwd or root,
+        now=now,
+    )
+
+
+def _valid_claude_task_hint_payload(task_hint_dir: Path | None) -> dict[str, object]:
+    task_hint = _load_task_hint(task_hint_dir, "Claude")
+    job_id = str(task_hint.get("job_id") or "")
+    dispatch_id = str(task_hint.get("dispatch_id") or "")
+    if not bool(task_hint.get("active")) or not job_id or not dispatch_id:
+        return {}
+    try:
+        control_seq = int(task_hint.get("control_seq") if task_hint.get("control_seq") is not None else -1)
+    except (TypeError, ValueError):
+        return {}
+    if control_seq < 0:
+        return {}
+    return {
+        "job_id": job_id,
+        "dispatch_id": dispatch_id,
+        "control_seq": control_seq,
+    }
+
+
+def _append_claude_print_prompt_source_rejection_event(
+    *,
+    wrapper_dir: Path,
+    task_hint_dir: Path | None,
+    error: ClaudePrintPromptSourceError,
+) -> None:
+    task_payload = _valid_claude_task_hint_payload(task_hint_dir)
+    if task_payload:
+        append_wrapper_event(
+            wrapper_dir,
+            "Claude",
+            "BRIDGE_DIAGNOSTIC",
+            {
+                **task_payload,
+                "code": error.code,
+                "path": str(error.path),
+            },
+            source="wrapper",
+            derived_from="prompt_source_rejected",
+        )
+        return
+    append_wrapper_event(
+        wrapper_dir,
+        "Claude",
+        "BROKEN",
+        {
+            "pid": 0,
+            "reason": "prompt_source_rejected",
+            "code": error.code,
+            "path": str(error.path),
+        },
+        source="wrapper",
+        derived_from="prompt_source_rejected",
+    )
+
+
+def _claude_print_jsonl_pipe_command(args: argparse.Namespace) -> int:
+    project_root = _project_root(args.project_root)
+    wrapper_dir = project_root / ".pipeline" / "runs" / args.run_id / "wrapper-events"
+    wrapper_dir.mkdir(parents=True, exist_ok=True)
+    task_hint_dir = Path(args.task_hint_dir).resolve() if args.task_hint_dir else None
+    try:
+        returncode, stderr = _run_claude_print_jsonl_pipe_from_prompt_file(
+            prompt_path=args.prompt_file,
+            allowed_root=project_root,
+            wrapper_dir=wrapper_dir,
+            task_hint_dir=task_hint_dir,
+            claude_bin=args.claude_bin,
+            cwd=project_root,
+        )
+    except ClaudePrintPromptSourceError as exc:
+        _append_claude_print_prompt_source_rejection_event(
+            wrapper_dir=wrapper_dir,
+            task_hint_dir=task_hint_dir,
+            error=exc,
+        )
+        print(f"claude_print_jsonl_prompt_source_error: {exc.code}: {exc.path}", file=sys.stderr)
+        return 2
+    if stderr:
+        sys.stderr.write(stderr)
+    return returncode
+
+
 def _set_pty_size_from_stdin(slave_fd: int) -> None:
     if not sys.stdin.isatty():
         return
@@ -1304,7 +1491,7 @@ def _lane_wrapper(args: argparse.Namespace) -> int:
         task_hint_dir=task_hint_dir,
         child_pid=child.pid,
         send_child_bytes=lambda data: os.write(master_fd, data),
-        jsonl_mode=args.lane == "Claude",
+        jsonl_mode=False,
     )
 
     stop_requested = False
@@ -1449,6 +1636,13 @@ def build_parser() -> argparse.ArgumentParser:
     doctor.add_argument("--session", default="")
     doctor.add_argument("--json", action="store_true")
 
+    claude_print_jsonl_pipe = sub.add_parser("claude-print-jsonl-pipe")
+    claude_print_jsonl_pipe.add_argument("--project-root", default="")
+    claude_print_jsonl_pipe.add_argument("--run-id", required=True)
+    claude_print_jsonl_pipe.add_argument("--prompt-file", required=True)
+    claude_print_jsonl_pipe.add_argument("--task-hint-dir", default="")
+    claude_print_jsonl_pipe.add_argument("--claude-bin", default="claude")
+
     lane_wrapper = sub.add_parser("lane-wrapper")
     lane_wrapper.add_argument("--project-root", default="")
     lane_wrapper.add_argument("--run-id", required=True)
@@ -1485,6 +1679,8 @@ def main(argv: list[str] | None = None) -> int:
         return _status(args)
     if args.command == "doctor":
         return _doctor(args)
+    if args.command == "claude-print-jsonl-pipe":
+        return _claude_print_jsonl_pipe_command(args)
     if args.command == "lane-wrapper":
         return _lane_wrapper(args)
     parser.error("unknown command")

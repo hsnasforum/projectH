@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "publication_default": "hold",
+  "commit_local": "allowed",
+  "push_remote": "needs_operator",
+  "pr_create": "needs_operator",
+  "pr_merge": "needs_operator"
+}

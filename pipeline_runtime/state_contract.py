@@ -4,6 +4,8 @@ from dataclasses import asdict, dataclass
 from enum import Enum
 from typing import Any, Mapping
 
+from .lane_catalog import default_role_bindings
+
 
 RUNTIME_SNAPSHOT_CONTRACT_VERSION = "2026-05-20.runtime_snapshot_v1"
 
@@ -280,7 +282,7 @@ def _role_owners(status: Mapping[str, Any]) -> Mapping[str, str]:
     raw = _mapping(status.get("role_owners"))
     if raw:
         return {str(key): str(value) for key, value in raw.items()}
-    return {"implement": "Claude", "verify": "Codex", "advisory": "Gemini"}
+    return default_role_bindings()
 
 
 def _active_lane(status: Mapping[str, Any], round_state: str, turn_state: Mapping[str, Any]) -> str:
@@ -329,71 +331,170 @@ def _lane_snapshots(status: Mapping[str, Any], active_lane: str) -> list[dict[st
     return lanes
 
 
-def reduce_runtime_snapshot(status: Mapping[str, Any] | None) -> dict[str, Any]:
-    """Build the single consumer-facing runtime snapshot from legacy status fields."""
-    payload = status if isinstance(status, Mapping) else {}
-    runtime_state = (_clean(payload.get("runtime_state")) or "STOPPED").upper()
+def _extract_autonomy_section(status: Mapping[str, Any]) -> dict[str, Any]:
+    runtime_state = (_clean(status.get("runtime_state")) or "STOPPED").upper()
     degraded_reasons = [
         _clean(item)
-        for item in _list(payload.get("degraded_reasons"))
+        for item in _list(status.get("degraded_reasons"))
         if _clean(item)
     ]
-    degraded_reason = _clean(payload.get("degraded_reason"))
+    degraded_reason = _clean(status.get("degraded_reason"))
     if degraded_reason and degraded_reason not in degraded_reasons:
         degraded_reasons.insert(0, degraded_reason)
     uncertain = _runtime_uncertain(runtime_state, degraded_reasons)
     show_live = runtime_state not in INACTIVE_RUNTIME_STATES and not uncertain
-    turn_state = _current_turn_state(payload)
-    automation_health = _clean(payload.get("automation_health")) or RuntimeHealth.OK.value
+    automation_health = _clean(status.get("automation_health")) or RuntimeHealth.OK.value
     if automation_health not in {item.value for item in RuntimeHealth}:
         automation_health = RuntimeHealth.ATTENTION.value
-    control_status = _control_status(payload, show_live=show_live, uncertain=uncertain)
-    round_state = _live_round_state(payload, turn_state) if show_live else (
+    return {
+        "runtime_state": runtime_state,
+        "degraded_reasons": degraded_reasons,
+        "uncertain": uncertain,
+        "show_live": show_live,
+        "automation_health": automation_health,
+        "health": {
+            "state": automation_health,
+            "reason_code": _clean(status.get("automation_reason_code")),
+            "incident_family": _clean(status.get("automation_incident_family")),
+            "next_action": _clean(status.get("automation_next_action")) or "continue",
+        },
+    }
+
+
+def _extract_control_section(
+    status: Mapping[str, Any],
+    *,
+    show_live: bool,
+    uncertain: bool,
+) -> dict[str, Any]:
+    return {
+        "control_status": _control_status(
+            status,
+            show_live=show_live,
+            uncertain=uncertain,
+        )
+    }
+
+
+def _extract_round_section(
+    status: Mapping[str, Any],
+    *,
+    show_live: bool,
+    uncertain: bool,
+) -> dict[str, Any]:
+    turn_state = _current_turn_state(status)
+    round_state = _live_round_state(status, turn_state) if show_live else (
         RoundState.UNCERTAIN.value if uncertain else RoundState.IDLE.value
     )
+    return {"turn_state": turn_state, "round_state": round_state}
+
+
+def _extract_lane_summary(
+    status: Mapping[str, Any],
+    *,
+    round_state: str,
+    turn_state: Mapping[str, Any],
+) -> dict[str, Any]:
+    active_lane = _active_lane(status, round_state, turn_state)
+    return {
+        "active_lane": active_lane,
+        "lanes": _lane_snapshots(status, active_lane),
+    }
+
+
+def _extract_queue_section(
+    status: Mapping[str, Any],
+    *,
+    show_live: bool,
+    control_status: str,
+    round_state: str,
+    automation_health: str,
+) -> dict[str, Any]:
     violations: list[str] = []
     queue = _queue_snapshot(
-        payload,
+        status,
         show_live=show_live,
         control_status=control_status,
         round_state=round_state,
         automation_health=automation_health,
         violations=violations,
     )
-    active_lane = _active_lane(payload, round_state, turn_state)
     if (
         show_live
         and queue.no_queued_pipeline_task
-        and _compat_control_present(payload)
+        and _compat_control_present(status)
         and not _compat_operator_candidate_is_suppressed(
-            payload,
+            status,
             automation_health=automation_health,
             control_status=control_status,
         )
     ):
         violations.append("no_queue_with_active_control_slot")
-    snapshot = RuntimeSnapshot(
+    return {"queue": queue, "violations": sorted(set(violations))}
+
+
+def _extract_runtime_sections(status: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
+    autonomy = _extract_autonomy_section(status)
+    control = _extract_control_section(
+        status,
+        show_live=bool(autonomy["show_live"]),
+        uncertain=bool(autonomy["uncertain"]),
+    )
+    round_section = _extract_round_section(
+        status,
+        show_live=bool(autonomy["show_live"]),
+        uncertain=bool(autonomy["uncertain"]),
+    )
+    lane_summary = _extract_lane_summary(
+        status,
+        round_state=str(round_section["round_state"]),
+        turn_state=_mapping(round_section["turn_state"]),
+    )
+    queue_section = _extract_queue_section(
+        status,
+        show_live=bool(autonomy["show_live"]),
+        control_status=str(control["control_status"]),
+        round_state=str(round_section["round_state"]),
+        automation_health=str(autonomy["automation_health"]),
+    )
+    return {
+        "autonomy": autonomy,
+        "control": control,
+        "round": round_section,
+        "lane": lane_summary,
+        "queue": queue_section,
+    }
+
+
+def _runtime_snapshot_from_sections(sections: Mapping[str, dict[str, Any]]) -> RuntimeSnapshot:
+    autonomy = sections["autonomy"]
+    control = sections["control"]
+    round_section = sections["round"]
+    lane_summary = sections["lane"]
+    queue_section = sections["queue"]
+    return RuntimeSnapshot(
         schema_version=1,
         contract_version=RUNTIME_SNAPSHOT_CONTRACT_VERSION,
-        runtime_state=runtime_state,
-        show_live=show_live,
-        control_state=control_status,
-        round_state=round_state,
-        active_lane=active_lane,
-        health={
-            "state": automation_health,
-            "reason_code": _clean(payload.get("automation_reason_code")),
-            "incident_family": _clean(payload.get("automation_incident_family")),
-            "next_action": _clean(payload.get("automation_next_action")) or "continue",
-        },
-        queue=queue,
-        lanes=_lane_snapshots(payload, active_lane),
-        invariants={"violations": sorted(set(violations))},
+        runtime_state=str(autonomy["runtime_state"]),
+        show_live=bool(autonomy["show_live"]),
+        control_state=str(control["control_status"]),
+        round_state=str(round_section["round_state"]),
+        active_lane=str(lane_summary["active_lane"]),
+        health=dict(autonomy["health"]),
+        queue=queue_section["queue"],
+        lanes=list(lane_summary["lanes"]),
+        invariants={"violations": list(queue_section["violations"])},
     )
-    data = asdict(snapshot)
+
+
+def reduce_runtime_snapshot(status: Mapping[str, Any] | None) -> dict[str, Any]:
+    """Build the single consumer-facing runtime snapshot from legacy status fields."""
+    payload = status if isinstance(status, Mapping) else {}
+    sections = _extract_runtime_sections(payload)
+    data = asdict(_runtime_snapshot_from_sections(sections))
     data["suppressed_operator_candidate"] = _suppressed_operator_candidate(
         payload,
-        automation_health=automation_health,
-        control_status=control_status,
+        automation_health=str(sections["autonomy"]["automation_health"]),
+        control_status=str(sections["control"]["control_status"]),
     )
     return data

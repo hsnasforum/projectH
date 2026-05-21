@@ -15,6 +15,7 @@ from pipeline_runtime.automation_health import (
     LOCAL_SOCKET_GUARD_AUTO_HELD_REASON,
 )
 from pipeline_runtime.cli import build_parser
+from pipeline_runtime.lane_catalog import load_physical_lane_specs, physical_lane_order
 from pipeline_runtime.operator_autonomy import (
     COMMIT_PUSH_BUNDLE_AUTHORIZATION_REASON,
     OPERATOR_APPROVAL_COMPLETED_REASON,
@@ -23,8 +24,8 @@ from pipeline_runtime.operator_autonomy import (
     classify_operator_candidate,
 )
 from pipeline_runtime.pr_merge_state import PrMergeGateResolution
-from pipeline_runtime.receipts import receipt_path
-from pipeline_runtime.supervisor import RuntimeSupervisor
+from pipeline_runtime.receipts import RECEIPT_SCHEMA_VERSION, receipt_path
+from pipeline_runtime.supervisor import DEFAULT_EVENTS_MAX_LINES, RuntimeSupervisor
 from pipeline_runtime.wrapper_events import (
     ALL_EVENT_TYPES,
     WRAPPER_EVENT_SCHEMA_VERSION,
@@ -96,6 +97,34 @@ def _write_active_profile(
     )
 
 
+def _write_runtime_policy(root: Path, *, publication_default: str = "hold") -> None:
+    policy_path = root / ".pipeline" / "config" / "runtime_policy.json"
+    policy_path.parent.mkdir(parents=True, exist_ok=True)
+    policy_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "publication_default": publication_default,
+                "commit_local": "allowed",
+                "push_remote": "needs_operator",
+                "pr_create": "needs_operator",
+                "pr_merge": "needs_operator",
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+
+def _write_lanes_config(root: Path, lanes: list[dict[str, object]]) -> None:
+    lanes_path = root / ".pipeline" / "config" / "lanes.json"
+    lanes_path.parent.mkdir(parents=True, exist_ok=True)
+    lanes_path.write_text(
+        json.dumps({"schema_version": 1, "lanes": lanes}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+
 class RuntimeSupervisorTest(unittest.TestCase):
     def test_cli_start_parser_accepts_legacy_mode_positionally(self) -> None:
         parser = build_parser()
@@ -103,6 +132,93 @@ class RuntimeSupervisorTest(unittest.TestCase):
         self.assertEqual(args.project_root, "/tmp/projectH")
         self.assertEqual(args.legacy_mode, "baseline")
         self.assertTrue(args.no_attach)
+
+    def test_load_physical_lane_specs_falls_back_without_lanes_config(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+
+            specs = load_physical_lane_specs(root)
+
+        self.assertEqual(tuple(spec.name for spec in specs), physical_lane_order())
+        self.assertEqual(specs[1].name, "Codex")
+        self.assertEqual(specs[1].vendor_args, ("--ask-for-approval", "never", "--disable", "apps"))
+
+    def test_load_physical_lane_specs_uses_lanes_config_when_present(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_lanes_config(
+                root,
+                [
+                    {
+                        "name": "Claude",
+                        "pane_index": 0,
+                        "roles": ["implement", "advisory"],
+                        "token_source": "claude",
+                        "agent_cli": "claude",
+                        "read_first_doc": "CLAUDE.md",
+                    },
+                    {
+                        "name": "Codex",
+                        "pane_index": 1,
+                        "roles": ["implement", "verify", "advisory"],
+                        "token_source": "codex",
+                        "agent_cli": "codex",
+                        "read_first_doc": "AGENTS.md",
+                    },
+                    {
+                        "name": "Gemini",
+                        "pane_index": 2,
+                        "roles": ["advisory"],
+                        "token_source": "gemini",
+                        "agent_cli": "gemini",
+                        "read_first_doc": "GEMINI.md",
+                    },
+                ],
+            )
+
+            specs = load_physical_lane_specs(root)
+
+        self.assertEqual(tuple(spec.name for spec in specs), ("Claude", "Codex", "Gemini"))
+        self.assertEqual(specs[0].roles, ("implement", "advisory"))
+        self.assertEqual(specs[2].vendor_binary, "gemini")
+        self.assertEqual(specs[2].vendor_args, ("--yolo",))
+
+    def test_supervisor_recognizes_custom_lane_from_lanes_config(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_lanes_config(
+                root,
+                [
+                    {
+                        "name": "Codex",
+                        "pane_index": 1,
+                        "roles": ["implement", "verify", "advisory"],
+                        "token_source": "codex",
+                        "agent_cli": "codex",
+                        "read_first_doc": "AGENTS.md",
+                    },
+                    {
+                        "name": "LocalAgent",
+                        "pane_index": 3,
+                        "roles": ["advisory"],
+                        "token_source": "local",
+                        "agent_cli": "local-agent",
+                        "vendor_args": ["--serve"],
+                        "read_first_doc": "LOCAL_AGENT.md",
+                    },
+                ],
+            )
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+
+            lane_names = [str(lane.get("name") or "") for lane in supervisor.runtime_lane_configs]
+            local_cfg = next(lane for lane in supervisor.runtime_lane_configs if lane.get("name") == "LocalAgent")
+            with mock.patch.object(supervisor, "_find_cli_bin", side_effect=lambda name: f"/mock/bin/{name}"):
+                command = supervisor._lane_vendor_command("LocalAgent")
+
+        self.assertIn("LocalAgent", lane_names)
+        self.assertTrue(local_cfg["enabled"])
+        self.assertEqual(local_cfg["pane_index"], 3)
+        self.assertEqual(command, 'exec "/mock/bin/local-agent" --serve')
 
     def test_runtime_launch_failure_reason_classifies_tmux_socket_permission_denial(self) -> None:
         reason = RuntimeSupervisor._runtime_launch_failure_reason(
@@ -208,6 +324,45 @@ class RuntimeSupervisorTest(unittest.TestCase):
             self.assertEqual(payload["reason_code"], LOCAL_SOCKET_GUARD_AUTO_HELD_REASON)
             self.assertEqual(payload["incident_family"], LOCAL_SOCKET_GUARD_AUTO_HELD_REASON)
             self.assertEqual(payload["next_action"], "verify_followup")
+
+    def test_append_event_rotates_events_jsonl_and_records_rotation_event(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+            supervisor.events_path.parent.mkdir(parents=True, exist_ok=True)
+            supervisor._event_seq = 499
+            existing_lines = [
+                json.dumps(
+                    {
+                        "seq": index,
+                        "ts": "2026-05-21T00:00:00Z",
+                        "run_id": supervisor.run_id,
+                        "event_type": "old_event",
+                        "source": "supervisor",
+                        "payload": {"index": index},
+                    }
+                )
+                for index in range(DEFAULT_EVENTS_MAX_LINES + 25)
+            ]
+            supervisor.events_path.write_text("\n".join(existing_lines) + "\n", encoding="utf-8")
+
+            supervisor._append_event("rotation_trigger", {"ok": True})
+
+            lines = [
+                line
+                for line in supervisor.events_path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            events = [json.loads(line) for line in lines]
+
+        self.assertEqual(len(lines), DEFAULT_EVENTS_MAX_LINES)
+        self.assertEqual(events[-2]["event_type"], "rotation_trigger")
+        self.assertEqual(events[-1]["event_type"], "events_rotated")
+        self.assertEqual(events[-1]["payload"]["max_lines"], DEFAULT_EVENTS_MAX_LINES)
+        self.assertEqual(events[-1]["payload"]["previous_lines"], DEFAULT_EVENTS_MAX_LINES + 26)
+        self.assertGreater(events[-1]["payload"]["dropped_lines"], 0)
+        self.assertNotEqual(events[0]["payload"].get("index"), 0)
 
     def test_run_launch_failure_preserves_local_socket_guard_reason_and_raw_log(self) -> None:
         launch_error = "error connecting to /tmp/tmux-1000/default (Operation not permitted)"
@@ -893,6 +1048,7 @@ class RuntimeSupervisorTest(unittest.TestCase):
             receipt_path = supervisor.receipts_dir / f"{status['last_receipt_id']}.json"
             self.assertTrue(receipt_path.exists())
             receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+            self.assertEqual(receipt["schema_version"], RECEIPT_SCHEMA_VERSION)
             self.assertEqual(receipt["job_id"], "job-1")
             self.assertEqual(receipt["control_seq"], 17)
             self.assertEqual(receipt["verify_result"], "passed_by_feedback")
@@ -3014,6 +3170,192 @@ class RuntimeSupervisorTest(unittest.TestCase):
             self.assertEqual(autonomy["operator_policy"], "internal_only")
             self.assertEqual(autonomy["decision_class"], "release_gate")
 
+    def test_publication_boundary_policy_hold_marks_operator_request_stale(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            _write_runtime_policy(root)
+            pipeline_dir = root / ".pipeline"
+            operator_path = pipeline_dir / "operator_request.md"
+            operator_path.write_text(
+                "STATUS: needs_operator\n"
+                "CONTROL_SEQ: 2102\n"
+                "REASON_CODE: publication_boundary\n"
+                "OPERATOR_POLICY: immediate_publish\n"
+                "DECISION_CLASS: release_gate\n"
+                "DECISION_REQUIRED: authorize publication or hold publication\n",
+                encoding="utf-8",
+            )
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+
+            marker = supervisor._stale_operator_control_marker(
+                {
+                    "active_control_file": ".pipeline/operator_request.md",
+                    "active_control_status": "needs_operator",
+                    "active_control_seq": 2102,
+                    "mtime": operator_path.stat().st_mtime,
+                },
+                job_states=[],
+                turn_state={"state": "IDLE", "reason": "operator_request_updated"},
+            )
+
+            self.assertIsNotNone(marker)
+            assert marker is not None
+            self.assertEqual(marker["reason"], "publication_default_hold")
+            self.assertEqual(marker["routed_to"], "verify_followup")
+            self.assertEqual(marker["control_file"], ".pipeline/operator_request.md")
+            self.assertEqual(marker["control_seq"], 2102)
+            self.assertEqual(marker["resolved_work_paths"], [])
+            self.assertEqual(marker["policy_source"], "runtime_policy.json")
+
+    def test_dirty_bundle_publication_or_hold_policy_hold_marks_operator_request_stale(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            _write_runtime_policy(root)
+            pipeline_dir = root / ".pipeline"
+            operator_path = pipeline_dir / "operator_request.md"
+            operator_path.write_text(
+                "STATUS: needs_operator\n"
+                "CONTROL_SEQ: 2072\n"
+                "REASON_CODE: dirty_bundle_publication_or_hold_decision\n"
+                "OPERATOR_POLICY: operator_only_publication_boundary\n"
+                "DECISION_CLASS: publication_or_hold\n"
+                "DECISION_REQUIRED: Choose one: keep the current dirty bundle local-only / publication-held, "
+                "or explicitly authorize a separate verify/handoff publication flow.\n",
+                encoding="utf-8",
+            )
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+
+            marker = supervisor._stale_operator_control_marker(
+                {
+                    "active_control_file": ".pipeline/operator_request.md",
+                    "active_control_status": "needs_operator",
+                    "active_control_seq": 2072,
+                    "mtime": operator_path.stat().st_mtime,
+                },
+                job_states=[],
+                turn_state={"state": "IDLE", "reason": "operator_request_updated"},
+            )
+
+            self.assertIsNotNone(marker)
+            assert marker is not None
+            self.assertEqual(marker["reason"], "publication_default_hold")
+            self.assertEqual(marker["routed_to"], "verify_followup")
+            self.assertEqual(marker["policy_source"], "runtime_policy.json")
+
+    def test_write_status_routes_publication_default_hold_policy_to_verify_followup(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            _write_runtime_policy(root)
+            pipeline_dir = root / ".pipeline"
+            state_dir = pipeline_dir / "state"
+            state_dir.mkdir(parents=True, exist_ok=True)
+            (pipeline_dir / "operator_request.md").write_text(
+                "STATUS: needs_operator\n"
+                "CONTROL_SEQ: 2072\n"
+                "REASON_CODE: dirty_bundle_publication_or_hold_decision\n"
+                "OPERATOR_POLICY: operator_only_publication_boundary\n"
+                "DECISION_CLASS: publication_or_hold\n"
+                "DECISION_REQUIRED: Choose one: keep local-only / publication-held, "
+                "or explicitly authorize publication flow.\n",
+                encoding="utf-8",
+            )
+            (state_dir / "turn_state.json").write_text(
+                json.dumps(
+                    {
+                        "state": "IDLE",
+                        "legacy_state": "IDLE",
+                        "entered_at": 20.0,
+                        "reason": "operator_request_updated",
+                        "active_control_file": "",
+                        "active_control_seq": -1,
+                        "active_role": "",
+                        "active_lane": "",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+            supervisor._runtime_started = True
+
+            with (
+                mock.patch.object(supervisor, "_watcher_status", return_value={"alive": True, "pid": 4242}),
+                mock.patch.object(supervisor.adapter, "session_exists", return_value=True),
+                mock.patch.object(
+                    supervisor,
+                    "_build_lane_statuses",
+                    return_value=(
+                        [
+                            {"name": "Claude", "state": "READY", "attachable": True, "pid": 11, "note": ""},
+                            {"name": "Codex", "state": "READY", "attachable": True, "pid": 12, "note": ""},
+                            {"name": "Gemini", "state": "READY", "attachable": True, "pid": 13, "note": ""},
+                        ],
+                        {"Claude": {}, "Codex": {}, "Gemini": {}},
+                    ),
+                ),
+                mock.patch("pipeline_runtime.supervisor.build_lane_read_models", return_value={}),
+                mock.patch.object(supervisor, "_build_artifacts", return_value={"latest_work": {}, "latest_verify": {}}),
+            ):
+                status = supervisor._write_status()
+
+            self.assertEqual(status["control"]["active_control_status"], "none")
+            self.assertEqual(status["turn_state"]["state"], "VERIFY_FOLLOWUP")
+            self.assertEqual(status["turn_state"]["reason"], "publication_default_hold")
+            self.assertEqual(status["autonomy"]["mode"], "recovery")
+            self.assertEqual(status["autonomy"]["block_reason"], "publication_default_hold")
+            self.assertEqual(status["automation_reason_code"], "publication_default_hold")
+            self.assertEqual(status["automation_next_action"], "verify_followup")
+
+    def test_pr_merge_gate_policy_hold_keeps_operator_gate_marker(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            _write_runtime_policy(root)
+            pipeline_dir = root / ".pipeline"
+            operator_path = pipeline_dir / "operator_request.md"
+            operator_path.write_text(
+                "STATUS: needs_operator\n"
+                "CONTROL_SEQ: 1718\n"
+                f"REASON_CODE: {PR_MERGE_GATE_REASON}\n"
+                "OPERATOR_POLICY: internal_only\n"
+                "DECISION_CLASS: merge_gate\n"
+                "DECISION_REQUIRED: PR #27 merge approval\n",
+                encoding="utf-8",
+            )
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+
+            stale_marker = supervisor._stale_operator_control_marker(
+                {
+                    "active_control_file": ".pipeline/operator_request.md",
+                    "active_control_status": "needs_operator",
+                    "active_control_seq": 1718,
+                    "mtime": operator_path.stat().st_mtime,
+                },
+                job_states=[],
+                turn_state={"state": "IDLE", "reason": "operator_request_updated"},
+            )
+            marker, autonomy = supervisor._operator_gate_marker(
+                {
+                    "active_control_file": ".pipeline/operator_request.md",
+                    "active_control_status": "needs_operator",
+                    "active_control_seq": 1718,
+                    "mtime": operator_path.stat().st_mtime,
+                },
+                turn_state={"state": "IDLE", "reason": "operator_request_updated"},
+                active_round={"state": "CLOSED"},
+                wrapper_models={},
+            )
+
+            self.assertIsNone(stale_marker)
+            self.assertIsNotNone(marker)
+            assert marker is not None
+            self.assertEqual(marker["reason"], PR_MERGE_GATE_REASON)
+            self.assertEqual(marker["routed_to"], "verify_followup")
+            self.assertEqual(autonomy["reason_code"], PR_MERGE_GATE_REASON)
+            self.assertEqual(autonomy["decision_class"], "merge_gate")
+
     def test_legacy_milestone_release_gate_operator_request_surfaces_as_triage(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -3984,6 +4326,44 @@ class RuntimeSupervisorTest(unittest.TestCase):
             self.assertEqual(codex["state"], "READY")
             self.assertEqual(codex["note"], "waiting_next_control")
             capture_tail.assert_not_called()
+
+    def test_build_lane_statuses_reuses_single_pane_snapshot_for_status_poll(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+            panes = [
+                {"pane_index": 0, "pane_id": "%0", "pid": 111, "dead": False},
+                {"pane_index": 1, "pane_id": "%1", "pid": 222, "dead": False},
+                {"pane_index": 2, "pane_id": "%2", "pid": 333, "dead": False},
+            ]
+            capture_calls: list[list[str]] = []
+
+            def fake_run(cmd: list[str], *, timeout: float = 8.0) -> mock.Mock:
+                capture_calls.append(cmd)
+                return mock.Mock(returncode=0, stdout="• Working (2s)\n", stderr="")
+
+            with (
+                mock.patch.object(supervisor.adapter, "list_panes", return_value=panes) as list_panes,
+                mock.patch.object(supervisor.adapter, "_run", side_effect=fake_run),
+            ):
+                lanes, _models = supervisor._build_lane_statuses(
+                    wrapper_models={
+                        "Codex": {
+                            "state": "READY",
+                            "note": "prompt_visible",
+                            "last_event_at": "2026-05-21T00:00:00Z",
+                            "last_heartbeat_at": "2026-05-21T00:00:01Z",
+                        }
+                    },
+                    active_lane="Codex",
+                    active_round={"job_id": "job-42", "state": "VERIFYING"},
+                )
+
+        self.assertEqual(list_panes.call_count, 1)
+        self.assertTrue(any(cmd[:2] == ["tmux", "capture-pane"] for cmd in capture_calls))
+        codex = next(lane for lane in lanes if lane["name"] == "Codex")
+        self.assertEqual(codex["pid"], 222)
 
     def test_lane_statuses_use_pane_text_fallback_without_decisive_wrapper_event(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -8347,6 +8727,38 @@ class RuntimeSupervisorTest(unittest.TestCase):
             self.assertIn(str(root), command)
             self.assertIn("--lane Codex", command)
             self.assertIn("--run run-123", command)
+
+    def test_lane_vendor_command_prefers_env_override_for_claude_without_forcing_stream_json(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            supervisor = RuntimeSupervisor(root, run_id="run-123", start_runtime=False)
+            with mock.patch.dict(
+                "os.environ",
+                {
+                    "PIPELINE_RUNTIME_ALLOW_LANE_COMMAND_OVERRIDE": "1",
+                    "PIPELINE_RUNTIME_LANE_COMMAND_CLAUDE": "python3 claude-proxy.py --lane {lane} --run {run_id}",
+                },
+                clear=False,
+            ):
+                command = supervisor._lane_vendor_command("Claude")
+            self.assertIn("python3 claude-proxy.py", command)
+            self.assertIn("--lane Claude", command)
+            self.assertIn("--run run-123", command)
+            self.assertNotIn("--output-format stream-json", command)
+
+    def test_lane_vendor_command_keeps_claude_default_in_pane_text_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+            with mock.patch.object(supervisor, "_find_cli_bin", side_effect=lambda name: f"/usr/bin/{name}"):
+                command = supervisor._lane_vendor_command("Claude")
+            self.assertEqual(
+                command,
+                'exec "/usr/bin/claude" --dangerously-skip-permissions',
+            )
+            self.assertNotIn("--output-format", command)
 
     def test_lane_vendor_command_uses_yolo_for_gemini(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import atexit
+import os
+import tempfile
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -15,6 +18,35 @@ from pipeline_runtime.role_routes import (
 )
 from pipeline_runtime.role_harness import role_harness_path
 from pipeline_runtime.schema import control_seq_value, control_slot_id_for_filename
+
+_prompt_cleanup_list: list[str] = []
+
+
+def _cleanup_prompt_files() -> None:
+    for path in _prompt_cleanup_list:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+
+
+atexit.register(_cleanup_prompt_files)
+
+
+def _write_prompt_file(command: str) -> str:
+    """Write prompt to a temp file. Registered for cleanup at exit."""
+    fd = tempfile.NamedTemporaryFile(
+        mode="w", suffix=".txt", prefix="prompt-", delete=False, dir="/tmp",
+    )
+    fd.write(command)
+    fd.close()
+    _prompt_cleanup_list.append(fd.name)
+    return fd.name
+
+
+def _normalize_prompt_text(text: str) -> str:
+    """Convert literal \\n sequences from shell-passed templates into real newlines."""
+    return text.replace("\\n", "\n")
 
 
 DEFAULT_IMPLEMENT_PROMPT = (

@@ -4,8 +4,8 @@ from dataclasses import dataclass
 from typing import Any, Mapping
 
 from .role_routes import (
-    LEGACY_CODEX_FOLLOWUP_ROUTE,
     VERIFY_FOLLOWUP_ROUTE,
+    VERIFY_FOLLOWUP_ROUTE_ALIASES,
     is_verify_followup_route,
 )
 from .schema import active_control_snapshot_from_status, control_seq_value, snapshot_control_seq
@@ -32,7 +32,7 @@ LEGACY_WATCHER_TURN_BY_CANONICAL = {
 }
 
 LEGACY_WATCHER_TURN_ALIASES = {
-    LEGACY_CODEX_FOLLOWUP_ROUTE: TURN_VERIFY_FOLLOWUP,
+    alias: TURN_VERIFY_FOLLOWUP for alias in VERIFY_FOLLOWUP_ROUTE_ALIASES
 }
 
 TURN_STATE_IDLE = "IDLE"

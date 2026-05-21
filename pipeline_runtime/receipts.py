@@ -5,6 +5,8 @@ from typing import Any
 
 from .schema import atomic_write_json, read_json, sha256_file
 
+RECEIPT_SCHEMA_VERSION = "1"
+
 _MANIFEST_REQUIRED_FIELDS = {
     "schema_version",
     "job_id",
@@ -84,7 +86,7 @@ def build_receipt(
     emitted_by: str = "supervisor",
 ) -> dict[str, Any]:
     return {
-        "schema_version": 1,
+        "schema_version": RECEIPT_SCHEMA_VERSION,
         "receipt_id": receipt_id(str(job_state.get("job_id") or ""), int(job_state.get("round") or 0)),
         "run_id": run_id,
         "job_id": str(job_state.get("job_id") or ""),

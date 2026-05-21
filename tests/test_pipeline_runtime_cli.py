@@ -642,6 +642,421 @@ class WrapperEmitterTest(unittest.TestCase):
             self.assertIn("TASK_ACCEPTED", event_types)
             self.assertEqual(events[-1]["payload"]["dispatch_id"], "dispatch-fallback")
 
+    def test_claude_print_jsonl_pipe_sends_prompt_and_feeds_stdout(self) -> None:
+        class FakeProcess:
+            pid = 991
+            returncode = 0
+
+            def communicate(self, input: bytes | None = None):
+                sent_inputs.append(input)
+                stdout = "\n".join(
+                    [
+                        json.dumps({"type": "text", "text": "working"}),
+                        json.dumps({"type": "result"}),
+                    ]
+                ) + "\n"
+                return stdout.encode("utf-8"), b""
+
+            def wait(self) -> int:
+                return self.returncode
+
+        sent_inputs: list[bytes | None] = []
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            task_hint_dir = root / "task-hints"
+            self._write_task_hint(
+                task_hint_dir,
+                job_id="job-print-pipe",
+                dispatch_id="dispatch-print-pipe",
+                control_seq=416,
+            )
+            with patch.object(runtime_cli.subprocess, "Popen", return_value=FakeProcess()) as popen:
+                returncode, stderr = runtime_cli._run_claude_print_jsonl_pipe(
+                    prompt="respond with exactly: OK",
+                    wrapper_dir=root,
+                    task_hint_dir=task_hint_dir,
+                    cwd=root,
+                    now=3.0,
+                )
+
+            self.assertEqual(returncode, 0)
+            self.assertEqual(stderr, "")
+            self.assertEqual(sent_inputs, [b"respond with exactly: OK"])
+            popen.assert_called_once_with(
+                ["claude", "--print", "--verbose", "--output-format", "stream-json"],
+                stdin=runtime_cli.subprocess.PIPE,
+                stdout=runtime_cli.subprocess.PIPE,
+                stderr=runtime_cli.subprocess.PIPE,
+                cwd=str(root),
+            )
+            events = self._read_wrapper_events(root / "claude.jsonl")
+            event_types = [str(event.get("event_type") or "") for event in events]
+            self.assertEqual(event_types, ["DISPATCH_SEEN", "TASK_ACCEPTED", "TASK_DONE", "READY"])
+            self.assertEqual(events[1]["payload"]["dispatch_id"], "dispatch-print-pipe")
+            self.assertEqual(events[2]["payload"]["reason"], "claude_result")
+
+    def test_claude_print_jsonl_pipe_returns_stderr_and_nonzero_exit(self) -> None:
+        class FakeProcess:
+            pid = 992
+            returncode = None
+
+            def communicate(self, input: bytes | None = None):
+                sent_inputs.append(input)
+                self.returncode = 7
+                return b"", "warning from claude\n"
+
+            def wait(self) -> int:
+                return 7
+
+        sent_inputs: list[bytes | None] = []
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with patch.object(runtime_cli.subprocess, "Popen", return_value=FakeProcess()):
+                returncode, stderr = runtime_cli._run_claude_print_jsonl_pipe(
+                    prompt="hello",
+                    wrapper_dir=root,
+                    task_hint_dir=None,
+                    claude_bin="/custom/claude",
+                    now=4.0,
+                )
+
+            self.assertEqual(returncode, 7)
+            self.assertEqual(stderr, "warning from claude\n")
+            self.assertEqual(sent_inputs, [b"hello"])
+
+    def test_claude_print_jsonl_pipe_from_prompt_file_accepts_local_utf8_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            prompt_path = root / "prompts" / "claude.txt"
+            wrapper_dir = root / "events"
+            task_hint_dir = root / "task-hints"
+            prompt_path.parent.mkdir(parents=True)
+            prompt_path.write_text("respond with exactly: OK\n", encoding="utf-8")
+
+            with patch.object(runtime_cli, "_run_claude_print_jsonl_pipe", return_value=(0, "")) as pipe:
+                returncode, stderr = runtime_cli._run_claude_print_jsonl_pipe_from_prompt_file(
+                    prompt_path=Path("prompts") / "claude.txt",
+                    allowed_root=root,
+                    wrapper_dir=wrapper_dir,
+                    task_hint_dir=task_hint_dir,
+                    now=5.0,
+                )
+
+            self.assertEqual(returncode, 0)
+            self.assertEqual(stderr, "")
+            pipe.assert_called_once_with(
+                prompt="respond with exactly: OK\n",
+                wrapper_dir=wrapper_dir,
+                task_hint_dir=task_hint_dir,
+                claude_bin="claude",
+                cwd=root.resolve(),
+                now=5.0,
+            )
+
+    def test_claude_print_jsonl_pipe_prompt_source_rejects_invalid_inputs_without_subprocess(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            root = base / "root"
+            root.mkdir()
+            (root / "dir-prompt").mkdir()
+            (root / "empty.txt").write_text(" \n\t", encoding="utf-8")
+            outside = base / "outside.txt"
+            outside.write_text("outside", encoding="utf-8")
+
+            cases = [
+                ("missing.txt", "prompt_path_missing"),
+                ("dir-prompt", "prompt_path_directory"),
+                ("empty.txt", "prompt_empty"),
+                (outside, "prompt_path_outside_root"),
+            ]
+            for prompt_path, expected_code in cases:
+                with self.subTest(expected_code=expected_code):
+                    with (
+                        patch.object(runtime_cli, "_run_claude_print_jsonl_pipe") as pipe,
+                        patch.object(runtime_cli.subprocess, "Popen") as popen,
+                    ):
+                        with self.assertRaises(runtime_cli.ClaudePrintPromptSourceError) as caught:
+                            runtime_cli._run_claude_print_jsonl_pipe_from_prompt_file(
+                                prompt_path=prompt_path,
+                                allowed_root=root,
+                                wrapper_dir=root / "events",
+                                task_hint_dir=None,
+                            )
+
+                    self.assertEqual(caught.exception.code, expected_code)
+                    pipe.assert_not_called()
+                    popen.assert_not_called()
+
+    def test_claude_print_jsonl_pipe_subcommand_calls_prompt_file_helper(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            task_hint_dir = root / "task-hints"
+            stderr_buffer = io.StringIO()
+            with (
+                patch.object(
+                    runtime_cli,
+                    "_run_claude_print_jsonl_pipe_from_prompt_file",
+                    return_value=(7, "warning from claude\n"),
+                ) as pipe,
+                patch.object(runtime_cli.sys, "stderr", stderr_buffer),
+            ):
+                returncode = runtime_cli.main(
+                    [
+                        "claude-print-jsonl-pipe",
+                        "--project-root",
+                        str(root),
+                        "--run-id",
+                        "run-opt-in",
+                        "--prompt-file",
+                        "prompts/claude.txt",
+                        "--task-hint-dir",
+                        str(task_hint_dir),
+                        "--claude-bin",
+                        "/custom/claude",
+                    ]
+                )
+
+            wrapper_dir = root / ".pipeline" / "runs" / "run-opt-in" / "wrapper-events"
+            self.assertEqual(returncode, 7)
+            self.assertEqual(stderr_buffer.getvalue(), "warning from claude\n")
+            self.assertTrue(wrapper_dir.is_dir())
+            pipe.assert_called_once_with(
+                prompt_path="prompts/claude.txt",
+                allowed_root=root,
+                wrapper_dir=wrapper_dir,
+                task_hint_dir=task_hint_dir.resolve(),
+                claude_bin="/custom/claude",
+                cwd=root,
+            )
+
+    def test_claude_print_jsonl_pipe_subcommand_fake_e2e_emits_wrapper_events(self) -> None:
+        class FakeProcess:
+            pid = 993
+            returncode = 0
+
+            def communicate(self, input: bytes | None = None):
+                sent_inputs.append(input)
+                stdout = "\n".join(
+                    [
+                        json.dumps({"type": "text", "text": "working"}),
+                        json.dumps({"type": "result"}),
+                    ]
+                ) + "\n"
+                return stdout.encode("utf-8"), b""
+
+            def wait(self) -> int:
+                return self.returncode
+
+        sent_inputs: list[bytes | None] = []
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            prompt_path = root / "prompts" / "claude.txt"
+            task_hint_dir = root / "task-hints"
+            run_id = "run-fake-e2e"
+            prompt_path.parent.mkdir(parents=True)
+            prompt_path.write_text("respond with exactly: OK\n", encoding="utf-8")
+            self._write_task_hint(
+                task_hint_dir,
+                job_id="job-print-e2e",
+                dispatch_id="dispatch-print-e2e",
+                control_seq=417,
+            )
+
+            with patch.object(runtime_cli.subprocess, "Popen", return_value=FakeProcess()) as popen:
+                returncode = runtime_cli.main(
+                    [
+                        "claude-print-jsonl-pipe",
+                        "--project-root",
+                        str(root),
+                        "--run-id",
+                        run_id,
+                        "--prompt-file",
+                        "prompts/claude.txt",
+                        "--task-hint-dir",
+                        str(task_hint_dir),
+                        "--claude-bin",
+                        "/custom/claude",
+                    ]
+                )
+
+            wrapper_dir = root / ".pipeline" / "runs" / run_id / "wrapper-events"
+            self.assertEqual(returncode, 0)
+            self.assertEqual(sent_inputs, [b"respond with exactly: OK\n"])
+            popen.assert_called_once_with(
+                ["/custom/claude", "--print", "--verbose", "--output-format", "stream-json"],
+                stdin=runtime_cli.subprocess.PIPE,
+                stdout=runtime_cli.subprocess.PIPE,
+                stderr=runtime_cli.subprocess.PIPE,
+                cwd=str(root),
+            )
+            events = self._read_wrapper_events(wrapper_dir / "claude.jsonl")
+            event_types = [str(event.get("event_type") or "") for event in events]
+            self.assertEqual(event_types, ["DISPATCH_SEEN", "TASK_ACCEPTED", "TASK_DONE", "READY"])
+            self.assertEqual(events[1]["payload"]["job_id"], "job-print-e2e")
+            self.assertEqual(events[1]["payload"]["dispatch_id"], "dispatch-print-e2e")
+            self.assertEqual(events[1]["payload"]["control_seq"], 417)
+            self.assertEqual(events[2]["payload"]["reason"], "claude_result")
+
+    def test_claude_print_jsonl_pipe_subcommand_rejects_prompt_source_without_subprocess(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            stderr_buffer = io.StringIO()
+            with (
+                patch.object(runtime_cli, "_run_claude_print_jsonl_pipe") as pipe,
+                patch.object(runtime_cli.subprocess, "Popen") as popen,
+                patch.object(runtime_cli.sys, "stderr", stderr_buffer),
+            ):
+                returncode = runtime_cli.main(
+                    [
+                        "claude-print-jsonl-pipe",
+                        "--project-root",
+                        str(root),
+                        "--run-id",
+                        "run-reject",
+                        "--prompt-file",
+                        "missing.txt",
+                    ]
+                )
+
+            self.assertEqual(returncode, 2)
+            self.assertIn("prompt_path_missing", stderr_buffer.getvalue())
+            self.assertIn(str(root / "missing.txt"), stderr_buffer.getvalue())
+            pipe.assert_not_called()
+            popen.assert_not_called()
+
+    def test_claude_print_jsonl_pipe_subcommand_rejection_with_task_hint_emits_bridge_diagnostic(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            task_hint_dir = root / "task-hints"
+            stderr_buffer = io.StringIO()
+            self._write_task_hint(
+                task_hint_dir,
+                job_id="job-reject-audit",
+                dispatch_id="dispatch-reject-audit",
+                control_seq=418,
+            )
+            with (
+                patch.object(runtime_cli, "_run_claude_print_jsonl_pipe") as pipe,
+                patch.object(runtime_cli.subprocess, "Popen") as popen,
+                patch.object(runtime_cli.sys, "stderr", stderr_buffer),
+            ):
+                returncode = runtime_cli.main(
+                    [
+                        "claude-print-jsonl-pipe",
+                        "--project-root",
+                        str(root),
+                        "--run-id",
+                        "run-reject-audit",
+                        "--prompt-file",
+                        "missing.txt",
+                        "--task-hint-dir",
+                        str(task_hint_dir),
+                    ]
+                )
+
+            wrapper_log = root / ".pipeline" / "runs" / "run-reject-audit" / "wrapper-events" / "claude.jsonl"
+            events = self._read_wrapper_events(wrapper_log)
+            self.assertEqual(returncode, 2)
+            self.assertIn("prompt_path_missing", stderr_buffer.getvalue())
+            self.assertEqual([event["event_type"] for event in events], ["BRIDGE_DIAGNOSTIC"])
+            self.assertEqual(events[0]["derived_from"], "prompt_source_rejected")
+            self.assertEqual(events[0]["payload"]["job_id"], "job-reject-audit")
+            self.assertEqual(events[0]["payload"]["dispatch_id"], "dispatch-reject-audit")
+            self.assertEqual(events[0]["payload"]["control_seq"], 418)
+            self.assertEqual(events[0]["payload"]["code"], "prompt_path_missing")
+            self.assertEqual(events[0]["payload"]["path"], str(root / "missing.txt"))
+            pipe.assert_not_called()
+            popen.assert_not_called()
+
+    def test_claude_print_jsonl_pipe_subcommand_rejection_without_task_hint_emits_broken(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            stderr_buffer = io.StringIO()
+            with (
+                patch.object(runtime_cli, "_run_claude_print_jsonl_pipe") as pipe,
+                patch.object(runtime_cli.subprocess, "Popen") as popen,
+                patch.object(runtime_cli.sys, "stderr", stderr_buffer),
+            ):
+                returncode = runtime_cli.main(
+                    [
+                        "claude-print-jsonl-pipe",
+                        "--project-root",
+                        str(root),
+                        "--run-id",
+                        "run-reject-no-hint",
+                        "--prompt-file",
+                        "missing.txt",
+                    ]
+                )
+
+            wrapper_log = root / ".pipeline" / "runs" / "run-reject-no-hint" / "wrapper-events" / "claude.jsonl"
+            events = self._read_wrapper_events(wrapper_log)
+            self.assertEqual(returncode, 2)
+            self.assertIn("prompt_path_missing", stderr_buffer.getvalue())
+            self.assertEqual([event["event_type"] for event in events], ["BROKEN"])
+            self.assertEqual(events[0]["derived_from"], "prompt_source_rejected")
+            self.assertEqual(events[0]["payload"]["pid"], 0)
+            self.assertEqual(events[0]["payload"]["reason"], "prompt_source_rejected")
+            self.assertEqual(events[0]["payload"]["code"], "prompt_path_missing")
+            self.assertEqual(events[0]["payload"]["path"], str(root / "missing.txt"))
+            pipe.assert_not_called()
+            popen.assert_not_called()
+
+    def test_lane_wrapper_initializes_all_lanes_in_text_mode(self) -> None:
+        class FakeChild:
+            pid = 900
+
+            def poll(self) -> int:
+                return 0
+
+            def wait(self) -> int:
+                return 0
+
+        class FakeEmitter:
+            def __init__(
+                self,
+                *,
+                wrapper_dir: Path,
+                lane_name: str,
+                task_hint_dir: Path | None,
+                child_pid: int,
+                send_child_bytes,
+                jsonl_mode: bool = False,
+            ) -> None:
+                modes.append((lane_name, jsonl_mode))
+
+            def tick(self, *, now: float | None = None) -> None:
+                return None
+
+            def feed(self, text: str, *, now: float | None = None) -> None:
+                return None
+
+            def finish_stream(self, *, now: float | None = None) -> None:
+                return None
+
+        modes: list[tuple[str, bool]] = []
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for lane_name in ("Claude", "Codex", "Gemini"):
+                master_fd, slave_fd = os.pipe()
+                args = Namespace(
+                    project_root=str(root),
+                    run_id=f"run-{lane_name.lower()}",
+                    lane=lane_name,
+                    shell_command="true",
+                    task_hint_dir="",
+                    heartbeat_interval=1.0,
+                )
+                with (
+                    patch.object(runtime_cli.pty, "openpty", return_value=(master_fd, slave_fd)),
+                    patch.object(runtime_cli.subprocess, "Popen", return_value=FakeChild()),
+                    patch.object(runtime_cli, "_WrapperEmitter", FakeEmitter),
+                    patch.object(runtime_cli.signal, "signal"),
+                ):
+                    self.assertEqual(runtime_cli._lane_wrapper(args), 0)
+
+        self.assertEqual(modes, [("Claude", False), ("Codex", False), ("Gemini", False)])
+
     def test_active_task_hint_with_invalid_control_seq_emits_bridge_diagnostic(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 from dataclasses import asdict, dataclass
+from pathlib import Path
 from typing import Any
 
 
@@ -9,9 +11,12 @@ class PhysicalLaneSpec:
     name: str
     pane_index: int
     pane_type: str
+    roles: tuple[str, ...]
     support_rank: int
     read_first_doc: str
+    token_source: str
     token_source_root: str
+    agent_cli: str
     vendor_binary: str
     vendor_args: tuple[str, ...]
 
@@ -21,9 +26,12 @@ _PHYSICAL_LANE_SPECS: tuple[PhysicalLaneSpec, ...] = (
         name="Claude",
         pane_index=0,
         pane_type="claude",
+        roles=("implement", "advisory"),
         support_rank=2,
         read_first_doc="CLAUDE.md",
+        token_source="claude",
         token_source_root="~/.claude/projects",
+        agent_cli="claude",
         vendor_binary="claude",
         vendor_args=("--dangerously-skip-permissions",),
     ),
@@ -31,9 +39,12 @@ _PHYSICAL_LANE_SPECS: tuple[PhysicalLaneSpec, ...] = (
         name="Codex",
         pane_index=1,
         pane_type="codex",
+        roles=("implement", "verify", "advisory"),
         support_rank=3,
         read_first_doc="AGENTS.md",
+        token_source="codex",
         token_source_root="~/.codex/sessions",
+        agent_cli="codex",
         vendor_binary="codex",
         vendor_args=("--ask-for-approval", "never", "--disable", "apps"),
     ),
@@ -41,9 +52,12 @@ _PHYSICAL_LANE_SPECS: tuple[PhysicalLaneSpec, ...] = (
         name="Gemini",
         pane_index=2,
         pane_type="gemini",
+        roles=("advisory",),
         support_rank=1,
         read_first_doc="GEMINI.md",
+        token_source="gemini",
         token_source_root="~/.gemini/tmp",
+        agent_cli="gemini",
         vendor_binary="gemini",
         vendor_args=("--yolo",),
     ),
@@ -71,17 +85,141 @@ _LEGACY_WATCHER_PANE_TARGET_ARG_BY_PANE_TYPE: dict[str, str] = {
     "gemini": "--gemini-pane-target",
 }
 
+_TOKEN_SOURCE_ROOT_BY_TOKEN_SOURCE: dict[str, str] = {
+    "claude": "~/.claude/projects",
+    "codex": "~/.codex/sessions",
+    "gemini": "~/.gemini/tmp",
+}
+
+_VENDOR_ARGS_BY_AGENT_CLI: dict[str, tuple[str, ...]] = {
+    "claude": ("--dangerously-skip-permissions",),
+    "codex": ("--ask-for-approval", "never", "--disable", "apps"),
+    "gemini": ("--yolo",),
+}
+
+
+def _lane_spec_by_name(lane_specs: tuple[PhysicalLaneSpec, ...]) -> dict[str, PhysicalLaneSpec]:
+    return {spec.name: spec for spec in lane_specs}
+
+
+def _clean_str(value: object) -> str:
+    return str(value or "").strip()
+
+
+def _clean_str_tuple(value: object) -> tuple[str, ...]:
+    if not isinstance(value, list):
+        return ()
+    return tuple(_clean_str(item) for item in value if _clean_str(item))
+
+
+def _int_value(value: object, default: int) -> int:
+    if isinstance(value, bool):
+        return default
+    try:
+        return int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return default
+
+
+def _physical_lane_order_from_specs(lane_specs: tuple[PhysicalLaneSpec, ...]) -> tuple[str, ...]:
+    return tuple(spec.name for spec in lane_specs)
+
+
+def _physical_lane_specs_as_dicts(lane_specs: tuple[PhysicalLaneSpec, ...]) -> list[dict[str, Any]]:
+    return [asdict(spec) for spec in lane_specs]
+
+
+def _spec_from_config_item(
+    item: object,
+    *,
+    fallback_by_name: dict[str, PhysicalLaneSpec],
+    fallback_rank: int,
+) -> PhysicalLaneSpec | None:
+    if not isinstance(item, dict):
+        return None
+    name = _clean_str(item.get("name"))
+    if not name:
+        return None
+    fallback = fallback_by_name.get(name)
+    token_source = (
+        _clean_str(item.get("token_source"))
+        or (fallback.token_source if fallback is not None else "")
+        or name.lower()
+    )
+    agent_cli = (
+        _clean_str(item.get("agent_cli"))
+        or (fallback.agent_cli if fallback is not None else "")
+        or token_source
+    )
+    pane_type = (
+        _clean_str(item.get("pane_type"))
+        or (fallback.pane_type if fallback is not None else "")
+        or token_source
+    ).lower()
+    roles = _clean_str_tuple(item.get("roles")) or (fallback.roles if fallback is not None else ())
+    vendor_args = _clean_str_tuple(item.get("vendor_args"))
+    if not vendor_args:
+        vendor_args = (
+            fallback.vendor_args
+            if fallback is not None
+            else _VENDOR_ARGS_BY_AGENT_CLI.get(agent_cli, ())
+        )
+    token_source_root = (
+        _clean_str(item.get("token_source_root"))
+        or (fallback.token_source_root if fallback is not None else "")
+        or _TOKEN_SOURCE_ROOT_BY_TOKEN_SOURCE.get(token_source, f"~/.{token_source}/tmp")
+    )
+    return PhysicalLaneSpec(
+        name=name,
+        pane_index=_int_value(item.get("pane_index"), fallback.pane_index if fallback is not None else fallback_rank),
+        pane_type=pane_type,
+        roles=roles,
+        support_rank=_int_value(item.get("support_rank"), fallback.support_rank if fallback is not None else fallback_rank),
+        read_first_doc=_clean_str(item.get("read_first_doc")) or (fallback.read_first_doc if fallback is not None else "AGENTS.md"),
+        token_source=token_source,
+        token_source_root=token_source_root,
+        agent_cli=agent_cli,
+        vendor_binary=_clean_str(item.get("vendor_binary")) or (fallback.vendor_binary if fallback is not None else agent_cli),
+        vendor_args=vendor_args,
+    )
+
+
+def load_physical_lane_specs(project_root: Path) -> tuple[PhysicalLaneSpec, ...]:
+    path = project_root / ".pipeline" / "config" / "lanes.json"
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return _PHYSICAL_LANE_SPECS
+    if not isinstance(payload, dict):
+        return _PHYSICAL_LANE_SPECS
+    raw_lanes = payload.get("lanes")
+    if not isinstance(raw_lanes, list):
+        return _PHYSICAL_LANE_SPECS
+    fallback_by_name = _lane_spec_by_name(_PHYSICAL_LANE_SPECS)
+    specs = [
+        spec
+        for index, item in enumerate(raw_lanes)
+        if (
+            spec := _spec_from_config_item(
+                item,
+                fallback_by_name=fallback_by_name,
+                fallback_rank=index,
+            )
+        ) is not None
+    ]
+    return tuple(specs) if specs else _PHYSICAL_LANE_SPECS
+
 
 def physical_lane_order() -> tuple[str, ...]:
-    return tuple(spec.name for spec in _PHYSICAL_LANE_SPECS)
+    return _physical_lane_order_from_specs(_PHYSICAL_LANE_SPECS)
 
 
 def physical_lane_specs() -> list[dict[str, Any]]:
-    return [asdict(spec) for spec in _PHYSICAL_LANE_SPECS]
+    return _physical_lane_specs_as_dicts(_PHYSICAL_LANE_SPECS)
 
 
-def lane_spec(name: str) -> dict[str, Any]:
-    spec = _LANE_SPEC_BY_NAME.get(str(name or "").strip())
+def lane_spec(name: str, lane_specs: tuple[PhysicalLaneSpec, ...] | None = None) -> dict[str, Any]:
+    spec = _lane_spec_by_name(tuple(lane_specs or _PHYSICAL_LANE_SPECS)).get(str(name or "").strip())
     return asdict(spec) if spec is not None else {}
 
 
@@ -116,15 +254,18 @@ def default_selected_agent() -> str:
     return default_role_bindings()["implement"]
 
 
-def read_first_doc_for_owner(owner: str) -> str:
-    spec = _LANE_SPEC_BY_NAME.get(str(owner or "").strip())
+def read_first_doc_for_owner(owner: str, lane_specs: tuple[PhysicalLaneSpec, ...] | None = None) -> str:
+    spec = _lane_spec_by_name(tuple(lane_specs or _PHYSICAL_LANE_SPECS)).get(str(owner or "").strip())
     if spec is not None:
         return spec.read_first_doc
     return "AGENTS.md"
 
 
-def lane_vendor_command_parts(lane_name: str) -> list[str]:
-    spec = _LANE_SPEC_BY_NAME.get(str(lane_name or "").strip())
+def lane_vendor_command_parts(
+    lane_name: str,
+    lane_specs: tuple[PhysicalLaneSpec, ...] | None = None,
+) -> list[str]:
+    spec = _lane_spec_by_name(tuple(lane_specs or _PHYSICAL_LANE_SPECS)).get(str(lane_name or "").strip())
     if spec is None:
         return []
     return [spec.vendor_binary, *spec.vendor_args]
@@ -139,20 +280,23 @@ def build_lane_configs(
     *,
     enabled_lanes: list[str] | tuple[str, ...] | set[str] | None,
     role_owners: dict[str, Any] | None,
+    lane_specs: tuple[PhysicalLaneSpec, ...] | None = None,
 ) -> list[dict[str, Any]]:
+    specs = tuple(lane_specs or _PHYSICAL_LANE_SPECS)
+    spec_names = {spec.name for spec in specs}
     enabled_set = {
         str(name).strip()
         for name in list(enabled_lanes or [])
-        if str(name).strip() in _LANE_SPEC_BY_NAME
+        if str(name).strip() in spec_names
     }
     owners = dict(role_owners or {})
-    roles_by_lane: dict[str, list[str]] = {name: [] for name in physical_lane_order()}
+    roles_by_lane: dict[str, list[str]] = {name: [] for name in _physical_lane_order_from_specs(specs)}
     for role_name, owner in owners.items():
         owner_name = str(owner or "").strip()
         if owner_name in roles_by_lane:
             roles_by_lane[owner_name].append(str(role_name))
     lane_configs: list[dict[str, Any]] = []
-    for spec in _PHYSICAL_LANE_SPECS:
+    for spec in specs:
         lane_configs.append(
             {
                 **asdict(spec),

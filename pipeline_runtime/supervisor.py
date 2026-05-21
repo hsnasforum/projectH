@@ -35,12 +35,13 @@ from .lane_catalog import (
     default_role_bindings,
     lane_vendor_command_parts,
     legacy_watcher_pane_target_arg_for_lane,
-    physical_lane_specs,
+    load_physical_lane_specs,
     read_first_doc_for_owner,
 )
 from .lane_surface import tail_has_busy_indicator, tail_has_ready_indicator, tail_surface_state
 from .operator_autonomy import (
     OPERATOR_APPROVAL_COMPLETED_REASON,
+    load_runtime_policy,
     resolve_operator_control,
 )
 from .pr_merge_state import PrMergeStatusCache
@@ -122,6 +123,8 @@ _DUPLICATE_HANDOFF_BLOCK_REASONS = frozenset({
 })
 _REISSUE_CONTROL_RE = re.compile(r"^REISSUE\s*:\s*true\b", re.IGNORECASE | re.MULTILINE)
 _WATCHER_SELF_RESTART_COOLDOWN_SEC = 10.0
+DEFAULT_EVENTS_MAX_LINES = 2000
+_EVENTS_ROTATION_INTERVAL = 500
 _SESSION_RECOVERY_RETRY_LIMIT = 1
 _SESSION_RECOVERY_RESET_STABLE_SEC = 300.0
 _CONTROL_SEQ_AGE_SLOT_FILES = frozenset(
@@ -163,16 +166,22 @@ class RuntimeSupervisor:
         self.pid_path = self.base_dir / "supervisor.pid"
         self.adapter = TmuxAdapter(self.project_root, self.session_name, run_id=self.run_id)
         self.runtime_adapter = resolve_project_runtime_adapter(self.project_root)
-        self.runtime_lane_configs = list(self.runtime_adapter.get("lane_configs") or [])
+        self.physical_lane_specs = load_physical_lane_specs(self.project_root)
+        self.physical_lane_order = tuple(spec.name for spec in self.physical_lane_specs)
         self.runtime_controls = dict(self.runtime_adapter.get("controls") or {})
+        self.role_owners = dict(self.runtime_adapter.get("role_owners") or {})
+        self.prompt_owners = dict(self.runtime_adapter.get("prompt_owners") or self.role_owners)
         self.enabled_lanes = [
             str(name).strip()
             for name in list(self.runtime_adapter.get("enabled_lanes") or [])
             if str(name).strip()
-        ] or list(RUNTIME_LANE_ORDER)
+        ] or list(self.physical_lane_order or RUNTIME_LANE_ORDER)
+        self.runtime_lane_configs = build_lane_configs(
+            enabled_lanes=self.enabled_lanes,
+            role_owners=self.role_owners,
+            lane_specs=self.physical_lane_specs,
+        )
         self.started_at = time.time()
-        self.role_owners = dict(self.runtime_adapter.get("role_owners") or {})
-        self.prompt_owners = dict(self.runtime_adapter.get("prompt_owners") or self.role_owners)
         self.runtime_state = "STARTING"
         self.degraded_reason = ""
         self.degraded_reasons: list[str] = []
@@ -420,19 +429,47 @@ class RuntimeSupervisor:
             },
         )
 
+    def _event_entry(self, event_type: str, payload: dict[str, Any], *, source: str) -> dict[str, Any]:
+        return {
+            "seq": self._event_seq,
+            "ts": iso_utc(),
+            "run_id": self.run_id,
+            "event_type": event_type,
+            "source": source,
+            "payload": payload,
+        }
+
     def _append_event(self, event_type: str, payload: dict[str, Any], *, source: str = "supervisor") -> None:
         self._event_seq += 1
-        append_jsonl(
-            self.events_path,
+        append_jsonl(self.events_path, self._event_entry(event_type, payload, source=source))
+        if self._event_seq % _EVENTS_ROTATION_INTERVAL == 0:
+            self._rotate_events_jsonl()
+
+    def _rotate_events_jsonl(self) -> None:
+        try:
+            raw_lines = self.events_path.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            return
+        if len(raw_lines) <= DEFAULT_EVENTS_MAX_LINES:
+            return
+        self._event_seq += 1
+        keep_count = max(DEFAULT_EVENTS_MAX_LINES - 1, 0)
+        kept_lines = raw_lines[-keep_count:] if keep_count else []
+        rotation_event = self._event_entry(
+            "events_rotated",
             {
-                "seq": self._event_seq,
-                "ts": iso_utc(),
-                "run_id": self.run_id,
-                "event_type": event_type,
-                "source": source,
-                "payload": payload,
+                "max_lines": DEFAULT_EVENTS_MAX_LINES,
+                "previous_lines": len(raw_lines),
+                "kept_existing_lines": len(kept_lines),
+                "dropped_lines": max(len(raw_lines) - len(kept_lines), 0),
             },
+            source="supervisor",
         )
+        kept_lines.append(json.dumps(rotation_event, ensure_ascii=False))
+        try:
+            atomic_write_text(self.events_path, "\n".join(kept_lines) + "\n")
+        except OSError:
+            return
 
     @staticmethod
     def _wrapper_task_event_key(event: dict[str, Any]) -> str:
@@ -990,6 +1027,7 @@ class RuntimeSupervisor:
             turn_state_name=turn_state_name,
             turn_reason=reason,
             turn_control_seq=snapshot_control_seq(turn_snapshot),
+            runtime_policy=load_runtime_policy(self.project_root),
         )
         marker = resolution.get("stale_marker")
         return marker if isinstance(marker, dict) else None
@@ -1025,6 +1063,7 @@ class RuntimeSupervisor:
             "control_path": str(control_path),
             "control_seq": control_seq,
             "control_mtime": control_mtime,
+            "runtime_policy": load_runtime_policy(self.project_root),
             "turn_reason": str((turn_state or {}).get("reason") or ""),
             "lane_notes": [
                 str(model.get("failure_reason") or model.get("note") or "")
@@ -1691,7 +1730,12 @@ class RuntimeSupervisor:
         lane_configs = self.runtime_lane_configs or build_lane_configs(
             enabled_lanes=self.enabled_lanes,
             role_owners=self.role_owners,
+            lane_specs=self.physical_lane_specs,
         )
+        try:
+            self.adapter.cache_pane_map(self.adapter.get_pane_map())
+        except Exception:
+            self.adapter.clear_pane_map_cache()
         for lane_cfg in lane_configs:
             lane_name = str(lane_cfg.get("name") or "").strip()
             if not lane_name:
@@ -1912,6 +1956,7 @@ class RuntimeSupervisor:
                     "note": note,
                 }
             )
+        self.adapter.clear_pane_map_cache()
         return lanes, lane_models
 
     def _resolve_repo_path(self, value: str | Path | None) -> Path | None:
@@ -2186,6 +2231,7 @@ class RuntimeSupervisor:
         lane_configs = self.runtime_lane_configs or build_lane_configs(
             enabled_lanes=self.enabled_lanes,
             role_owners=self.role_owners,
+            lane_specs=self.physical_lane_specs,
         )
         configured_enabled_lanes = [
             lane_cfg
@@ -2818,7 +2864,7 @@ class RuntimeSupervisor:
         override = self._lane_command_override(lane_name)
         if override:
             return override
-        command_parts = lane_vendor_command_parts(lane_name)
+        command_parts = lane_vendor_command_parts(lane_name, self.physical_lane_specs)
         if command_parts:
             binary = self._find_cli_bin(command_parts[0])
             command_args = list(command_parts[1:])
@@ -2874,10 +2920,10 @@ class RuntimeSupervisor:
         return str(self.prompt_owners.get(role_name) or "").strip() or self._role_owner(role_name)
 
     def _prompt_read_first_doc(self, role_name: str) -> str:
-        return read_first_doc_for_owner(self._prompt_owner(role_name))
+        return read_first_doc_for_owner(self._prompt_owner(role_name), self.physical_lane_specs)
 
     def _role_read_first_doc(self, role_name: str) -> str:
-        return read_first_doc_for_owner(self._role_owner(role_name))
+        return read_first_doc_for_owner(self._role_owner(role_name), self.physical_lane_specs)
 
     def _prompt_templates(self) -> dict[str, str]:
         return {
@@ -2938,7 +2984,7 @@ class RuntimeSupervisor:
 
     def _watcher_pane_target_args(self) -> list[str]:
         args: list[str] = []
-        for lane in self.runtime_lane_configs or physical_lane_specs():
+        for lane in self.runtime_lane_configs or [spec.__dict__ for spec in self.physical_lane_specs]:
             lane_name = str(lane.get("name") or "").strip()
             if not lane_name:
                 continue
@@ -3040,6 +3086,7 @@ class RuntimeSupervisor:
         lane_configs = self.runtime_lane_configs or build_lane_configs(
             enabled_lanes=self.enabled_lanes,
             role_owners=self.role_owners,
+            lane_specs=self.physical_lane_specs,
         )
         spawned_lanes: list[str] = []
         try:

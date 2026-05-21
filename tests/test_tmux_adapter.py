@@ -9,6 +9,27 @@ from pipeline_runtime.tmux_adapter import TmuxAdapter
 
 
 class TestTmuxAdapter(unittest.TestCase):
+    def test_run_returns_failed_completed_process_on_timeout(self) -> None:
+        adapter = TmuxAdapter(Path("/tmp/projectH"), "projectH-test")
+        cmd = ["tmux", "list-panes"]
+
+        def fake_run(
+            _cmd: list[str],
+            *,
+            capture_output: bool,
+            text: bool,
+            timeout: float,
+        ) -> subprocess.CompletedProcess[str]:
+            raise subprocess.TimeoutExpired(_cmd, timeout, output="partial", stderr="slow tmux")
+
+        with mock.patch("pipeline_runtime.tmux_adapter.subprocess.run", side_effect=fake_run):
+            result = adapter._run(cmd, timeout=0.1)
+
+        self.assertEqual(result.args, cmd)
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(result.stdout, "partial")
+        self.assertIn("slow tmux", result.stderr)
+
     def test_create_scaffold_uses_explicit_detached_session_size(self) -> None:
         adapter = TmuxAdapter(Path("/tmp/projectH"), "projectH-test")
         calls: list[list[str]] = []
@@ -101,6 +122,25 @@ class TestTmuxAdapter(unittest.TestCase):
             self.assertIn("window-size manual", str(ctx.exception))
             self.assertIn("unknown option", str(ctx.exception))
 
+    def test_create_scaffold_rolls_back_partial_session_on_required_failure(self) -> None:
+        adapter = TmuxAdapter(Path("/tmp/projectH"), "projectH-test")
+
+        def fake_run(cmd: list[str], *, timeout: float = 8.0) -> subprocess.CompletedProcess[str]:
+            if cmd[:3] == ["tmux", "new-session", "-d"]:
+                return subprocess.CompletedProcess(cmd, 0, "", "")
+            if "window-size" in cmd and "manual" in cmd:
+                return subprocess.CompletedProcess(cmd, 1, "", "unknown option: window-size")
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+
+        with (
+            mock.patch.object(adapter, "kill_session", return_value=True) as kill_session,
+            mock.patch.object(adapter, "_run", side_effect=fake_run),
+        ):
+            with self.assertRaises(RuntimeError):
+                adapter.create_scaffold()
+
+        self.assertEqual(kill_session.call_count, 2)
+
     def test_create_scaffold_tolerates_cosmetic_option_failure(self) -> None:
         adapter = TmuxAdapter(Path("/tmp/projectH"), "projectH-test")
         split_count = 0
@@ -191,6 +231,27 @@ class TestTmuxAdapter(unittest.TestCase):
             with self.assertRaises(RuntimeError) as ctx:
                 adapter.create_scaffold()
             self.assertIn("select-layout", str(ctx.exception))
+
+    def test_restart_lane_kills_then_spawns_lane(self) -> None:
+        adapter = TmuxAdapter(Path("/tmp/projectH"), "projectH-test")
+        calls: list[tuple[str, str]] = []
+
+        def fake_kill(lane_name: str) -> bool:
+            calls.append(("kill", lane_name))
+            return True
+
+        def fake_spawn(lane_name: str, shell_command: str) -> bool:
+            calls.append(("spawn", lane_name))
+            self.assertEqual(shell_command, "run-codex")
+            return True
+
+        with (
+            mock.patch.object(adapter, "kill_lane", side_effect=fake_kill),
+            mock.patch.object(adapter, "spawn_lane", side_effect=fake_spawn),
+        ):
+            self.assertTrue(adapter.restart_lane("Codex", "run-codex"))
+
+        self.assertEqual(calls, [("kill", "Codex"), ("spawn", "Codex")])
 
 
 if __name__ == "__main__":

@@ -17,9 +17,18 @@ class TmuxAdapter:
         self.project_root = project_root
         self.session_name = session_name
         self.run_id = run_id
+        self._pane_map_cache: dict[str, dict[str, Any]] | None = None
 
     def _run(self, cmd: list[str], *, timeout: float = 8.0) -> subprocess.CompletedProcess[str]:
-        return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        try:
+            return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        except subprocess.TimeoutExpired as exc:
+            stdout = exc.stdout if isinstance(exc.stdout, str) else ""
+            stderr = exc.stderr if isinstance(exc.stderr, str) else ""
+            detail = f"timeout after {timeout:.1f}s"
+            if stderr.strip():
+                detail = f"{detail}: {stderr.strip()}"
+            return subprocess.CompletedProcess(cmd, 1, stdout, detail)
 
     def _run_required(
         self,
@@ -71,72 +80,80 @@ class TmuxAdapter:
             timeout=10.0,
         )
         if result.returncode != 0:
+            self.kill_session()
             raise RuntimeError(result.stderr.strip() or "tmux new-session failed")
 
-        session_options = [
-            ["tmux", "set-option", "-g", "destroy-unattached", "off"],
-            ["tmux", "set-option", "-g", "exit-empty", "off"],
-            ["tmux", "set-option", "-t", self.session_name, "destroy-unattached", "off"],
-            ["tmux", "set-option", "-t", self.session_name, "mouse", "on"],
-            ["tmux", "set-option", "-t", self.session_name, "status-position", "bottom"],
-            ["tmux", "set-option", "-t", self.session_name, "status-style", "bg=colour235,fg=colour250"],
-            ["tmux", "set-option", "-t", self.session_name, "message-style", "bg=colour235,fg=colour250"],
-            ["tmux", "set-option", "-t", self.session_name, "mode-style", "bg=colour238,fg=colour255"],
-            ["tmux", "set-option", "-t", self.session_name, "pane-border-style", "fg=colour238"],
-            ["tmux", "set-option", "-t", self.session_name, "pane-active-border-style", "fg=colour45"],
-            ["tmux", "set-option", "-t", self.session_name, "status-left", "[#S] "],
-            [
-                "tmux",
-                "set-option",
-                "-t",
-                self.session_name,
-                "status-right",
-                "#{window_index}:#{window_name} · %H:%M %d-%b-%y",
-            ],
-            [
-                "tmux",
-                "set-option",
-                "-t",
-                self.session_name,
-                "status-format[0]",
-                "#[align=left]#{status-left}#[default] #[align=right]#{status-right}",
-            ],
-            ["tmux", "set-window-option", "-t", self.session_name, "window-status-format", "#I:#W"],
-            ["tmux", "set-window-option", "-t", self.session_name, "window-status-current-format", "#[bold]#I:#W"],
-            ["tmux", "set-window-option", "-t", f"{self.session_name}:0", "remain-on-exit", "on"],
-        ]
-        for cmd in session_options:
-            self._run(cmd, timeout=5.0)
-        self._run(["tmux", "set-option", "-u", "-t", self.session_name, "status-format[1]"], timeout=5.0)
+        try:
+            session_options = [
+                ["tmux", "set-option", "-g", "destroy-unattached", "off"],
+                ["tmux", "set-option", "-g", "exit-empty", "off"],
+                ["tmux", "set-option", "-t", self.session_name, "destroy-unattached", "off"],
+                ["tmux", "set-option", "-t", self.session_name, "mouse", "on"],
+                ["tmux", "set-option", "-t", self.session_name, "status-position", "bottom"],
+                ["tmux", "set-option", "-t", self.session_name, "status-style", "bg=colour235,fg=colour250"],
+                ["tmux", "set-option", "-t", self.session_name, "message-style", "bg=colour235,fg=colour250"],
+                ["tmux", "set-option", "-t", self.session_name, "mode-style", "bg=colour238,fg=colour255"],
+                ["tmux", "set-option", "-t", self.session_name, "pane-border-style", "fg=colour238"],
+                ["tmux", "set-option", "-t", self.session_name, "pane-active-border-style", "fg=colour45"],
+                ["tmux", "set-option", "-t", self.session_name, "status-left", "[#S] "],
+                [
+                    "tmux",
+                    "set-option",
+                    "-t",
+                    self.session_name,
+                    "status-right",
+                    "#{window_index}:#{window_name} · %H:%M %d-%b-%y",
+                ],
+                [
+                    "tmux",
+                    "set-option",
+                    "-t",
+                    self.session_name,
+                    "status-format[0]",
+                    "#[align=left]#{status-left}#[default] #[align=right]#{status-right}",
+                ],
+                ["tmux", "set-window-option", "-t", self.session_name, "window-status-format", "#I:#W"],
+                ["tmux", "set-window-option", "-t", self.session_name, "window-status-current-format", "#[bold]#I:#W"],
+                ["tmux", "set-window-option", "-t", f"{self.session_name}:0", "remain-on-exit", "on"],
+            ]
+            for cmd in session_options:
+                self._run(cmd, timeout=5.0)
+            self._run(["tmux", "set-option", "-u", "-t", self.session_name, "status-format[1]"], timeout=5.0)
 
-        self._run_required(
-            ["tmux", "set-option", "-t", f"{self.session_name}:0", "window-size", "manual"],
-            "set-option window-size manual",
-        )
-
-        base_pane_result = self._run(
-            ["tmux", "display-message", "-t", f"{self.session_name}:0.0", "-p", "#{pane_id}"],
-            timeout=5.0,
-        )
-        claude_pane = base_pane_result.stdout.strip()
-        if base_pane_result.returncode != 0 or not claude_pane:
-            detail = (
-                base_pane_result.stderr.strip()
-                or base_pane_result.stdout.strip()
-                or "empty pane id"
-            )
-            raise RuntimeError(
-                f"tmux display-message for base pane id returned empty pane id: {detail}"
+            self._run_required(
+                ["tmux", "set-option", "-t", f"{self.session_name}:0", "window-size", "manual"],
+                "set-option window-size manual",
             )
 
-        codex_pane = self._split_pane_required(claude_pane, "Codex")
-        gemini_pane = self._split_pane_required(codex_pane, "Gemini")
+            base_pane_result = self._run(
+                ["tmux", "display-message", "-t", f"{self.session_name}:0.0", "-p", "#{pane_id}"],
+                timeout=5.0,
+            )
+            claude_pane = base_pane_result.stdout.strip()
+            if base_pane_result.returncode != 0 or not claude_pane:
+                detail = (
+                    base_pane_result.stderr.strip()
+                    or base_pane_result.stdout.strip()
+                    or "empty pane id"
+                )
+                raise RuntimeError(
+                    f"tmux display-message for base pane id returned empty pane id: {detail}"
+                )
 
-        self._run_required(
-            ["tmux", "select-layout", "-t", f"{self.session_name}:0", "even-horizontal"],
-            "select-layout even-horizontal",
-        )
-        return {"Claude": claude_pane, "Codex": codex_pane, "Gemini": gemini_pane}
+            codex_pane = self._split_pane_required(claude_pane, "Codex")
+            gemini_pane = self._split_pane_required(codex_pane, "Gemini")
+
+            self._run_required(
+                ["tmux", "select-layout", "-t", f"{self.session_name}:0", "even-horizontal"],
+                "select-layout even-horizontal",
+            )
+            return {"Claude": claude_pane, "Codex": codex_pane, "Gemini": gemini_pane}
+        except Exception:
+            try:
+                self.kill_session()
+            except Exception:
+                pass
+            raise
 
     def _split_pane_required(self, target_pane: str, lane_label: str) -> str:
         result = self._run(
@@ -199,7 +216,30 @@ class TmuxAdapter:
             )
         return panes
 
+    def get_pane_map(self, panes: list[dict[str, Any]] | None = None) -> dict[str, dict[str, Any]]:
+        pane_source = panes if panes is not None else self.list_panes()
+        panes_by_index: dict[int, dict[str, Any]] = {}
+        for pane in pane_source:
+            try:
+                pane_index = int(pane.get("pane_index"))
+            except (TypeError, ValueError):
+                continue
+            panes_by_index[pane_index] = pane
+        return {
+            lane_name: panes_by_index[pane_index]
+            for lane_name, pane_index in self.LANE_INDEX.items()
+            if pane_index in panes_by_index
+        }
+
+    def cache_pane_map(self, pane_map: dict[str, dict[str, Any]] | None) -> None:
+        self._pane_map_cache = dict(pane_map or {})
+
+    def clear_pane_map_cache(self) -> None:
+        self._pane_map_cache = None
+
     def pane_for_lane(self, lane_name: str) -> dict[str, Any] | None:
+        if self._pane_map_cache is not None:
+            return self._pane_map_cache.get(lane_name)
         pane_index = self.LANE_INDEX.get(lane_name)
         if pane_index is None:
             return None
@@ -240,13 +280,18 @@ class TmuxAdapter:
         return self._respawn_pane(str(pane["pane_id"]), shell_command)
 
     def restart_lane(self, lane_name: str, shell_command: str) -> bool:
+        if not self.kill_lane(lane_name):
+            return False
         return self.spawn_lane(lane_name, shell_command)
 
-    def terminate_lane(self, lane_name: str) -> bool:
+    def kill_lane(self, lane_name: str) -> bool:
         pane = self.pane_for_lane(lane_name)
         if pane is None:
             return False
         return self._respawn_pane(str(pane["pane_id"]), "exec bash")
+
+    def terminate_lane(self, lane_name: str) -> bool:
+        return self.kill_lane(lane_name)
 
     def spawn_watcher(self, *, window_name: str, shell_command: str) -> dict[str, Any]:
         result = self._run(

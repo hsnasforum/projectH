@@ -62,6 +62,7 @@ VERIFY_FOLLOWUP_REASONS = frozenset({
     "waiting_next_control",
     "verify_followup_no_next_control",
     "verified_blockers_resolved",
+    "publication_default_hold",
     LOCAL_SOCKET_GUARD_AUTO_HELD_REASON,
     "pr_merge_completed",
     "pr_merge_head_mismatch",

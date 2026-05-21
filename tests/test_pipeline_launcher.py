@@ -180,14 +180,34 @@ class TestPipelineLauncherSessionContract(unittest.TestCase):
             project = Path(tmp).resolve()
 
             with mock.patch.object(
-                pipeline_launcher.subprocess,
-                "run",
-                side_effect=subprocess.TimeoutExpired(["pipeline_runtime.cli", "stop"], timeout=3.0),
+                pipeline_launcher,
+                "_runtime_cli_base",
+                return_value=[sys.executable, "-c", "import time; time.sleep(5)"],
             ):
-                result = pipeline_launcher._run_runtime_cli(project, ["stop"], timeout=3.0)
+                result = pipeline_launcher._run_runtime_cli(project, ["stop"], timeout=0.1)
 
             self.assertEqual(result.returncode, 124)
             self.assertIn("timeout", result.stderr.lower())
+
+    def test_spawn_runtime_cli_uses_project_cwd_for_windows_wsl(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="projH-spawn-windows-") as tmp:
+            project = Path(tmp).resolve()
+            fake_process = mock.Mock()
+
+            with mock.patch.object(pipeline_launcher, "IS_WINDOWS", True), mock.patch.object(
+                pipeline_launcher,
+                "_hidden_subprocess_kwargs",
+                return_value={"creationflags": 123},
+            ), mock.patch.object(
+                pipeline_launcher.subprocess,
+                "Popen",
+                return_value=fake_process,
+            ) as popen:
+                process = pipeline_launcher._spawn_runtime_cli(project, ["start"], action="start")
+
+            self.assertIs(process, fake_process)
+            self.assertEqual(popen.call_args.kwargs["cwd"], str(project))
+            self.assertEqual(popen.call_args.kwargs["creationflags"], 123)
 
     def test_background_stop_action_returns_before_pipeline_stop_finishes(self) -> None:
         with tempfile.TemporaryDirectory(prefix="projH-stop-bg-") as tmp:
@@ -195,7 +215,7 @@ class TestPipelineLauncherSessionContract(unittest.TestCase):
             started = threading.Event()
             release = threading.Event()
 
-            def blocking_stop(_project: Path, _session: str) -> str:
+            def blocking_stop(_project: Path, _session: str, **_kwargs: object) -> str:
                 started.set()
                 release.wait(1.0)
                 return "중지 완료"
@@ -215,6 +235,31 @@ class TestPipelineLauncherSessionContract(unittest.TestCase):
                     time.sleep(0.01)
 
             self.assertEqual(result, "STOP: 중지 완료")
+
+    def test_background_action_cancel_terminates_registered_process(self) -> None:
+        started = threading.Event()
+        release = threading.Event()
+        process = mock.Mock()
+        process.poll.return_value = None
+
+        def blocking_target(action: pipeline_launcher.BackgroundAction) -> str:
+            action.register_process(process)
+            started.set()
+            release.wait(1.0)
+            return "완료"
+
+        task = pipeline_launcher.BackgroundAction(
+            kind="stop",
+            label="STOP",
+            pending_message="STOP: 중지 중...",
+            target=blocking_target,
+        )
+        self.assertTrue(started.wait(0.5))
+        task.cancel()
+        release.set()
+
+        process.terminate.assert_called_once()
+        self.assertTrue(task.cancelled)
 
     def test_pipeline_restart_reuses_same_resolved_session(self) -> None:
         with tempfile.TemporaryDirectory(prefix="projH-restart-") as tmp:
@@ -798,6 +843,22 @@ class TestPipelineLauncherSessionContract(unittest.TestCase):
 
             self.assertIn("name=Codex", details)
             self.assertTrue(any("lane_input_deferred advisory_advice_updated" in line for line in details))
+
+    def test_runtime_adapter_resolution_is_cached_for_static_profile(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="projH-runtime-adapter-cache-") as tmp:
+            project = Path(tmp).resolve()
+            pipeline_launcher._RUNTIME_ADAPTER_CACHE.pop(project, None)
+
+            with mock.patch.object(
+                pipeline_launcher,
+                "resolve_project_runtime_adapter",
+                return_value={"role_owners": {"implement": "Codex", "verify": "Claude", "advisory": "Gemini"}},
+            ) as resolve_adapter:
+                first = pipeline_launcher._runtime_role_owners(project)
+                second = pipeline_launcher._runtime_role_owners(project)
+
+            self.assertEqual(first, second)
+            resolve_adapter.assert_called_once_with(project)
 
     def test_pane_snapshots_include_verify_round_context_for_codex(self) -> None:
         with tempfile.TemporaryDirectory(prefix="projH-pane-round-context-") as tmp:

@@ -26,7 +26,7 @@ import time
 import traceback
 import unicodedata
 from pathlib import Path
-from typing import Callable, NamedTuple
+from typing import Any, Callable, NamedTuple
 
 from pipeline_gui.backend import (
     PIPELINE_START_READY_TIMEOUT_SECONDS,
@@ -78,6 +78,8 @@ _PROGRESS_PHASE_LABELS = {
     "advisory_running": "자문 진행 중",
     "operator_boundary": "operator 경계 대기",
 }
+_PROFILE_CACHE: dict[Path, tuple[tuple[int, int], dict[str, Any]]] = {}
+_RUNTIME_ADAPTER_CACHE: dict[Path, tuple[tuple[int, int], dict[str, Any]]] = {}
 
 
 # ── 프로젝트 경로 결정 ────────────────────────────────────────
@@ -106,6 +108,36 @@ def parse_args() -> tuple[Path, bool]:
 
 def resolved_session_name(project: Path) -> str:
     return _session_name_for(project)
+
+
+def _active_profile_cache_key(project: Path) -> tuple[int, int]:
+    profile_path = project / ".pipeline" / "config" / "agent_profile.json"
+    try:
+        stat = profile_path.stat()
+    except OSError:
+        return (-1, -1)
+    return (int(stat.st_mtime_ns), int(stat.st_size))
+
+
+def _cached_project_active_profile(project: Path) -> dict[str, Any]:
+    key = _active_profile_cache_key(project)
+    cached = _PROFILE_CACHE.get(project)
+    if cached is not None and cached[0] == key:
+        return cached[1]
+    resolved = resolve_project_active_profile(project)
+    _PROFILE_CACHE[project] = (key, resolved)
+    _RUNTIME_ADAPTER_CACHE.pop(project, None)
+    return resolved
+
+
+def _cached_project_runtime_adapter(project: Path) -> dict[str, Any]:
+    key = _active_profile_cache_key(project)
+    cached = _RUNTIME_ADAPTER_CACHE.get(project)
+    if cached is not None and cached[0] == key:
+        return cached[1]
+    adapter = resolve_project_runtime_adapter(project)
+    _RUNTIME_ADAPTER_CACHE[project] = (key, adapter)
+    return adapter
 
 
 def launcher_error_log(project: Path) -> Path:
@@ -348,9 +380,16 @@ def _runtime_already_active(project: Path) -> bool:
     return runtime_status_is_active(runtime_status, supervisor_is_alive=sup_alive)
 
 
-def _wait_for_runtime_stopped(project: Path, *, timeout_sec: float = 20.0) -> bool:
+def _wait_for_runtime_stopped(
+    project: Path,
+    *,
+    timeout_sec: float = 20.0,
+    cancel_event: threading.Event | None = None,
+) -> bool:
     deadline = time.time() + timeout_sec
     while time.time() < deadline:
+        if cancel_event is not None and cancel_event.is_set():
+            return False
         runtime_status = normalize_runtime_status(read_runtime_status(project))
         sup_alive, _ = supervisor_alive(project)
         if runtime_status_is_stopped(runtime_status, supervisor_is_alive=sup_alive):
@@ -362,21 +401,21 @@ def _wait_for_runtime_stopped(project: Path, *, timeout_sec: float = 20.0) -> bo
     return False
 
 
-def _spawn_runtime_cli(project: Path, args: list[str], *, action: str) -> None:
+def _spawn_runtime_cli(project: Path, args: list[str], *, action: str) -> subprocess.Popen[Any]:
     log_path = launcher_action_log(project, action)
     log_path.parent.mkdir(parents=True, exist_ok=True)
     cmd = _runtime_cli_base(project) + args
     with log_path.open("w", encoding="utf-8") as logf:
         if IS_WINDOWS:
-            subprocess.Popen(
+            return subprocess.Popen(
                 cmd,
+                cwd=str(project),
                 stdin=subprocess.DEVNULL,
                 stdout=logf,
                 stderr=subprocess.STDOUT,
                 **_hidden_subprocess_kwargs(),
             )
-            return
-        subprocess.Popen(
+        return subprocess.Popen(
             cmd,
             cwd=str(project),
             stdin=subprocess.DEVNULL,
@@ -386,11 +425,37 @@ def _spawn_runtime_cli(project: Path, args: list[str], *, action: str) -> None:
         )
 
 
-def _run_runtime_cli(project: Path, args: list[str], *, timeout: float = 40.0) -> subprocess.CompletedProcess[str]:
+def _terminate_process(process: subprocess.Popen[Any]) -> None:
+    if process.poll() is not None:
+        return
+    try:
+        process.terminate()
+    except OSError:
+        return
+    try:
+        process.wait(timeout=3.0)
+        return
+    except (subprocess.TimeoutExpired, OSError):
+        pass
+    try:
+        process.kill()
+    except OSError:
+        return
+
+
+def _run_runtime_cli(
+    project: Path,
+    args: list[str],
+    *,
+    timeout: float = 40.0,
+    on_process: Callable[[subprocess.Popen[Any]], None] | None = None,
+    cancel_event: threading.Event | None = None,
+) -> subprocess.CompletedProcess[str]:
     cmd = _runtime_cli_base(project) + args
     kwargs: dict[str, object] = {
-        "capture_output": True,
-        "timeout": timeout,
+        "stdin": subprocess.DEVNULL,
+        "stdout": subprocess.PIPE,
+        "stderr": subprocess.PIPE,
     }
     if IS_WINDOWS:
         kwargs["encoding"] = "utf-8"
@@ -399,13 +464,41 @@ def _run_runtime_cli(project: Path, args: list[str], *, timeout: float = 40.0) -
     else:
         kwargs["text"] = True
         kwargs["cwd"] = str(project)
+        kwargs["start_new_session"] = True
+    process: subprocess.Popen[Any] | None = None
     try:
-        return subprocess.run(cmd, **kwargs)
+        process = subprocess.Popen(cmd, **kwargs)
+        if on_process is not None:
+            on_process(process)
+        deadline = time.time() + timeout
+        while True:
+            if cancel_event is not None and cancel_event.is_set():
+                _terminate_process(process)
+                try:
+                    stdout, stderr = process.communicate(timeout=1.0)
+                except (subprocess.TimeoutExpired, OSError):
+                    stdout, stderr = "", ""
+                return subprocess.CompletedProcess(cmd, 130, stdout=stdout or "", stderr=stderr or "cancelled")
+            remaining = deadline - time.time()
+            if remaining <= 0:
+                raise subprocess.TimeoutExpired(cmd, timeout)
+            try:
+                stdout, stderr = process.communicate(timeout=min(0.25, remaining))
+                return subprocess.CompletedProcess(cmd, process.returncode, stdout=stdout or "", stderr=stderr or "")
+            except subprocess.TimeoutExpired:
+                continue
     except subprocess.TimeoutExpired as exc:
-        stdout = exc.stdout if isinstance(exc.stdout, str) else ""
-        stderr = exc.stderr if isinstance(exc.stderr, str) else ""
+        if process is not None:
+            _terminate_process(process)
+            try:
+                stdout, stderr = process.communicate(timeout=1.0)
+            except (subprocess.TimeoutExpired, OSError):
+                stdout, stderr = "", ""
+        else:
+            stdout = exc.stdout if isinstance(exc.stdout, str) else ""
+            stderr = exc.stderr if isinstance(exc.stderr, str) else ""
         detail = stderr or f"timeout after {exc.timeout}s"
-        return subprocess.CompletedProcess(cmd, 124, stdout=stdout, stderr=detail)
+        return subprocess.CompletedProcess(cmd, 124, stdout=stdout or "", stderr=detail)
     except (subprocess.SubprocessError, OSError) as exc:
         return subprocess.CompletedProcess(
             cmd,
@@ -422,24 +515,49 @@ class BackgroundAction:
         kind: str,
         label: str,
         pending_message: str,
-        target: Callable[[], str],
+        target: Callable[["BackgroundAction"], str],
     ) -> None:
         self.kind = kind
         self.label = label
         self.pending_message = pending_message
         self._target = target
         self._done = threading.Event()
+        self._cancel_requested = threading.Event()
+        self._process_lock = threading.Lock()
+        self._processes: list[subprocess.Popen[Any]] = []
         self._result = ""
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
 
     def _run(self) -> None:
         try:
-            self._result = self._target()
+            self._result = self._target(self)
         except Exception as exc:
             self._result = f"실패: {type(exc).__name__}: {exc}"
         finally:
             self._done.set()
+
+    @property
+    def cancel_event(self) -> threading.Event:
+        return self._cancel_requested
+
+    @property
+    def cancelled(self) -> bool:
+        return self._cancel_requested.is_set()
+
+    def register_process(self, process: subprocess.Popen[Any]) -> None:
+        with self._process_lock:
+            self._processes.append(process)
+            should_cancel = self._cancel_requested.is_set()
+        if should_cancel:
+            _terminate_process(process)
+
+    def cancel(self) -> None:
+        self._cancel_requested.set()
+        with self._process_lock:
+            processes = list(self._processes)
+        for process in processes:
+            _terminate_process(process)
 
     def poll(self) -> str | None:
         if not self._done.is_set():
@@ -452,7 +570,7 @@ def start_pipeline_stop_task(project: Path, session: str) -> BackgroundAction:
         kind="stop",
         label="STOP",
         pending_message="STOP: 중지 중...",
-        target=lambda: pipeline_stop(project, session),
+        target=lambda action: pipeline_stop(project, session, action=action),
     )
 
 
@@ -461,13 +579,13 @@ def start_pipeline_restart_task(project: Path, session: str) -> BackgroundAction
         kind="restart",
         label="RESTART",
         pending_message="RESTART: 재시작 중...",
-        target=lambda: pipeline_restart(project, session),
+        target=lambda action: pipeline_restart(project, session, action=action),
     )
 
 
-def pipeline_start(project: Path, session: str = "") -> str:
+def pipeline_start(project: Path, session: str = "", *, action: BackgroundAction | None = None) -> str:
     resolved_session = session or resolved_session_name(project)
-    resolved = resolve_project_active_profile(project)
+    resolved = _cached_project_active_profile(project)
     controls = dict(resolved.get("controls") or {})
     if not bool(controls.get("launch_allowed")):
         detail = join_resolver_messages(resolved) or "Active profile launch is blocked."
@@ -477,36 +595,59 @@ def pipeline_start(project: Path, session: str = "") -> str:
     preflight_failure = start_preflight_failure_message(project, resolved_session)
     if preflight_failure:
         return f"실행 차단: {preflight_failure}"
-    _spawn_runtime_cli(
+    process = _spawn_runtime_cli(
         project,
         ["start", str(project), "--mode", "experimental", "--session", resolved_session, "--no-attach"],
         action="start",
     )
+    if action is not None:
+        action.register_process(process)
     return "시작 요청됨"
 
 
-def pipeline_stop(project: Path, session: str = "") -> str:
+def pipeline_stop(project: Path, session: str = "", *, action: BackgroundAction | None = None) -> str:
     resolved_session = session or resolved_session_name(project)
-    result = _run_runtime_cli(project, ["stop", str(project), "--session", resolved_session])
+    stop_args = ["stop", str(project), "--session", resolved_session]
+    if action is None:
+        result = _run_runtime_cli(project, stop_args)
+    else:
+        result = _run_runtime_cli(
+            project,
+            stop_args,
+            on_process=action.register_process,
+            cancel_event=action.cancel_event,
+        )
+    if action is not None and action.cancelled:
+        return "취소됨"
     if result.returncode != 0:
         detail = (result.stderr or result.stdout or "").strip() or f"exit={result.returncode}"
         return f"중지 실패: {detail.splitlines()[-1]}"
-    if not _wait_for_runtime_stopped(project):
+    if not _wait_for_runtime_stopped(project, cancel_event=action.cancel_event if action is not None else None):
+        if action is not None and action.cancelled:
+            return "취소됨"
         return "중지 요청은 완료됐지만 STOPPED 상태 확인에 실패했습니다"
     return "중지 완료"
 
 
-def pipeline_restart(project: Path, session: str = "") -> str:
+def pipeline_restart(project: Path, session: str = "", *, action: BackgroundAction | None = None) -> str:
     resolved_session = session or resolved_session_name(project)
-    resolved = resolve_project_active_profile(project)
+    resolved = _cached_project_active_profile(project)
     controls = dict(resolved.get("controls") or {})
     if not bool(controls.get("launch_allowed")):
         detail = join_resolver_messages(resolved) or "Active profile launch is blocked."
         return f"실행 차단: {detail}"
-    stop_message = pipeline_stop(project, resolved_session)
+    if action is None:
+        stop_message = pipeline_stop(project, resolved_session)
+    else:
+        stop_message = pipeline_stop(project, resolved_session, action=action)
     if stop_message != "중지 완료":
         return f"재시작 중지 단계 실패: {stop_message}"
-    start_message = pipeline_start(project, resolved_session)
+    if action is not None and action.cancelled:
+        return "취소됨"
+    if action is None:
+        start_message = pipeline_start(project, resolved_session)
+    else:
+        start_message = pipeline_start(project, resolved_session, action=action)
     if start_message != "시작 요청됨":
         return f"재시작 시작 단계 실패: {start_message}"
     return "재시작 요청됨"
@@ -543,7 +684,7 @@ class AgentSnapshot(NamedTuple):
 
 
 def runtime_lane_name_map(project: Path) -> dict[int, str]:
-    lane_configs = list(resolve_project_runtime_adapter(project).get("lane_configs") or [])
+    lane_configs = list(_cached_project_runtime_adapter(project).get("lane_configs") or [])
     lane_names = {
         int(cfg.get("pane_index", idx)): str(cfg.get("name") or f"Pane {idx}")
         for idx, cfg in enumerate(lane_configs)
@@ -555,7 +696,7 @@ def runtime_lane_name_map(project: Path) -> dict[int, str]:
 
 
 def _runtime_role_owners(project: Path) -> dict[str, str]:
-    owners = dict(resolve_project_runtime_adapter(project).get("role_owners") or {})
+    owners = dict(_cached_project_runtime_adapter(project).get("role_owners") or {})
     fallback = default_role_bindings()
     return {
         "implement": str(owners.get("implement") or fallback["implement"]),
@@ -1009,6 +1150,19 @@ def handle_resize(stdscr: curses.window) -> None:
             pass
 
 
+def configure_curses_screen(stdscr: curses.window, *, timeout_ms: int = 1000) -> None:
+    try:
+        curses.start_color()
+    except curses.error:
+        pass
+    try:
+        curses.curs_set(0)
+    except curses.error:
+        pass
+    stdscr.nodelay(True)
+    stdscr.timeout(timeout_ms)
+
+
 def run_line_mode(project: Path) -> None:
     session = resolved_session_name(project)
     message = ""
@@ -1418,9 +1572,7 @@ def main(stdscr: curses.window) -> None:
     project, _ = parse_args()
     session = resolved_session_name(project)
 
-    curses.curs_set(0)
-    stdscr.nodelay(True)
-    stdscr.timeout(1000)  # 1초 폴링
+    configure_curses_screen(stdscr, timeout_ms=1000)  # 1초 폴링
 
     message = ""
     message_expire = 0.0
@@ -1524,6 +1676,8 @@ def main(stdscr: curses.window) -> None:
         ch = chr(key).lower() if 0 <= key < 256 else ""
 
         if ch == "q":
+            if action_task is not None:
+                action_task.cancel()
             break
         if action_task is not None and ch in {"s", "t", "r", "a"}:
             message = f"{action_task.label}: 작업 진행 중... 키 입력은 계속 받을 수 있습니다."
@@ -1555,13 +1709,30 @@ def main(stdscr: curses.window) -> None:
         elif ch == "a":
             if str(runtime_view.get("runtime_state") or "STOPPED") != "STOPPED":
                 # curses를 잠시 내리고 runtime attach를 실행한 뒤 복귀합니다.
-                curses.endwin()
-                attach_message = runtime_attach(project, session)
-                stdscr = curses.initscr()
-                curses.curs_set(0)
-                stdscr.nodelay(True)
-                stdscr.timeout(1000)
-                curses.start_color()
+                attach_message = ""
+                try:
+                    try:
+                        curses.def_prog_mode()
+                    except curses.error:
+                        pass
+                    curses.endwin()
+                    try:
+                        attach_message = runtime_attach(project, session)
+                    except KeyboardInterrupt:
+                        attach_message = "runtime attach 중단됨"
+                    except Exception as exc:
+                        attach_message = f"runtime attach 실패: {type(exc).__name__}: {exc}"
+                finally:
+                    try:
+                        curses.reset_prog_mode()
+                    except curses.error:
+                        pass
+                    stdscr = curses.initscr()
+                    configure_curses_screen(
+                        stdscr,
+                        timeout_ms=500 if focused_agent is not None else 1000,
+                    )
+                    handle_resize(stdscr)
                 message = f"ATTACH: {attach_message}"
                 message_expire = time.time() + 6
             else:

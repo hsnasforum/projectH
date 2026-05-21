@@ -364,7 +364,6 @@ Useful repo skills include:
 - `round-handoff`: rerun verification truth and prepare next handoff
 - `next-slice-triage`: exact next-slice/advisory/operator decision after truth
   is current
-- `trace-implementer`: small grounded-brief trace or memory-foundation slices
 - `approval-flow-audit`, `investigation-quality-audit`, `e2e-smoke-triage`,
   `security-gate`, `release-check`, `work-log-closeout`, `doc-sync`
 

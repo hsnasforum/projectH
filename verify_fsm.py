@@ -16,12 +16,33 @@ from pipeline_runtime.schema import (
 )
 from pipeline_runtime.lane_surface import pane_text_has_unsubmitted_pasted_content
 from pipeline_runtime.wrapper_events import build_lane_read_models
+
+# --------------- backward-compat re-exports from watcher_state ---------------
+# JobState, JobStatus, and TERMINAL_STATES are defined in watcher_state.py.
+# Keep them importable from verify_fsm for older callers; new code should import
+# these watcher state types from watcher_state directly.
+# SCHEMA_VERSION is an internal compatibility alias for persisted JobState
+# payloads and is intentionally not exported through __all__.
+# ---------------------------------------------------------------------------
 from watcher_state import (
     JOB_STATE_SCHEMA_VERSION as SCHEMA_VERSION,
     JobState,
     JobStatus,
     TERMINAL_STATES,
 )
+
+__all__ = [
+    # Public API owned by verify_fsm.
+    "StateMachine",
+    "make_job_id",
+    "compute_file_sig",
+    "compute_md_tree_sig",
+    "compute_multi_file_sig",
+    # Backward-compatible watcher_state re-exports.
+    "JobState",
+    "JobStatus",
+    "TERMINAL_STATES",
+]
 
 log = logging.getLogger("watcher_core")
 

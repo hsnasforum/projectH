@@ -8,8 +8,25 @@ from pathlib import Path
 from unittest.mock import patch
 
 import verify_fsm
+import watcher_state
 from pipeline_runtime.wrapper_events import append_wrapper_event
 from verify_fsm import JobState, JobStatus, StateMachine
+
+
+class VerifyFsmExportBoundaryTest(unittest.TestCase):
+    def test_public_exports_distinguish_owned_api_and_compat_reexports(self) -> None:
+        self.assertIn("StateMachine", verify_fsm.__all__)
+        self.assertIn("compute_file_sig", verify_fsm.__all__)
+        self.assertIn("JobState", verify_fsm.__all__)
+        self.assertNotIn("SCHEMA_VERSION", verify_fsm.__all__)
+
+        from verify_fsm import JobState as CompatJobState
+        from verify_fsm import StateMachine as CompatStateMachine
+        from verify_fsm import compute_file_sig
+
+        self.assertIs(CompatJobState, watcher_state.JobState)
+        self.assertIs(CompatStateMachine, StateMachine)
+        self.assertIs(compute_file_sig, verify_fsm.compute_file_sig)
 
 
 class _Collector:

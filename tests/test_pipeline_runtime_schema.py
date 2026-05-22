@@ -75,6 +75,27 @@ class RoleRoutesTest(unittest.TestCase):
         self.assertEqual(role_routes.normalize_notify_kind("codex_triage"), role_routes.VERIFY_TRIAGE_ESCALATION)
         self.assertEqual(role_routes.normalize_notify_kind("codex_triage_only"), role_routes.VERIFY_TRIAGE_ONLY_REASON)
 
+    def test_followup_route_aliases_normalize_to_canonical(self) -> None:
+        for alias in role_routes.VERIFY_FOLLOWUP_ROUTE_ALIASES:
+            with self.subTest(alias=alias):
+                self.assertEqual(role_routes.normalize_followup_route(alias), role_routes.VERIFY_FOLLOWUP_ROUTE)
+
+    def test_verify_triage_escalation_aliases_normalize_to_canonical(self) -> None:
+        for alias in role_routes.VERIFY_TRIAGE_ESCALATION_ALIASES:
+            with self.subTest(alias=alias):
+                self.assertEqual(
+                    role_routes.normalize_verify_triage_escalation(alias),
+                    role_routes.VERIFY_TRIAGE_ESCALATION,
+                )
+
+    def test_verify_triage_reason_aliases_normalize_to_canonical(self) -> None:
+        for alias in role_routes.VERIFY_TRIAGE_ONLY_REASON_ALIASES:
+            with self.subTest(alias=alias):
+                self.assertEqual(
+                    role_routes.normalize_verify_triage_reason(alias),
+                    role_routes.VERIFY_TRIAGE_ONLY_REASON,
+                )
+
 
 class RuntimeSchemaTest(unittest.TestCase):
     def test_atomic_write_json_logs_oserror_before_reraising(self) -> None:

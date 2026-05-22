@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from pipeline_runtime.schema import iter_job_state_paths
-from verify_fsm import JobState, JobStatus, TERMINAL_STATES
+from watcher_state import JobState, JobStatus, TERMINAL_STATES
 
 log = logging.getLogger(__name__)
 

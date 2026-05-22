@@ -82,11 +82,15 @@ def normalize_notify_kind(value: object) -> str:
     return _CANONICAL_NOTIFY_KIND_BY_LEGACY.get(token, token)
 
 
-def normalize_followup_route(value: object) -> str:
+def _normalize_route_alias(value: object, spec: RouteSpec) -> str:
     token = _clean_token(value)
-    if token == LEGACY_CODEX_FOLLOWUP_ROUTE:
-        return VERIFY_FOLLOWUP_ROUTE
+    if token in spec.aliases:
+        return spec.canonical
     return token
+
+
+def normalize_followup_route(value: object) -> str:
+    return _normalize_route_alias(value, VERIFY_FOLLOWUP)
 
 
 def is_verify_followup_route(value: object) -> bool:
@@ -94,10 +98,7 @@ def is_verify_followup_route(value: object) -> bool:
 
 
 def normalize_verify_triage_escalation(value: object) -> str:
-    token = _clean_token(value)
-    if token == LEGACY_CODEX_TRIAGE_ESCALATION:
-        return VERIFY_TRIAGE_ESCALATION
-    return token
+    return _normalize_route_alias(value, VERIFY_TRIAGE)
 
 
 def is_verify_triage_escalation(value: object) -> bool:
@@ -105,7 +106,4 @@ def is_verify_triage_escalation(value: object) -> bool:
 
 
 def normalize_verify_triage_reason(value: object) -> str:
-    token = _clean_token(value)
-    if token == LEGACY_CODEX_TRIAGE_ONLY_REASON:
-        return VERIFY_TRIAGE_ONLY_REASON
-    return token
+    return _normalize_route_alias(value, VERIFY_TRIAGE_ONLY)

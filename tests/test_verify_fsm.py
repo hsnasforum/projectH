@@ -55,6 +55,30 @@ class _Dedupe:
     def forget(self, job_id: str, round_number: int, artifact_hash: str, slot: str) -> None:
         return None
 
+    def is_duplicate(self, job_id: str, round_number: int, artifact_hash: str, slot: str) -> bool:
+        return False
+
+    def mark_suppressed(
+        self,
+        job_id: str,
+        round_number: int,
+        artifact_hash: str,
+        slot: str,
+        reason: str,
+    ) -> None:
+        return None
+
+    def mark_dispatch(
+        self,
+        job_id: str,
+        round_number: int,
+        artifact_hash: str,
+        slot: str,
+        pane_target: str,
+        dry_run: bool,
+    ) -> None:
+        return None
+
 
 def _make_machine(
     root: Path,
@@ -62,7 +86,12 @@ def _make_machine(
     pipeline_dir: Path | None,
     feedback_sig_builder=None,
     verify_receipt_builder=None,
+    send_keys=None,
+    verify_pane_type: str = "codex",
+    verify_task_hint_writer=None,
 ) -> StateMachine:
+    if send_keys is None:
+        send_keys = lambda target, prompt, dry_run, pane_type: True
     return StateMachine(
         project_root=root,
         verify_lane_name="Codex",
@@ -72,7 +101,7 @@ def _make_machine(
         dedupe=_Dedupe(),
         collector=_Collector(root / ".pipeline" / "manifests"),
         verify_pane_target="codex-pane",
-        verify_pane_type="codex",
+        verify_pane_type=verify_pane_type,
         verify_prompt_template="verify {job_id}",
         verify_context_builder=None,
         feedback_sig_builder=feedback_sig_builder,
@@ -90,9 +119,10 @@ def _make_machine(
         pane_text_has_input_cursor=lambda text: True,
         pane_text_is_idle=lambda text: True,
         normalize_prompt_text=lambda text: text,
-        send_keys=lambda target, prompt, dry_run, pane_type: True,
+        send_keys=send_keys,
         dry_run=True,
         pipeline_dir=pipeline_dir,
+        verify_task_hint_writer=verify_task_hint_writer,
     )
 
 
@@ -132,6 +162,65 @@ def _receipt_builder(root: Path):
         return str(receipt), receipt.stat().st_mtime
 
     return _builder
+
+
+class VerifyFsmClaudeDispatchTest(unittest.TestCase):
+    def test_claude_verify_dispatch_writes_task_hint_before_prompt_send(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            artifact = root / "work" / "5" / "22" / "note.md"
+            artifact.parent.mkdir(parents=True, exist_ok=True)
+            artifact.write_text("ready\n", encoding="utf-8")
+            calls: list[tuple[str, object]] = []
+
+            def _task_hint_writer(
+                job_id: str,
+                dispatch_id: str,
+                control_seq: int,
+                active: bool,
+            ) -> None:
+                calls.append(
+                    (
+                        "hint",
+                        {
+                            "job_id": job_id,
+                            "dispatch_id": dispatch_id,
+                            "control_seq": control_seq,
+                            "active": active,
+                        },
+                    )
+                )
+
+            def _send_keys(target: str, prompt: str, dry_run: bool, pane_type: str) -> bool:
+                calls.append(("send", {"pane_type": pane_type, "prompt": prompt}))
+                self.assertEqual(calls[0][0], "hint")
+                return True
+
+            machine = _make_machine(
+                root,
+                pipeline_dir=None,
+                send_keys=_send_keys,
+                verify_pane_type="claude",
+                verify_task_hint_writer=_task_hint_writer,
+            )
+            job = JobState(
+                job_id="job-claude",
+                status=JobStatus.VERIFY_PENDING,
+                artifact_path=str(artifact),
+                artifact_hash="artifact-hash",
+            )
+            job.dispatch_control_seq = 2125
+
+            result = machine.step(job)
+
+            self.assertEqual(result.status, JobStatus.VERIFY_RUNNING)
+            self.assertEqual(calls[0][0], "hint")
+            self.assertEqual(calls[1][0], "send")
+            hint_payload = calls[0][1]
+            self.assertEqual(hint_payload["job_id"], "job-claude")
+            self.assertEqual(hint_payload["dispatch_id"], result.dispatch_id)
+            self.assertEqual(hint_payload["control_seq"], 2125)
+            self.assertTrue(hint_payload["active"])
 
 
 class VerifyFsmSnapshotCloseTest(unittest.TestCase):

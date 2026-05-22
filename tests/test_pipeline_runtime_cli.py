@@ -643,24 +643,33 @@ class WrapperEmitterTest(unittest.TestCase):
             self.assertEqual(events[-1]["payload"]["dispatch_id"], "dispatch-fallback")
 
     def test_claude_print_jsonl_pipe_sends_prompt_and_feeds_stdout(self) -> None:
+        class FakeStdin:
+            def write(self, data: str) -> int:
+                sent_inputs.append(data)
+                return len(data)
+
+            def close(self) -> None:
+                return None
+
         class FakeProcess:
             pid = 991
             returncode = 0
 
-            def communicate(self, input: bytes | None = None):
-                sent_inputs.append(input)
+            def __init__(self) -> None:
                 stdout = "\n".join(
                     [
                         json.dumps({"type": "text", "text": "working"}),
                         json.dumps({"type": "result"}),
                     ]
                 ) + "\n"
-                return stdout.encode("utf-8"), b""
+                self.stdin = FakeStdin()
+                self.stdout = io.StringIO(stdout)
+                self.stderr = io.StringIO("")
 
             def wait(self) -> int:
                 return self.returncode
 
-        sent_inputs: list[bytes | None] = []
+        sent_inputs: list[str] = []
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             task_hint_dir = root / "task-hints"
@@ -681,13 +690,17 @@ class WrapperEmitterTest(unittest.TestCase):
 
             self.assertEqual(returncode, 0)
             self.assertEqual(stderr, "")
-            self.assertEqual(sent_inputs, [b"respond with exactly: OK"])
+            self.assertEqual(sent_inputs, ["respond with exactly: OK"])
             popen.assert_called_once_with(
                 ["claude", "--print", "--verbose", "--output-format", "stream-json"],
                 stdin=runtime_cli.subprocess.PIPE,
                 stdout=runtime_cli.subprocess.PIPE,
                 stderr=runtime_cli.subprocess.PIPE,
                 cwd=str(root),
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                bufsize=1,
             )
             events = self._read_wrapper_events(root / "claude.jsonl")
             event_types = [str(event.get("event_type") or "") for event in events]
@@ -695,20 +708,55 @@ class WrapperEmitterTest(unittest.TestCase):
             self.assertEqual(events[1]["payload"]["dispatch_id"], "dispatch-print-pipe")
             self.assertEqual(events[2]["payload"]["reason"], "claude_result")
 
+    def test_claude_jsonl_assistant_event_marks_task_accepted(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            task_hint_dir = root / "task-hints"
+            self._write_task_hint(
+                task_hint_dir,
+                job_id="job-assistant-event",
+                dispatch_id="dispatch-assistant-event",
+                control_seq=417,
+            )
+            emitter = _WrapperEmitter(
+                wrapper_dir=root,
+                lane_name="Claude",
+                task_hint_dir=task_hint_dir,
+                child_pid=806,
+                send_child_bytes=lambda _data: None,
+                jsonl_mode=True,
+            )
+
+            emitter.feed(json.dumps({"type": "assistant", "message": {"content": []}}) + "\n", now=5.0)
+
+            events = self._read_wrapper_events(root / "claude.jsonl")
+            event_types = [str(event.get("event_type") or "") for event in events]
+            self.assertEqual(event_types, ["DISPATCH_SEEN", "TASK_ACCEPTED"])
+            self.assertEqual(events[1]["payload"]["dispatch_id"], "dispatch-assistant-event")
+
     def test_claude_print_jsonl_pipe_returns_stderr_and_nonzero_exit(self) -> None:
+        class FakeStdin:
+            def write(self, data: str) -> int:
+                sent_inputs.append(data)
+                return len(data)
+
+            def close(self) -> None:
+                return None
+
         class FakeProcess:
             pid = 992
             returncode = None
 
-            def communicate(self, input: bytes | None = None):
-                sent_inputs.append(input)
-                self.returncode = 7
-                return b"", "warning from claude\n"
+            def __init__(self) -> None:
+                self.stdin = FakeStdin()
+                self.stdout = io.StringIO("")
+                self.stderr = io.StringIO("warning from claude\n")
 
             def wait(self) -> int:
+                self.returncode = 7
                 return 7
 
-        sent_inputs: list[bytes | None] = []
+        sent_inputs: list[str] = []
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             with patch.object(runtime_cli.subprocess, "Popen", return_value=FakeProcess()):
@@ -722,7 +770,7 @@ class WrapperEmitterTest(unittest.TestCase):
 
             self.assertEqual(returncode, 7)
             self.assertEqual(stderr, "warning from claude\n")
-            self.assertEqual(sent_inputs, [b"hello"])
+            self.assertEqual(sent_inputs, ["hello"])
 
     def test_claude_print_jsonl_pipe_from_prompt_file_accepts_local_utf8_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -830,24 +878,33 @@ class WrapperEmitterTest(unittest.TestCase):
             )
 
     def test_claude_print_jsonl_pipe_subcommand_fake_e2e_emits_wrapper_events(self) -> None:
+        class FakeStdin:
+            def write(self, data: str) -> int:
+                sent_inputs.append(data)
+                return len(data)
+
+            def close(self) -> None:
+                return None
+
         class FakeProcess:
             pid = 993
             returncode = 0
 
-            def communicate(self, input: bytes | None = None):
-                sent_inputs.append(input)
+            def __init__(self) -> None:
                 stdout = "\n".join(
                     [
                         json.dumps({"type": "text", "text": "working"}),
                         json.dumps({"type": "result"}),
                     ]
                 ) + "\n"
-                return stdout.encode("utf-8"), b""
+                self.stdin = FakeStdin()
+                self.stdout = io.StringIO(stdout)
+                self.stderr = io.StringIO("")
 
             def wait(self) -> int:
                 return self.returncode
 
-        sent_inputs: list[bytes | None] = []
+        sent_inputs: list[str] = []
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp).resolve()
             prompt_path = root / "prompts" / "claude.txt"
@@ -881,13 +938,17 @@ class WrapperEmitterTest(unittest.TestCase):
 
             wrapper_dir = root / ".pipeline" / "runs" / run_id / "wrapper-events"
             self.assertEqual(returncode, 0)
-            self.assertEqual(sent_inputs, [b"respond with exactly: OK\n"])
+            self.assertEqual(sent_inputs, ["respond with exactly: OK\n"])
             popen.assert_called_once_with(
                 ["/custom/claude", "--print", "--verbose", "--output-format", "stream-json"],
                 stdin=runtime_cli.subprocess.PIPE,
                 stdout=runtime_cli.subprocess.PIPE,
                 stderr=runtime_cli.subprocess.PIPE,
                 cwd=str(root),
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                bufsize=1,
             )
             events = self._read_wrapper_events(wrapper_dir / "claude.jsonl")
             event_types = [str(event.get("event_type") or "") for event in events]

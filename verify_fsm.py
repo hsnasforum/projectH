@@ -134,6 +134,7 @@ class StateMachine:
         clear_failed_dispatch_input: Optional[Callable[[str, str], bool]] = None,
         dry_run: bool = False,
         pipeline_dir: Optional[Path] = None,
+        verify_task_hint_writer: Optional[Callable[[str, str, int, bool], None]] = None,
     ) -> None:
         self.project_root = project_root
         self.verify_lane_name = verify_lane_name
@@ -148,6 +149,7 @@ class StateMachine:
         self.verify_context_builder = verify_context_builder
         self.feedback_sig_builder = feedback_sig_builder
         self.verify_receipt_builder = verify_receipt_builder
+        self.verify_task_hint_writer = verify_task_hint_writer
         self.verify_retry_backoff_sec = verify_retry_backoff_sec
         self.verify_incomplete_idle_retry_sec = verify_incomplete_idle_retry_sec
         self.verify_accept_deadline_sec = verify_accept_deadline_sec
@@ -806,28 +808,41 @@ class StateMachine:
             self.dedupe.mark_suppressed(job.job_id, job.round, job.artifact_hash, slot, "lease_busy")
             return job
 
-        ok = self.send_keys(self.verify_pane_target, prompt, self.dry_run, self.verify_pane_type)
+        dispatch_at = time.time()
+        dispatch_id = hashlib.sha1(
+            "|".join(
+                [
+                    job.job_id,
+                    str(job.round),
+                    job.artifact_hash,
+                    slot,
+                    f"{dispatch_at:.6f}",
+                ]
+            ).encode("utf-8")
+        ).hexdigest()
+
+        task_hint_prepared = False
+        if self.verify_pane_type.strip().lower() == "claude" and self.verify_task_hint_writer is not None:
+            try:
+                self.verify_task_hint_writer(job.job_id, dispatch_id, job.dispatch_control_seq, True)
+                task_hint_prepared = True
+            except Exception:
+                log.exception("failed to write verify task hint before Claude dispatch: job=%s", job.job_id)
+
+        ok = (
+            task_hint_prepared or self.verify_pane_type.strip().lower() != "claude"
+        ) and self.send_keys(self.verify_pane_target, prompt, self.dry_run, self.verify_pane_type)
 
         if ok:
             self.dedupe.mark_dispatch(
                 job.job_id, job.round, job.artifact_hash, slot, self.verify_pane_target, self.dry_run
             )
-            job.last_dispatch_at = time.time()
+            job.last_dispatch_at = dispatch_at
             job.last_dispatch_slot = slot
             job.last_failed_dispatch_at = 0.0
             job.last_failed_dispatch_snapshot = ""
             job.dispatch_fail_count = 0
-            job.dispatch_id = hashlib.sha1(
-                "|".join(
-                    [
-                        job.job_id,
-                        str(job.round),
-                        job.artifact_hash,
-                        slot,
-                        f"{job.last_dispatch_at:.6f}",
-                    ]
-                ).encode("utf-8")
-            ).hexdigest()
+            job.dispatch_id = dispatch_id
             job.seen_dispatch_id = ""
             job.seen_at = 0.0
             job.accept_deadline_at = job.last_dispatch_at + self.verify_accept_deadline_sec
@@ -857,6 +872,11 @@ class StateMachine:
             if self.dry_run:
                 self._release_verify_lease(slot, job, reason="dispatch_dry_run")
         else:
+            if task_hint_prepared and self.verify_task_hint_writer is not None:
+                try:
+                    self.verify_task_hint_writer("", "", -1, False)
+                except Exception:
+                    log.exception("failed to clear verify task hint after Claude dispatch failure: job=%s", job.job_id)
             now = time.time()
             job.last_failed_dispatch_at = now
             job.dispatch_fail_count += 1

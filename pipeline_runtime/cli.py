@@ -1015,6 +1015,8 @@ class _WrapperEmitter:
                 self._on_claude_activity(now=now)
             elif event_type == "tool_use":
                 self._on_claude_activity(now=now)
+            elif event_type == "assistant":
+                self._on_claude_activity(now=now)
             elif event_type == "result":
                 self._on_claude_completion("claude_result")
 
@@ -1332,8 +1334,11 @@ def _run_claude_print_jsonl_pipe(
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         cwd=str(cwd) if cwd is not None else None,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        bufsize=1,
     )
-    stdout_data, stderr_data = process.communicate(input=prompt.encode("utf-8"))
     emitter = _WrapperEmitter(
         wrapper_dir=wrapper_dir,
         lane_name="Claude",
@@ -1342,14 +1347,35 @@ def _run_claude_print_jsonl_pipe(
         send_child_bytes=lambda _data: None,
         jsonl_mode=True,
     )
-    stdout_text = _decode_subprocess_stream(stdout_data)
-    if stdout_text:
-        emitter.feed(stdout_text, now=now)
+
+    stderr_chunks: list[str] = []
+
+    def _collect_stderr() -> None:
+        stderr_stream = getattr(process, "stderr", None)
+        if stderr_stream is None:
+            return
+        for chunk in iter(lambda: stderr_stream.read(4096), ""):
+            if not chunk:
+                break
+            stderr_chunks.append(chunk)
+
+    stderr_thread = threading.Thread(target=_collect_stderr, daemon=True)
+    stderr_thread.start()
+    try:
+        stdin_stream = getattr(process, "stdin", None)
+        if stdin_stream is not None:
+            stdin_stream.write(prompt)
+            stdin_stream.close()
+    except OSError:
+        pass
+    stdout_stream = getattr(process, "stdout", None)
+    if stdout_stream is not None:
+        for line in stdout_stream:
+            emitter.feed(line, now=now)
+    returncode = process.wait()
+    stderr_thread.join(timeout=1.0)
     emitter.finish_stream(now=now)
-    returncode = process.returncode
-    if returncode is None:
-        returncode = process.wait()
-    return int(returncode or 0), _decode_subprocess_stream(stderr_data)
+    return int(returncode or 0), "".join(stderr_chunks)
 
 
 def _run_claude_print_jsonl_pipe_from_prompt_file(

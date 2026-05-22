@@ -89,6 +89,7 @@ from pipeline_runtime.role_routes import (
 from pipeline_runtime.schema import (
     active_control_snapshot_from_entry,
     active_control_snapshot_from_status,
+    atomic_write_json,
     atomic_write_text,
     completed_implement_handoff_truth,
     control_block_from_snapshot,
@@ -616,12 +617,8 @@ class WatcherCore:
             pane_text_has_input_cursor=lambda text: _shared_pane_text_has_input_cursor(text),
             pane_text_is_idle=lambda text: _shared_pane_text_is_idle(text),
             normalize_prompt_text=self.prompt_assembler.finalize_prompt_text,
-            send_keys=lambda target, prompt, dry_run, pane_type: watcher_dispatch.tmux_send_keys(
-                target,
-                prompt,
-                dry_run,
-                pane_type=pane_type,
-            ),
+            send_keys=self._send_verify_prompt_to_lane,
+            verify_task_hint_writer=self._write_verify_task_hint,
             clear_failed_dispatch_input=lambda target, reason: watcher_dispatch.clear_codex_failed_dispatch_input(
                 target,
                 reason,
@@ -639,6 +636,58 @@ class WatcherCore:
                 },
             )
             self._write_runtime_status()
+
+    # ------------------------------------------------------------------
+    def _verify_task_hint_path(self, lane_name: str) -> Path:
+        return self.run_dir / "task-hints" / f"{lane_name.strip().lower()}.json"
+
+    def _write_verify_task_hint(
+        self,
+        job_id: str,
+        dispatch_id: str,
+        control_seq: int,
+        active: bool,
+    ) -> None:
+        lane_name = self._prompt_owner("verify") or ""
+        if not lane_name:
+            return
+        payload = {
+            "lane": lane_name,
+            "active": bool(active),
+            "job_id": job_id if active else "",
+            "dispatch_id": dispatch_id if active else "",
+            "control_seq": control_seq if active else -1,
+            "attempt": 1,
+            "inactive_reason": "" if active else "task_hint_cleared",
+            "updated_at": self._iso_utc(time.time()),
+        }
+        atomic_write_json(self._verify_task_hint_path(lane_name), payload)
+
+    def _write_claude_verify_pending_prompt(self, prompt: str) -> bool:
+        if self.dry_run:
+            return True
+        task_hint_dir = self.run_dir / "task-hints"
+        try:
+            task_hint_dir.mkdir(parents=True, exist_ok=True)
+            temp_path = task_hint_dir / ".claude.prompt.pending.tmp"
+            pending_path = task_hint_dir / "claude.prompt.pending"
+            temp_path.write_text(prompt, encoding="utf-8")
+            temp_path.replace(pending_path)
+            return True
+        except OSError:
+            log.exception("failed to write Claude verify pending prompt")
+            return False
+
+    def _send_verify_prompt_to_lane(
+        self,
+        target: str,
+        prompt: str,
+        dry_run: bool,
+        pane_type: str,
+    ) -> bool:
+        if str(pane_type or "").strip().lower() == "claude":
+            return self._write_claude_verify_pending_prompt(prompt)
+        return watcher_dispatch.tmux_send_keys(target, prompt, dry_run, pane_type=pane_type)
 
     # ------------------------------------------------------------------
     def _lane_config(self, lane_name: str | None) -> Optional[dict[str, object]]:

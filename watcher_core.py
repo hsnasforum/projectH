@@ -49,7 +49,6 @@ from pipeline_runtime.automation_health import (
     STALE_ADVISORY_GRACE_CYCLES,
     STALE_CONTROL_CYCLE_THRESHOLD,
     advance_control_seq_age,
-    derive_automation_health,
 )
 from pipeline_runtime.lane_surface import (
     _line_looks_like_input_prompt,
@@ -65,7 +64,6 @@ from pipeline_runtime.lane_surface import (
 from pipeline_runtime.lane_catalog import (
     default_role_bindings,
     legacy_watcher_pane_target_arg_for_lane,
-    physical_lane_order,
     physical_lane_specs,
     read_first_doc_for_owner,
 )
@@ -87,12 +85,10 @@ from pipeline_runtime.role_routes import (
     normalize_verify_triage_escalation,
 )
 from pipeline_runtime.schema import (
-    active_control_snapshot_from_entry,
     active_control_snapshot_from_status,
     atomic_write_json,
     atomic_write_text,
     completed_implement_handoff_truth,
-    control_block_from_snapshot,
     control_seq_value,
     control_slot_spec,
     iter_job_state_paths,
@@ -139,6 +135,7 @@ from watcher_control_signals import (
     newest_control_signal,
 )
 from watcher_job_state import JobStateManager
+from watcher_lane_status import build_lane_statuses
 from watcher_prompt_assembly import (
     DEFAULT_ADVISORY_PROMPT,
     DEFAULT_ADVISORY_RECOVERY_PROMPT,
@@ -156,6 +153,7 @@ from watcher_prompt_assembly import (
     _write_prompt_file,
 )
 from watcher_runtime_exporter import WatcherRuntimeExporter
+from watcher_status_writer import write_runtime_status
 
 _ROLLING_PIPELINE_PATHS = frozenset(
     {
@@ -243,6 +241,7 @@ logging.basicConfig(
 )
 log = logging.getLogger("watcher_core")
 DEFAULT_ADVISORY_RECOVERY_SEC = 300.0
+DEFAULT_VERIFY_DONE_DEADLINE_SEC = 900.0
 
 __all__ = ["WatcherCore", "main"]
 
@@ -606,7 +605,7 @@ class WatcherCore:
                 config.get("verify_accept_deadline_sec", 30.0)
             ),
             verify_done_deadline_sec=float(
-                config.get("verify_done_deadline_sec", 45.0)
+                config.get("verify_done_deadline_sec", DEFAULT_VERIFY_DONE_DEADLINE_SEC)
             ),
             runtime_started_at=self.started_at,
             restart_recovery_grace_sec=float(config.get("restart_recovery_grace_sec", 15.0)),
@@ -635,7 +634,22 @@ class WatcherCore:
                     "turn_state": self._current_turn_state.value,
                 },
             )
-            self._write_runtime_status()
+            now_iso = self._iso_utc(time.time())
+            write_runtime_status(
+                enabled=True,
+                run_status_path=self.run_status_path,
+                run_id=self.run_id,
+                turn_state=self._current_turn_state.value,
+                legacy_turn_state=legacy_turn_state_name(self._current_turn_state.value),
+                runtime_controls=self.runtime_controls,
+                active_control=self._get_active_control_signal(),
+                fallback_active_control_file=self._turn_active_control_file,
+                fallback_active_control_seq=self._turn_active_control_seq,
+                control_seq_age_cycles=self._control_seq_age_cycles,
+                lane_statuses=self._build_lane_statuses(now_iso),
+                heartbeat_iso=now_iso,
+                write_current_run_pointer=self._write_current_run_pointer,
+            )
 
     # ------------------------------------------------------------------
     def _verify_task_hint_path(self, lane_name: str) -> Path:
@@ -1033,100 +1047,14 @@ class WatcherCore:
 
     # ------------------------------------------------------------------
     def _build_lane_statuses(self, heartbeat_iso: str) -> list[dict[str, object]]:
-        lane_statuses: list[dict[str, object]] = []
-        active_lane = self._active_lane_name_for_turn()
         active_control = self._get_active_control_signal()
-        implement_lane = self._prompt_owner("implement") or ""
-        implement_live = self._implement_control_should_surface_working(active_control)
-        seen_names: set[str] = set()
-        lane_configs = self.runtime_lane_configs or _default_runtime_lane_configs()
-        for lane in lane_configs:
-            name = str(lane.get("name") or "").strip()
-            if not name:
-                continue
-            seen_names.add(name)
-            enabled = bool(lane.get("enabled", True))
-            state = "OFF"
-            if enabled:
-                state = "WORKING" if name == active_lane or (implement_live and name == implement_lane) else "READY"
-            lane_statuses.append(
-                {
-                    "name": name,
-                    "state": state,
-                    "attachable": enabled,
-                    "last_heartbeat_at": heartbeat_iso if enabled else "",
-                }
-            )
-        for fallback_name in physical_lane_order():
-            if fallback_name in seen_names:
-                continue
-            lane_statuses.append(
-                {
-                    "name": fallback_name,
-                    "state": (
-                        "WORKING"
-                        if fallback_name == active_lane or (implement_live and fallback_name == implement_lane)
-                        else "READY"
-                    ),
-                    "attachable": True,
-                    "last_heartbeat_at": heartbeat_iso,
-                }
-            )
-        return lane_statuses
-
-    # ------------------------------------------------------------------
-    def _write_runtime_status(self) -> None:
-        if not self._runtime_export_enabled:
-            return
-        now = time.time()
-        now_iso = self._iso_utc(now)
-        active_control = self._get_active_control_signal()
-        control_snapshot = {}
-        control_is_legacy_alias = False
-        if active_control is not None:
-            control_snapshot = active_control_snapshot_from_entry(
-                {
-                    "file": active_control.path.name,
-                    "control_seq": active_control.control_seq,
-                    "status": active_control.status,
-                    "mtime": active_control.mtime,
-                    "slot_id": active_control.slot_id,
-                    "canonical_file": active_control.canonical_file,
-                }
-            )
-            control_is_legacy_alias = active_control.is_legacy_alias
-        elif self._turn_active_control_file:
-            control_snapshot = active_control_snapshot_from_status(
-                {
-                    "active_control_file": f".pipeline/{self._turn_active_control_file}",
-                    "active_control_seq": self._turn_active_control_seq,
-                }
-            )
-        data = {
-            "schema_version": 1,
-            "run_id": self.run_id,
-            "state": "RUNNING",
-            "runtime_state": "RUNNING",
-            "turn_state": self._current_turn_state.value,
-            "legacy_turn_state": legacy_turn_state_name(self._current_turn_state.value),
-            "degraded_reason": "",
-            "runtime_controls": dict(self.runtime_controls),
-            "control": control_block_from_snapshot(
-                control_snapshot,
-                control_age_cycles=self._control_seq_age_cycles,
-                is_legacy_alias=control_is_legacy_alias,
-            ),
-            "control_age_cycles": self._control_seq_age_cycles,
-            "lanes": self._build_lane_statuses(now_iso),
-            "last_receipt_id": "",
-            "last_heartbeat_at": now_iso,
-            "updated_at": now_iso,
-        }
-        data.update(derive_automation_health(data))
-        tmp_path = self.run_status_path.with_suffix(".json.tmp")
-        tmp_path.write_text(json.dumps(data, ensure_ascii=False, indent=2))
-        tmp_path.replace(self.run_status_path)
-        self._write_current_run_pointer()
+        return build_lane_statuses(
+            heartbeat_iso=heartbeat_iso,
+            active_lane=self._active_lane_name_for_turn(),
+            implement_lane=self._prompt_owner("implement") or "",
+            implement_live=self._implement_control_should_surface_working(active_control),
+            lane_configs=self.runtime_lane_configs or _default_runtime_lane_configs(),
+        )
 
     # ------------------------------------------------------------------
     def _runtime_prompt_status_summary(self) -> str:
@@ -1268,7 +1196,23 @@ class WatcherCore:
                 "active_lane": active_lane,
             },
         )
-        self._write_runtime_status()
+        if self._runtime_export_enabled:
+            now_iso = self._iso_utc(time.time())
+            write_runtime_status(
+                enabled=True,
+                run_status_path=self.run_status_path,
+                run_id=self.run_id,
+                turn_state=self._current_turn_state.value,
+                legacy_turn_state=legacy_turn_state_name(self._current_turn_state.value),
+                runtime_controls=self.runtime_controls,
+                active_control=self._get_active_control_signal(),
+                fallback_active_control_file=self._turn_active_control_file,
+                fallback_active_control_seq=self._turn_active_control_seq,
+                control_seq_age_cycles=self._control_seq_age_cycles,
+                lane_statuses=self._build_lane_statuses(now_iso),
+                heartbeat_iso=now_iso,
+                write_current_run_pointer=self._write_current_run_pointer,
+            )
 
     # ------------------------------------------------------------------
     def _get_path_mtime(self, path: Path) -> float:
@@ -3795,7 +3739,23 @@ class WatcherCore:
             return
 
         self._refresh_control_seq_age()
-        self._write_runtime_status()
+        if self._runtime_export_enabled:
+            now_iso = self._iso_utc(time.time())
+            write_runtime_status(
+                enabled=True,
+                run_status_path=self.run_status_path,
+                run_id=self.run_id,
+                turn_state=self._current_turn_state.value,
+                legacy_turn_state=legacy_turn_state_name(self._current_turn_state.value),
+                runtime_controls=self.runtime_controls,
+                active_control=self._get_active_control_signal(),
+                fallback_active_control_file=self._turn_active_control_file,
+                fallback_active_control_seq=self._turn_active_control_seq,
+                control_seq_age_cycles=self._control_seq_age_cycles,
+                lane_statuses=self._build_lane_statuses(now_iso),
+                heartbeat_iso=now_iso,
+                write_current_run_pointer=self._write_current_run_pointer,
+            )
         if self._maybe_answer_gemini_git_permission_prompt():
             return
         if self._maybe_write_stale_control_advisory_request():
@@ -4103,6 +4063,8 @@ def main() -> None:
     parser.add_argument("--settle",               type=float, default=3.0)
     parser.add_argument("--startup-grace",        type=float, default=8.0)
     parser.add_argument("--lease-ttl",            type=int,   default=900)
+    parser.add_argument("--verify-done-deadline", type=float, default=DEFAULT_VERIFY_DONE_DEADLINE_SEC,
+                        help="seconds to wait after verify TASK_ACCEPTED before TASK_DONE is considered missing")
     parser.add_argument("--verify-prompt",         default="",
                         help="verify role prompt (기본: 내부 verify contract)")
     parser.add_argument("--implement-prompt",      default="",
@@ -4130,6 +4092,7 @@ def main() -> None:
         "settle_sec":         args.settle,
         "startup_grace_sec":  args.startup_grace,
         "lease_ttl":          args.lease_ttl,
+        "verify_done_deadline_sec": args.verify_done_deadline,
         "gemini_git_permission_auto_allow": not args.disable_gemini_git_permission_auto_allow,
     }
     # pane target: 명시되면 config에 포함, 비어있으면 WatcherCore가 project-aware default 사용

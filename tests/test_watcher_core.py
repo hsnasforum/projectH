@@ -1341,7 +1341,22 @@ class WatcherPromptAssemblyTest(unittest.TestCase):
                 }
             )
             core._control_seq_age_cycles = STALE_CONTROL_CYCLE_THRESHOLD + STALE_ADVISORY_GRACE_CYCLES
-            core._write_runtime_status()
+            now_iso = core._iso_utc(time.time())
+            watcher_core.write_runtime_status(
+                enabled=True,
+                run_status_path=core.run_status_path,
+                run_id=core.run_id,
+                turn_state=core._current_turn_state.value,
+                legacy_turn_state=legacy_turn_state_name(core._current_turn_state.value),
+                runtime_controls=core.runtime_controls,
+                active_control=core._get_active_control_signal(),
+                fallback_active_control_file=core._turn_active_control_file,
+                fallback_active_control_seq=core._turn_active_control_seq,
+                control_seq_age_cycles=core._control_seq_age_cycles,
+                lane_statuses=core._build_lane_statuses(now_iso),
+                heartbeat_iso=now_iso,
+                write_current_run_pointer=core._write_current_run_pointer,
+            )
 
             prompt = core.sm.normalize_prompt_text(
                 core.sm.verify_prompt_template.format(
@@ -9038,6 +9053,26 @@ class BusyLaneNotificationDeferTest(unittest.TestCase):
 
 
 class VerifyCompletionContractTest(unittest.TestCase):
+    def test_default_verify_done_deadline_is_900_seconds(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            watch_dir = root / "work"
+            base_dir = root / ".pipeline"
+            watch_dir.mkdir(parents=True, exist_ok=True)
+            base_dir.mkdir(parents=True, exist_ok=True)
+            _write_active_profile(root)
+
+            core = watcher_core.WatcherCore(
+                {
+                    "watch_dir": str(watch_dir),
+                    "base_dir": str(base_dir),
+                    "repo_root": str(root),
+                    "dry_run": True,
+                }
+            )
+
+            self.assertEqual(core.sm.verify_done_deadline_sec, 900.0)
+
     def test_control_slot_change_without_verify_note_keeps_verify_running(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -10995,6 +11030,44 @@ class CodexDispatchConfirmationTest(unittest.TestCase):
             capture_output=True,
         )
 
+    def test_watcher_poll_calls_extracted_runtime_status_writer_before_startup_grace(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            watch_dir = root / "work"
+            base_dir = root / ".pipeline"
+            watch_dir.mkdir(parents=True, exist_ok=True)
+            base_dir.mkdir(parents=True, exist_ok=True)
+            _write_active_profile(root)
+
+            core = watcher_core.WatcherCore(
+                {
+                    "watch_dir": str(watch_dir),
+                    "base_dir": str(base_dir),
+                    "repo_root": str(root),
+                    "dry_run": True,
+                    "startup_grace_sec": 999.0,
+                }
+            )
+
+            self.assertFalse(hasattr(core, "_write_runtime_status"))
+            with mock.patch.object(core, "_refresh_control_seq_age"), \
+                 mock.patch("watcher_core.write_runtime_status", return_value=None) as writer, \
+                 mock.patch.object(core, "_maybe_answer_gemini_git_permission_prompt", return_value=False), \
+                 mock.patch.object(
+                     core,
+                     "_maybe_write_stale_control_advisory_request",
+                     return_value=False,
+                 ):
+                core._poll()
+
+        writer.assert_called_once()
+        kwargs = writer.call_args.kwargs
+        self.assertTrue(kwargs["enabled"])
+        self.assertEqual(kwargs["run_status_path"], core.run_status_path)
+        self.assertEqual(kwargs["run_id"], core.run_id)
+        self.assertEqual(kwargs["turn_state"], core._current_turn_state.value)
+        self.assertIn("lane_statuses", kwargs)
+
     def test_watcher_poll_answers_gemini_git_permission_prompt_before_startup_grace(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -11016,7 +11089,7 @@ class CodexDispatchConfirmationTest(unittest.TestCase):
             )
 
             with mock.patch.object(core, "_refresh_control_seq_age"), \
-                 mock.patch.object(core, "_write_runtime_status"), \
+                 mock.patch("watcher_core.write_runtime_status", return_value=None), \
                  mock.patch.object(
                      core,
                      "_maybe_write_stale_control_advisory_request",

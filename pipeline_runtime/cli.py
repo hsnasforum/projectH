@@ -986,8 +986,7 @@ class _WrapperEmitter:
         self._evaluate([], now=now)
 
     def finish_stream(self, *, now: float | None = None) -> None:
-        if self.jsonl_mode:
-            self._on_claude_completion("stream_eof")
+        self._on_claude_completion("stream_eof")
 
     def _feed_jsonl(self, text: str, *, now: float | None = None) -> None:
         combined = self.partial + text
@@ -1543,6 +1542,15 @@ def _lane_wrapper(args: argparse.Namespace) -> int:
         selector.register(stdin_fd, selectors.EVENT_READ)
 
     last_heartbeat = 0.0
+    stream_finished = False
+
+    def _finish_stream_once(*, now: float | None = None) -> None:
+        nonlocal stream_finished
+        if stream_finished:
+            return
+        emitter.finish_stream(now=now)
+        stream_finished = True
+
     try:
         while True:
             now = time.time()
@@ -1573,7 +1581,7 @@ def _lane_wrapper(args: argparse.Namespace) -> int:
                         sys.stdout.flush()
                         emitter.feed(chunk.decode("utf-8", errors="replace"))
                     else:
-                        emitter.finish_stream(now=now)
+                        _finish_stream_once(now=now)
                 elif fd == stdin_fd:
                     data = os.read(stdin_fd, 1024)
                     if data:
@@ -1588,12 +1596,13 @@ def _lane_wrapper(args: argparse.Namespace) -> int:
                         os.write(sys.stdout.fileno(), chunk)
                         sys.stdout.flush()
                         emitter.feed(chunk.decode("utf-8", errors="replace"))
-                    emitter.finish_stream(now=time.time())
+                    _finish_stream_once(now=time.time())
                 except OSError:
-                    emitter.finish_stream(now=time.time())
+                    _finish_stream_once(now=time.time())
                     pass
                 break
             if stop_requested:
+                _finish_stream_once(now=time.time())
                 break
     finally:
         if saved_tty is not None:

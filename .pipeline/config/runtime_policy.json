@@ -4,5 +4,6 @@
   "commit_local": "allowed",
   "push_remote": "needs_operator",
   "pr_create": "needs_operator",
-  "pr_merge": "needs_operator"
+  "pr_merge": "needs_operator",
+  "verify_done_deadline_sec": 900
 }

@@ -587,6 +587,40 @@ class WrapperEmitterTest(unittest.TestCase):
             self.assertEqual(task_done[0]["payload"]["dispatch_id"], "dispatch-eof")
             self.assertEqual(task_done[0]["payload"]["reason"], "stream_eof")
 
+    def test_text_stream_finish_emits_task_done_once_after_acceptance(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            task_hint_dir = root / "task-hints"
+            self._write_task_hint(
+                task_hint_dir,
+                job_id="job-text-eof",
+                dispatch_id="dispatch-text-eof",
+                control_seq=419,
+            )
+            emitter = _WrapperEmitter(
+                wrapper_dir=root,
+                lane_name="Claude",
+                task_hint_dir=task_hint_dir,
+                child_pid=807,
+                send_child_bytes=lambda _data: None,
+                jsonl_mode=False,
+            )
+
+            emitter.finish_stream(now=0.5)
+            emitter.feed("Working (synthetic claude verify)\n", now=1.0)
+            emitter.finish_stream(now=2.0)
+            emitter.finish_stream(now=3.0)
+
+            events = self._read_wrapper_events(root / "claude.jsonl")
+            event_types = [str(event.get("event_type") or "") for event in events]
+            self.assertEqual(event_types, ["DISPATCH_SEEN", "TASK_ACCEPTED", "TASK_DONE", "READY"])
+            task_done = [event for event in events if event.get("event_type") == "TASK_DONE"]
+            self.assertEqual(len(task_done), 1)
+            self.assertEqual(task_done[0]["payload"]["job_id"], "job-text-eof")
+            self.assertEqual(task_done[0]["payload"]["dispatch_id"], "dispatch-text-eof")
+            self.assertEqual(task_done[0]["payload"]["control_seq"], 419)
+            self.assertEqual(task_done[0]["payload"]["reason"], "stream_eof")
+
     def test_jsonl_mode_false_keeps_codex_text_parsing(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -1117,6 +1151,292 @@ class WrapperEmitterTest(unittest.TestCase):
                     self.assertEqual(runtime_cli._lane_wrapper(args), 0)
 
         self.assertEqual(modes, [("Claude", False), ("Codex", False), ("Gemini", False)])
+
+    def test_lane_wrapper_finishes_stream_once_when_signal_requests_stop(self) -> None:
+        class FakeChild:
+            pid = 901
+
+            def poll(self) -> None:
+                return None
+
+            def wait(self) -> int:
+                return 0
+
+        class FakeEmitter:
+            def __init__(
+                self,
+                *,
+                wrapper_dir: Path,
+                lane_name: str,
+                task_hint_dir: Path | None,
+                child_pid: int,
+                send_child_bytes,
+                jsonl_mode: bool = False,
+            ) -> None:
+                return None
+
+            def tick(self, *, now: float | None = None) -> None:
+                return None
+
+            def feed(self, text: str, *, now: float | None = None) -> None:
+                return None
+
+            def finish_stream(self, *, now: float | None = None) -> None:
+                finish_calls.append(now)
+
+        class FakeSelector:
+            def register(self, _fd: int, _events: int) -> None:
+                return None
+
+            def select(self, timeout: float | None = None) -> list[tuple[object, object]]:
+                if not signal_sent:
+                    signal_sent.append(True)
+                    handlers[signal.SIGTERM](signal.SIGTERM, None)
+                return []
+
+            def close(self) -> None:
+                closed.append(True)
+
+        handlers = {}
+        signal_sent: list[bool] = []
+        finish_calls: list[float | None] = []
+        closed: list[bool] = []
+        child = FakeChild()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            master_fd, slave_fd = os.pipe()
+            args = Namespace(
+                project_root=str(root),
+                run_id="run-sigterm",
+                lane="Claude",
+                shell_command="sleep 10",
+                task_hint_dir="",
+                heartbeat_interval=1.0,
+            )
+
+            def _capture_signal(sig: int, handler) -> None:
+                handlers[sig] = handler
+
+            with (
+                patch.object(runtime_cli.pty, "openpty", return_value=(master_fd, slave_fd)),
+                patch.object(runtime_cli.subprocess, "Popen", return_value=child),
+                patch.object(runtime_cli, "_WrapperEmitter", FakeEmitter),
+                patch.object(runtime_cli.selectors, "DefaultSelector", return_value=FakeSelector()),
+                patch.object(runtime_cli.signal, "signal", side_effect=_capture_signal),
+                patch.object(runtime_cli.os, "killpg") as killpg,
+            ):
+                self.assertEqual(runtime_cli._lane_wrapper(args), 0)
+
+        self.assertEqual(len(finish_calls), 1)
+        self.assertEqual(signal_sent, [True])
+        self.assertEqual(closed, [True])
+        killpg.assert_called_once_with(child.pid, signal.SIGTERM)
+
+    def test_lane_wrapper_signal_stop_with_real_emitter_emits_task_done(self) -> None:
+        def _run_replay(*, signum: int, signal_slug: str, control_seq: int) -> None:
+            class FakeChild:
+                pid = 902
+
+                def poll(self) -> None:
+                    return None
+
+                def wait(self) -> int:
+                    return 0
+
+            class FakeSelector:
+                def register(self, _fd: int, _events: int) -> None:
+                    return None
+
+                def select(self, timeout: float | None = None) -> list[tuple[Namespace, object]]:
+                    if not output_sent:
+                        output_sent.append(True)
+                        os.write(writer_fd, b"Working (synthetic claude verify)\n")
+                        return [(Namespace(fd=master_fd), None)]
+                    if not signal_sent:
+                        signal_sent.append(True)
+                        handlers[signum](signum, None)
+                    return []
+
+                def close(self) -> None:
+                    closed.append(True)
+
+            class FakeStdout:
+                def __init__(self, fd: int) -> None:
+                    self._fd = fd
+
+                def fileno(self) -> int:
+                    return self._fd
+
+                def flush(self) -> None:
+                    return None
+
+            handlers = {}
+            output_sent: list[bool] = []
+            signal_sent: list[bool] = []
+            closed: list[bool] = []
+            child = FakeChild()
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                task_hint_dir = root / "task-hints"
+                self._write_task_hint(
+                    task_hint_dir,
+                    lane="Claude",
+                    job_id=f"job-signal-real-{signal_slug}",
+                    dispatch_id=f"dispatch-signal-real-{signal_slug}",
+                    control_seq=control_seq,
+                )
+                master_fd, slave_fd = os.pipe()
+                writer_fd = os.dup(slave_fd)
+                stdout_fd = os.open(os.devnull, os.O_WRONLY)
+                args = Namespace(
+                    project_root=str(root),
+                    run_id=f"run-real-{signal_slug}",
+                    lane="Claude",
+                    shell_command="sleep 10",
+                    task_hint_dir=str(task_hint_dir),
+                    heartbeat_interval=1.0,
+                )
+
+                def _capture_signal(sig: int, handler) -> None:
+                    handlers[sig] = handler
+
+                try:
+                    with (
+                        patch.object(runtime_cli.pty, "openpty", return_value=(master_fd, slave_fd)),
+                        patch.object(runtime_cli.subprocess, "Popen", return_value=child),
+                        patch.object(runtime_cli.selectors, "DefaultSelector", return_value=FakeSelector()),
+                        patch.object(runtime_cli.signal, "signal", side_effect=_capture_signal),
+                        patch.object(runtime_cli.os, "killpg") as killpg,
+                        patch.object(runtime_cli.sys, "stdout", FakeStdout(stdout_fd)),
+                    ):
+                        self.assertEqual(runtime_cli._lane_wrapper(args), 0)
+                finally:
+                    os.close(writer_fd)
+                    os.close(stdout_fd)
+
+                events = self._read_wrapper_events(
+                    root / ".pipeline" / "runs" / f"run-real-{signal_slug}" / "wrapper-events" / "claude.jsonl"
+                )
+
+            event_types = [str(event.get("event_type") or "") for event in events]
+            task_done = [event for event in events if event.get("event_type") == "TASK_DONE"]
+            self.assertEqual(len(task_done), 1)
+            self.assertEqual(task_done[0]["payload"]["job_id"], f"job-signal-real-{signal_slug}")
+            self.assertEqual(task_done[0]["payload"]["dispatch_id"], f"dispatch-signal-real-{signal_slug}")
+            self.assertEqual(task_done[0]["payload"]["control_seq"], control_seq)
+            self.assertEqual(task_done[0]["payload"]["reason"], "stream_eof")
+            done_index = event_types.index("TASK_DONE")
+            self.assertEqual(event_types[done_index + 1], "READY")
+            self.assertEqual(output_sent, [True])
+            self.assertEqual(signal_sent, [True])
+            self.assertEqual(closed, [True])
+            killpg.assert_called_once_with(child.pid, signum)
+
+        for signum, signal_slug, control_seq in (
+            (signal.SIGTERM, "sigterm", 420),
+            (signal.SIGINT, "sigint", 421),
+        ):
+            with self.subTest(signal=signal_slug):
+                _run_replay(signum=signum, signal_slug=signal_slug, control_seq=control_seq)
+
+    def test_lane_wrapper_child_exit_with_real_emitter_emits_task_done(self) -> None:
+        class FakeChild:
+            pid = 903
+
+            def poll(self) -> int:
+                poll_calls.append(True)
+                return 0
+
+            def wait(self) -> int:
+                wait_calls.append(True)
+                return 0
+
+        class FakeSelector:
+            def register(self, _fd: int, _events: int) -> None:
+                return None
+
+            def select(self, timeout: float | None = None) -> list[tuple[Namespace, object]]:
+                if not output_sent:
+                    output_sent.append(True)
+                    os.write(writer_fd, b"Working (synthetic claude verify)\n")
+                    os.close(writer_fd)
+                    writer_closed.append(True)
+                    return [(Namespace(fd=master_fd), None)]
+                return []
+
+            def close(self) -> None:
+                closed.append(True)
+
+        class FakeStdout:
+            def __init__(self, fd: int) -> None:
+                self._fd = fd
+
+            def fileno(self) -> int:
+                return self._fd
+
+            def flush(self) -> None:
+                return None
+
+        output_sent: list[bool] = []
+        writer_closed: list[bool] = []
+        poll_calls: list[bool] = []
+        wait_calls: list[bool] = []
+        closed: list[bool] = []
+        child = FakeChild()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            task_hint_dir = root / "task-hints"
+            self._write_task_hint(
+                task_hint_dir,
+                lane="Claude",
+                job_id="job-child-exit-real",
+                dispatch_id="dispatch-child-exit-real",
+                control_seq=422,
+            )
+            master_fd, slave_fd = os.pipe()
+            writer_fd = os.dup(slave_fd)
+            stdout_fd = os.open(os.devnull, os.O_WRONLY)
+            args = Namespace(
+                project_root=str(root),
+                run_id="run-real-child-exit",
+                lane="Claude",
+                shell_command="sleep 10",
+                task_hint_dir=str(task_hint_dir),
+                heartbeat_interval=1.0,
+            )
+
+            try:
+                with (
+                    patch.object(runtime_cli.pty, "openpty", return_value=(master_fd, slave_fd)),
+                    patch.object(runtime_cli.subprocess, "Popen", return_value=child),
+                    patch.object(runtime_cli.selectors, "DefaultSelector", return_value=FakeSelector()),
+                    patch.object(runtime_cli.signal, "signal"),
+                    patch.object(runtime_cli.sys, "stdout", FakeStdout(stdout_fd)),
+                ):
+                    self.assertEqual(runtime_cli._lane_wrapper(args), 0)
+            finally:
+                if not writer_closed:
+                    os.close(writer_fd)
+                os.close(stdout_fd)
+
+            events = self._read_wrapper_events(
+                root / ".pipeline" / "runs" / "run-real-child-exit" / "wrapper-events" / "claude.jsonl"
+            )
+
+        event_types = [str(event.get("event_type") or "") for event in events]
+        task_done = [event for event in events if event.get("event_type") == "TASK_DONE"]
+        self.assertEqual(len(task_done), 1)
+        self.assertEqual(task_done[0]["payload"]["job_id"], "job-child-exit-real")
+        self.assertEqual(task_done[0]["payload"]["dispatch_id"], "dispatch-child-exit-real")
+        self.assertEqual(task_done[0]["payload"]["control_seq"], 422)
+        self.assertEqual(task_done[0]["payload"]["reason"], "stream_eof")
+        done_index = event_types.index("TASK_DONE")
+        self.assertEqual(event_types[done_index + 1], "READY")
+        self.assertEqual(output_sent, [True])
+        self.assertEqual(writer_closed, [True])
+        self.assertEqual(closed, [True])
+        self.assertGreaterEqual(len(poll_calls), 1)
+        self.assertEqual(wait_calls, [True])
 
     def test_active_task_hint_with_invalid_control_seq_emits_bridge_diagnostic(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

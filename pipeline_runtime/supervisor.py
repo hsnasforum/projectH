@@ -127,6 +127,9 @@ DEFAULT_EVENTS_MAX_LINES = 2000
 _EVENTS_ROTATION_INTERVAL = 500
 _SESSION_RECOVERY_RETRY_LIMIT = 1
 _SESSION_RECOVERY_RESET_STABLE_SEC = 300.0
+_DEFAULT_VERIFY_DONE_DEADLINE_SEC = 300.0
+_PROFILE_ADOPTION_STALE_REASON = "runtime_profile_adoption_stale"
+_PROFILE_ADOPTION_MISMATCH_REASON_CODE = "active_profile_runtime_plan_mismatch"
 _CONTROL_SEQ_AGE_SLOT_FILES = frozenset(
     filename
     for spec in iter_control_slot_specs()
@@ -2233,6 +2236,7 @@ class RuntimeSupervisor:
             role_owners=self.role_owners,
             lane_specs=self.physical_lane_specs,
         )
+        profile_adoption = self._profile_adoption_status()
         configured_enabled_lanes = [
             lane_cfg
             for lane_cfg in lane_configs
@@ -2244,8 +2248,23 @@ class RuntimeSupervisor:
             and not watcher.get("alive")
             and all(str(lane.get("state") or "") == "OFF" for lane in lanes)
         )
+        runtime_component_active = (
+            session_alive
+            or bool(watcher.get("alive"))
+            or any(str(lane.get("state") or "") not in {"OFF", ""} for lane in lanes)
+        )
 
-        active_breakage_reasons = [item for item in [receipt_degraded] if item]
+        profile_adoption_degraded = (
+            _PROFILE_ADOPTION_STALE_REASON
+            if str(profile_adoption.get("state") or "") == "stale_runtime_plan"
+            and runtime_component_active
+            else ""
+        )
+        active_breakage_reasons = [
+            item
+            for item in [receipt_degraded, profile_adoption_degraded]
+            if item
+        ]
         job_state_reasons: list[str] = []
         for job_state in job_states:
             if suppress_active_round:
@@ -2451,6 +2470,7 @@ class RuntimeSupervisor:
             "degraded_reasons": list(self.degraded_reasons),
             "control_age_cycles": control_age_cycles,
             "runtime_controls": dict(self.runtime_controls),
+            "profile_adoption": profile_adoption,
             "autonomy": autonomy,
             "control": control_block,
             "lanes": lanes,
@@ -2973,6 +2993,56 @@ class RuntimeSupervisor:
     def _prompt_owner(self, role_name: str) -> str:
         return str(self.prompt_owners.get(role_name) or "").strip() or self._role_owner(role_name)
 
+    @staticmethod
+    def _runtime_plan_summary(
+        *,
+        enabled_lanes: list[str] | tuple[str, ...],
+        role_owners: dict[str, Any],
+        prompt_owners: dict[str, Any],
+    ) -> dict[str, Any]:
+        role_names = ("implement", "verify", "advisory")
+        return {
+            "enabled_lanes": [
+                str(name).strip()
+                for name in list(enabled_lanes or [])
+                if str(name).strip()
+            ],
+            "role_owners": {
+                role: str(role_owners.get(role) or "").strip()
+                for role in role_names
+            },
+            "prompt_owners": {
+                role: str(prompt_owners.get(role) or "").strip()
+                for role in role_names
+            },
+        }
+
+    def _running_runtime_plan_summary(self) -> dict[str, Any]:
+        return self._runtime_plan_summary(
+            enabled_lanes=self.enabled_lanes,
+            role_owners=self.role_owners,
+            prompt_owners=self.prompt_owners,
+        )
+
+    def _active_profile_runtime_plan_summary(self) -> dict[str, Any]:
+        adapter = resolve_project_runtime_adapter(self.project_root)
+        return self._runtime_plan_summary(
+            enabled_lanes=list(adapter.get("enabled_lanes") or []),
+            role_owners=dict(adapter.get("role_owners") or {}),
+            prompt_owners=dict(adapter.get("prompt_owners") or {}),
+        )
+
+    def _profile_adoption_status(self) -> dict[str, Any]:
+        running = self._running_runtime_plan_summary()
+        active = self._active_profile_runtime_plan_summary()
+        stale = running != active
+        return {
+            "state": "stale_runtime_plan" if stale else "current",
+            "reason_code": _PROFILE_ADOPTION_MISMATCH_REASON_CODE if stale else "",
+            "running": running,
+            "active": active,
+        }
+
     def _prompt_read_first_doc(self, role_name: str) -> str:
         return read_first_doc_for_owner(self._prompt_owner(role_name), self.physical_lane_specs)
 
@@ -3049,6 +3119,17 @@ class RuntimeSupervisor:
             args.extend([option, pane_id])
         return args
 
+    def _verify_done_deadline_sec(self) -> float:
+        policy = load_runtime_policy(self.project_root)
+        raw_value = policy.get("verify_done_deadline_sec")
+        try:
+            value = float(raw_value)
+        except (TypeError, ValueError):
+            return _DEFAULT_VERIFY_DONE_DEADLINE_SEC
+        if value <= 0:
+            return _DEFAULT_VERIFY_DONE_DEADLINE_SEC
+        return value
+
     def _watcher_shell_command(self) -> str:
         templates = self._prompt_templates()
         watcher_core_path = resolve_project_runtime_file(self.project_root, "watcher_core.py")
@@ -3083,6 +3164,8 @@ class RuntimeSupervisor:
             "8",
             "--lease-ttl",
             "600",
+            "--verify-done-deadline",
+            str(self._verify_done_deadline_sec()),
         ]
         return f"exec {shlex.join(watcher_args)} > {shlex.quote(str(watcher_log))} 2>&1"
 

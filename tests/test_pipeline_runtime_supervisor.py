@@ -97,21 +97,26 @@ def _write_active_profile(
     )
 
 
-def _write_runtime_policy(root: Path, *, publication_default: str = "hold") -> None:
+def _write_runtime_policy(
+    root: Path,
+    *,
+    publication_default: str = "hold",
+    verify_done_deadline_sec: float | None = None,
+) -> None:
     policy_path = root / ".pipeline" / "config" / "runtime_policy.json"
     policy_path.parent.mkdir(parents=True, exist_ok=True)
+    policy = {
+        "schema_version": 1,
+        "publication_default": publication_default,
+        "commit_local": "allowed",
+        "push_remote": "needs_operator",
+        "pr_create": "needs_operator",
+        "pr_merge": "needs_operator",
+    }
+    if verify_done_deadline_sec is not None:
+        policy["verify_done_deadline_sec"] = verify_done_deadline_sec
     policy_path.write_text(
-        json.dumps(
-            {
-                "schema_version": 1,
-                "publication_default": publication_default,
-                "commit_local": "allowed",
-                "push_remote": "needs_operator",
-                "pr_create": "needs_operator",
-                "pr_merge": "needs_operator",
-            },
-            ensure_ascii=False,
-        ),
+        json.dumps(policy, ensure_ascii=False),
         encoding="utf-8",
     )
 
@@ -2059,6 +2064,138 @@ class RuntimeSupervisorTest(unittest.TestCase):
             self.assertFalse(claude_hint["active"])
             self.assertEqual(status["active_round"]["job_id"], "job-verify-258")
             self.assertEqual(status["active_round"]["dispatch_control_seq"], 258)
+
+    def test_write_status_activates_claude_task_hint_for_verify_round_when_profile_current(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(
+                root,
+                selected_agents=["Claude", "Codex", "Gemini"],
+                implement="Codex",
+                verify="Claude",
+                advisory="Gemini",
+            )
+            pipeline_dir = root / ".pipeline"
+            state_dir = pipeline_dir / "state"
+            state_dir.mkdir(parents=True, exist_ok=True)
+            (state_dir / "turn_state.json").write_text(
+                json.dumps(
+                    {
+                        "state": "VERIFY_ACTIVE",
+                        "entered_at": 1.0,
+                        "active_control_file": "",
+                        "active_control_seq": -1,
+                        "verify_job_id": "job-verify-claude",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (state_dir / "job-verify-claude.json").write_text(
+                json.dumps(
+                    {
+                        "job_id": "job-verify-claude",
+                        "status": "VERIFY_RUNNING",
+                        "artifact_path": "work/5/22/current.md",
+                        "artifact_hash": "artifact-hash-claude",
+                        "round": 1,
+                        "updated_at": 100.0,
+                        "dispatch_id": "dispatch-claude",
+                        "dispatch_control_seq": 514,
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+            supervisor._runtime_started = True
+            with (
+                mock.patch.object(supervisor, "_watcher_status", return_value={"alive": True, "pid": 4242}),
+                mock.patch.object(supervisor.adapter, "session_exists", return_value=True),
+                mock.patch.object(
+                    supervisor,
+                    "_build_lane_statuses",
+                    return_value=(
+                        [
+                            {"name": "Claude", "state": "READY", "attachable": True, "pid": 11, "note": ""},
+                            {"name": "Codex", "state": "READY", "attachable": True, "pid": 12, "note": ""},
+                        ],
+                        {"Claude": {}, "Codex": {}},
+                    ),
+                ),
+                mock.patch("pipeline_runtime.supervisor.build_lane_read_models", return_value={}),
+                mock.patch.object(supervisor, "_build_artifacts", return_value={"latest_work": {}, "latest_verify": {}}),
+            ):
+                status = supervisor._write_status()
+
+            claude_hint = json.loads(supervisor._task_hint_path("Claude").read_text(encoding="utf-8"))
+            codex_hint = json.loads(supervisor._task_hint_path("Codex").read_text(encoding="utf-8"))
+            self.assertEqual(status["profile_adoption"]["state"], "current")
+            self.assertEqual(status["profile_adoption"]["reason_code"], "")
+            self.assertTrue(claude_hint["active"])
+            self.assertEqual(claude_hint["job_id"], "job-verify-claude")
+            self.assertEqual(claude_hint["dispatch_id"], "dispatch-claude")
+            self.assertEqual(claude_hint["control_seq"], 514)
+            self.assertFalse(codex_hint["active"])
+            self.assertEqual(status["active_round"]["job_id"], "job-verify-claude")
+            self.assertEqual(status["active_round"]["dispatch_control_seq"], 514)
+
+    def test_write_status_surfaces_stale_active_profile_runtime_plan(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(
+                root,
+                selected_agents=["Codex"],
+                implement="Codex",
+                verify="Codex",
+                advisory="",
+                advisory_enabled=False,
+                self_verify_allowed=True,
+            )
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+            supervisor._runtime_started = True
+
+            _write_active_profile(
+                root,
+                selected_agents=["Claude", "Codex", "Gemini"],
+                implement="Codex",
+                verify="Claude",
+                advisory="Gemini",
+            )
+
+            with (
+                mock.patch.object(supervisor, "_watcher_status", return_value={"alive": True, "pid": 4242}),
+                mock.patch.object(supervisor.adapter, "session_exists", return_value=True),
+                mock.patch.object(
+                    supervisor,
+                    "_build_lane_statuses",
+                    return_value=(
+                        [
+                            {"name": "Claude", "state": "OFF", "attachable": False, "pid": None, "note": ""},
+                            {"name": "Codex", "state": "READY", "attachable": True, "pid": 12, "note": ""},
+                        ],
+                        {"Claude": {}, "Codex": {}},
+                    ),
+                ),
+                mock.patch("pipeline_runtime.supervisor.build_lane_read_models", return_value={}),
+                mock.patch.object(supervisor, "_build_artifacts", return_value={"latest_work": {}, "latest_verify": {}}),
+            ):
+                status = supervisor._write_status()
+
+            profile_adoption = status["profile_adoption"]
+            self.assertEqual(profile_adoption["state"], "stale_runtime_plan")
+            self.assertEqual(
+                profile_adoption["reason_code"],
+                "active_profile_runtime_plan_mismatch",
+            )
+            self.assertEqual(profile_adoption["running"]["enabled_lanes"], ["Codex"])
+            self.assertEqual(profile_adoption["active"]["enabled_lanes"], ["Claude", "Codex", "Gemini"])
+            self.assertEqual(profile_adoption["running"]["role_owners"]["verify"], "Codex")
+            self.assertEqual(profile_adoption["active"]["role_owners"]["verify"], "Claude")
+            self.assertEqual(profile_adoption["running"]["prompt_owners"]["verify"], "Codex")
+            self.assertEqual(profile_adoption["active"]["prompt_owners"]["verify"], "Claude")
+            self.assertIn("runtime_profile_adoption_stale", status["degraded_reasons"])
+            self.assertEqual(status["degraded_reason"], "runtime_profile_adoption_stale")
+            self.assertEqual(status["runtime_state"], "DEGRADED")
 
     def test_write_status_clears_stale_verify_round_from_verify_followup_surface(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -8122,6 +8259,17 @@ class RuntimeSupervisorTest(unittest.TestCase):
             self.assertIn("ROLE_HARNESS: {runtime_verify_harness_path}", watcher_command)
             self.assertIn("ROLE_HARNESS: {runtime_advisory_harness_path}", watcher_command)
             self.assertIn("COUNCIL_HARNESS: {runtime_council_harness_path}", watcher_command)
+
+    def test_watcher_shell_command_passes_verify_done_deadline_from_runtime_policy(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            _write_runtime_policy(root, verify_done_deadline_sec=300.0)
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+
+            watcher_command = supervisor._watcher_shell_command()
+
+            self.assertIn("--verify-done-deadline 300.0", watcher_command)
 
     def test_watcher_pane_args_follow_lane_catalog_names_not_fixed_owners(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

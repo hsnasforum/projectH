@@ -11,7 +11,8 @@ from pipeline_runtime.schema import (
     normalize_repo_artifact_path,
     same_day_verify_dir_for_work,
 )
-from verify_fsm import JobState, compute_file_sig, compute_md_tree_sig, compute_multi_file_sig
+from verify_fsm import compute_file_sig, compute_md_tree_sig, compute_multi_file_sig
+from watcher_state import JobState
 
 ROUND_NOTE_SECTION_RE = re.compile(r"^##\s+(.+?)\s*$")
 ROUND_NOTE_PATH_RE = re.compile(r"(?<!@)(?:\./)?([A-Za-z0-9_.\-/]+?\.[A-Za-z0-9]+)")

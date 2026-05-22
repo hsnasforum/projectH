@@ -109,10 +109,7 @@ from pipeline_runtime.turn_arbitration import (
 )
 from pipeline_runtime.wrapper_events import build_lane_read_models
 from verify_fsm import (
-    JobState,
-    JobStatus,
     StateMachine,
-    TERMINAL_STATES,
     compute_file_sig,
     make_job_id,
 )
@@ -120,9 +117,12 @@ from watcher_state import (
     _JSONSCHEMA_AVAILABLE,
     ControlSignal,
     DedupeGuard,
+    JobState,
+    JobStatus,
     LeaseData,
     ManifestCollector,
     PaneLease,
+    TERMINAL_STATES,
     WatcherTurnState,
 )
 from watcher_stabilizer import (

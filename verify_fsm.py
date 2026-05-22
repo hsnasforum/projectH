@@ -5,151 +5,28 @@ import hashlib
 import json
 import logging
 import time
-from dataclasses import asdict, dataclass, field
-from enum import Enum
 from pathlib import Path
 from typing import Any, Callable, Optional
 
 from pipeline_runtime.schema import (
     PipelineControlSnapshot,
     append_jsonl,
-    jobs_state_dir,
     read_json,
     read_pipeline_control_snapshot,
 )
 from pipeline_runtime.lane_surface import pane_text_has_unsubmitted_pasted_content
 from pipeline_runtime.wrapper_events import build_lane_read_models
+from watcher_state import (
+    JOB_STATE_SCHEMA_VERSION as SCHEMA_VERSION,
+    JobState,
+    JobStatus,
+    TERMINAL_STATES,
+)
 
 log = logging.getLogger("watcher_core")
 
-SCHEMA_VERSION = 1
-
-
-class JobStatus(str, Enum):
-    NEW_ARTIFACT = "NEW_ARTIFACT"
-    STABILIZING = "STABILIZING"
-    VERIFY_PENDING = "VERIFY_PENDING"
-    VERIFY_RUNNING = "VERIFY_RUNNING"
-    VERIFY_DONE = "VERIFY_DONE"
-
-
-TERMINAL_STATES: set[JobStatus] = {JobStatus.VERIFY_DONE}
-
 CODEX_VERIFY_DISPATCH_FAILURE_LOOP_REASON = "codex_verify_dispatch_failure_loop"
 DISPATCH_FAILED_SUBMIT_STAGE = "dispatch_failed_submit"
-
-
-@dataclass
-class JobState:
-    job_id: str
-    status: JobStatus
-    artifact_path: str
-    run_id: str = ""
-    schema_version: int = SCHEMA_VERSION
-    artifact_hash: str = ""
-    artifact_size: int = 0
-    artifact_mtime: float = 0.0
-    stabilized_at: float = 0.0
-    round: int = 1
-    retry_budget: int = 3
-    last_dispatch_at: float = 0.0
-    last_dispatch_slot: str = ""
-    last_failed_dispatch_at: float = 0.0
-    last_failed_dispatch_snapshot: str = ""
-    dispatch_fail_count: int = 0
-    feedback_baseline_sig: str = ""
-    verify_feedback_baseline_sig: str = ""
-    verify_receipt_baseline_path: str = ""
-    verify_receipt_baseline_mtime: float = 0.0
-    verify_manifest_path: str = ""
-    verify_completed_at: float = 0.0
-    validation_score: float = -1.0
-    blocker_count: int = -1
-    verify_result: str = ""
-    dispatch_stall_fingerprint: str = ""
-    dispatch_stall_count: int = 0
-    dispatch_stall_detected_at: float = 0.0
-    dispatch_id: str = ""
-    dispatch_control_seq: int = -1
-    seen_dispatch_id: str = ""
-    seen_at: float = 0.0
-    accept_deadline_at: float = 0.0
-    accepted_dispatch_id: str = ""
-    accepted_at: float = 0.0
-    done_dispatch_id: str = ""
-    done_at: float = 0.0
-    done_deadline_at: float = 0.0
-    dispatch_stall_stage: str = ""
-    completion_stall_fingerprint: str = ""
-    completion_stall_count: int = 0
-    completion_stall_detected_at: float = 0.0
-    completion_stall_stage: str = ""
-    degraded_reason: str = ""
-    lane_note: str = ""
-    created_at: float = field(default_factory=time.time)
-    updated_at: float = field(default_factory=time.time)
-    history: list = field(default_factory=list)
-    last_pane_snapshot: str = ""
-    last_activity_at: float = 0.0
-
-    def transition(self, new_status: JobStatus, reason: str = "") -> None:
-        old = self.status
-        self.status = new_status
-        self.updated_at = time.time()
-        self.history.append(
-            {
-                "from": old.value,
-                "to": new_status.value,
-                "at": self.updated_at,
-                "reason": reason,
-            }
-        )
-        log.info("state %s  %s → %s  (%s)", self.job_id, old.value, new_status.value, reason)
-
-    def save(self, state_dir: Path) -> None:
-        # primary JobState path는 `<state_dir>/jobs/<job_id>.json`. 쓰기는 항상 primary로
-        # 간다. migration 기간 동안 루트에 남아 있는 fallback copy는 읽기에만 허용하고
-        # 이번 라운드에서는 자동 이동시키지 않는다.
-        primary_dir = jobs_state_dir(state_dir)
-        primary_dir.mkdir(parents=True, exist_ok=True)
-        path = primary_dir / f"{self.job_id}.json"
-        tmp_path = path.with_suffix(f"{path.suffix}.tmp")
-        data = asdict(self)
-        data["status"] = self.status.value
-        tmp_path.write_text(json.dumps(data, ensure_ascii=False, indent=2))
-        tmp_path.replace(path)
-
-    @classmethod
-    def load(cls, state_dir: Path, job_id: str) -> Optional["JobState"]:
-        primary_path = jobs_state_dir(state_dir) / f"{job_id}.json"
-        fallback_path = state_dir / f"{job_id}.json"
-        if primary_path.exists():
-            path = primary_path
-        elif fallback_path.exists():
-            path = fallback_path
-        else:
-            return None
-        try:
-            data = json.loads(path.read_text())
-        except (json.JSONDecodeError, OSError) as exc:
-            corrupt_path = path.with_suffix(f"{path.suffix}.corrupt-{int(time.time())}")
-            try:
-                path.replace(corrupt_path)
-                log.warning("quarantined corrupt job state: %s -> %s (%s)", path, corrupt_path, exc)
-            except OSError:
-                log.warning("failed to quarantine corrupt job state: %s (%s)", path, exc)
-            return None
-        data["status"] = JobStatus(data["status"])
-        return cls(**data)
-
-    @classmethod
-    def from_artifact(cls, job_id: str, artifact_path: str, *, run_id: str = "") -> "JobState":
-        return cls(
-            job_id=job_id,
-            status=JobStatus.NEW_ARTIFACT,
-            artifact_path=artifact_path,
-            run_id=run_id,
-        )
 
 
 def make_job_id(watch_dir: Path, artifact: Path) -> str:

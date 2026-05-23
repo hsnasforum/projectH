@@ -39,6 +39,7 @@ from watcher_prompt_assembly import (
     DEFAULT_IMPLEMENT_PROMPT,
     DEFAULT_VERIFY_PROMPT_TEMPLATE,
 )
+from watcher_state import PaneLease
 
 
 def _read_proc_starttime_fingerprint(pid: int) -> str:
@@ -2682,7 +2683,25 @@ class RuntimeSupervisorTest(unittest.TestCase):
             (verify_dir / "2026-04-11-verify.md").write_text("# verify\n", encoding="utf-8")
 
             supervisor = RuntimeSupervisor(root, start_runtime=False)
-            status = supervisor._write_status()
+            supervisor._runtime_started = True
+            with (
+                mock.patch.object(supervisor, "_watcher_status", return_value={"alive": True, "pid": 4242}),
+                mock.patch.object(supervisor.adapter, "session_exists", return_value=True),
+                mock.patch.object(
+                    supervisor,
+                    "_build_lane_statuses",
+                    return_value=(
+                        [
+                            {"name": "Claude", "state": "READY", "attachable": True, "pid": 11, "note": ""},
+                            {"name": "Codex", "state": "READY", "attachable": True, "pid": 12, "note": ""},
+                        ],
+                        {"Claude": {}, "Codex": {}},
+                    ),
+                ),
+                mock.patch("pipeline_runtime.supervisor.build_lane_read_models", return_value={}),
+                mock.patch.object(supervisor, "_build_artifacts", return_value={"latest_work": {}, "latest_verify": {}}),
+            ):
+                status = supervisor._write_status()
 
             self.assertEqual(status["runtime_state"], "DEGRADED")
             self.assertIn("receipt_manifest:job-2", status["degraded_reason"])
@@ -10307,6 +10326,96 @@ class RuntimeSupervisorTest(unittest.TestCase):
                     or decision_class in SUPPORTED_DECISION_CLASSES,
                     f"decision_class must be empty or canonical (got {decision_class!r})",
                 )
+
+    def test_stop_runtime_releases_stale_verify_lease(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+            lock_dir = root / ".pipeline" / "locks"
+            lease = PaneLease(lock_dir)
+            self.assertTrue(lease.acquire("slot_verify", "job-old", 1, "codex-pane", ttl=900))
+
+            with (
+                mock.patch.object(supervisor, "_stop_token_collector"),
+                mock.patch.object(supervisor, "_terminate_pid_file"),
+                mock.patch.object(supervisor, "_terminate_repo_watchers"),
+                mock.patch.object(supervisor.adapter, "kill_session"),
+            ):
+                supervisor._stop_runtime()
+
+            self.assertFalse((lock_dir / "slot_verify.lock").exists())
+
+    def test_write_task_hints_keeps_verify_round_active_when_control_is_none(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root, verify="Codex")
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+
+            supervisor._write_task_hints(
+                active_lane="Codex",
+                active_round={
+                    "job_id": "verify-job-round",
+                    "dispatch_id": "dispatch-round",
+                    "dispatch_control_seq": 2041,
+                    "state": "VERIFY_PENDING",
+                },
+                turn_state={"state": "VERIFY_ACTIVE"},
+                control={"active_control_status": "none", "active_control_seq": -1},
+            )
+
+            codex_hint = json.loads(supervisor._task_hint_path("Codex").read_text(encoding="utf-8"))
+
+            self.assertTrue(codex_hint["active"])
+            self.assertEqual(codex_hint["job_id"], "verify-job-round")
+            self.assertEqual(codex_hint["dispatch_id"], "dispatch-round")
+            self.assertEqual(codex_hint["control_seq"], 2041)
+
+    def test_stopped_runtime_clears_stale_verify_round_surface(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            state_dir = root / ".pipeline" / "state"
+            state_dir.mkdir(parents=True, exist_ok=True)
+            (state_dir / "job-stale-dispatch.json").write_text(
+                json.dumps(
+                    {
+                        "job_id": "job-stale-dispatch",
+                        "status": "VERIFY_PENDING",
+                        "artifact_path": "work/4/15/work-note.md",
+                        "artifact_hash": "artifact-hash-stale",
+                        "round": 4,
+                        "updated_at": 50.0,
+                        "dispatch_stall_detected_at": 50.0,
+                        "dispatch_stall_stage": "task_accept_missing",
+                        "dispatch_stall_fingerprint": "stale-dispatch",
+                        "degraded_reason": "dispatch_stall",
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+            with (
+                mock.patch.object(supervisor, "_watcher_status", return_value={"alive": False, "pid": None}),
+                mock.patch.object(supervisor.adapter, "session_exists", return_value=False),
+                mock.patch.object(
+                    supervisor,
+                    "_build_lane_statuses",
+                    return_value=(
+                        [{"name": "Codex", "state": "OFF", "attachable": False, "pid": None, "note": ""}],
+                        {"Codex": {}},
+                    ),
+                ),
+                mock.patch("pipeline_runtime.supervisor.build_lane_read_models", return_value={}),
+                mock.patch.object(supervisor, "_build_artifacts", return_value={"latest_work": {}, "latest_verify": {}}),
+            ):
+                status = supervisor._write_status()
+
+            self.assertEqual(status["runtime_state"], "STOPPED")
+            self.assertIsNone(status["active_round"])
+            self.assertEqual(status["degraded_reason"], "")
+            self.assertEqual(status["degraded_reasons"], [])
 
 
 if __name__ == "__main__":

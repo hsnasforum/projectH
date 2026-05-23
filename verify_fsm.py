@@ -804,6 +804,10 @@ class StateMachine:
             self.dedupe.mark_suppressed(job.job_id, job.round, job.artifact_hash, slot, "dedupe")
             return job
 
+        release_if_mismatched = getattr(self.lease, "release_if_mismatched", None)
+        if callable(release_if_mismatched):
+            release_if_mismatched(slot, job.job_id, job.round, reason="new_active_verify_round")
+
         if not self.lease.acquire(slot, job.job_id, job.round, self.verify_pane_target):
             self.dedupe.mark_suppressed(job.job_id, job.round, job.artifact_hash, slot, "lease_busy")
             return job

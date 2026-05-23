@@ -193,6 +193,14 @@ class PtyLaneBridgeTest(unittest.TestCase):
                 self.sent.append(text)
                 return True
 
+            def health(self) -> dict[str, object]:
+                return {
+                    "name": self.lane_name,
+                    "alive": self.alive,
+                    "pid": 12345,
+                    "exit_code": None,
+                }
+
             def kill(self) -> bool:
                 self.alive = False
                 self.killed = True
@@ -204,12 +212,21 @@ class PtyLaneBridgeTest(unittest.TestCase):
             self.assertIsNone(bridge.send("%3", "hello"))
 
             self.assertTrue(bridge.register("%3", "Gemini", "gemini --yolo", Path("/tmp/projectH")))
+            self.assertTrue(bridge.is_registered("%3"))
+            self.assertEqual(
+                bridge.health("%3"),
+                {"name": "Gemini", "alive": True, "pid": 12345, "exit_code": None},
+            )
             self.assertEqual(bridge.capture("%3"), "capture:Gemini")
             self.assertTrue(bridge.send("%3", "hello\n"))
             lane = bridge._lanes_by_target["%3"]
             self.assertEqual(lane.sent, ["hello\n"])
 
             lane.alive = False
+            self.assertEqual(
+                bridge.health("%3"),
+                {"name": "Gemini", "alive": False, "pid": 12345, "exit_code": None},
+            )
             self.assertIsNone(bridge.capture("%3"))
             self.assertIsNone(bridge.send("%3", "fallback"))
             bridge.teardown()

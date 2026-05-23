@@ -31,6 +31,7 @@ import logging
 import os
 import re
 import shlex
+import signal
 import subprocess
 import sys
 import time
@@ -366,6 +367,7 @@ class WatcherCore:
         self.codex_pane_target   = self.agent_pane_targets.get("Codex", "")
         self._pty_bridge = PtyLaneBridge()
         self._pty_pilot_lane = self._normalize_pty_pilot_lane(self.runtime_policy.get("pty_pilot_lane"))
+        self._pty_pilot_register_result: dict[str, object] | None = None
         self._setup_pty_pilot_bridge()
         self.implement_prompt = _normalize_prompt_text(
             config.get("implement_prompt")
@@ -852,6 +854,23 @@ class WatcherCore:
             command,
             self.repo_root,
         )
+        health = self._pty_bridge.health(self.gemini_pane_target)
+        pty_health = None
+        if health is not None:
+            pty_health = {
+                "alive": bool(health.get("alive")),
+                "pid": health.get("pid"),
+                "exit_code": health.get("exit_code"),
+            }
+        self._pty_pilot_register_result = {
+            "lane": "Gemini",
+            "pane_target": self.gemini_pane_target,
+            "registered": bool(registered),
+            "result": "registered" if registered else "failed",
+            "policy_source": "runtime_policy.json",
+            "command": command,
+            "pty": pty_health,
+        }
         self._log_raw(
             "pty_pilot_lane_register",
             "",
@@ -860,9 +879,19 @@ class WatcherCore:
                 "lane": "Gemini",
                 "pane_target": self.gemini_pane_target,
                 "registered": bool(registered),
+                "result": "registered" if registered else "failed",
                 "policy_source": "runtime_policy.json",
+                "command": command,
+                "pty": pty_health,
             },
         )
+
+    def _emit_pty_pilot_register_event(self) -> None:
+        if self._pty_pilot_register_result is None:
+            return
+        payload = dict(self._pty_pilot_register_result)
+        self._pty_pilot_register_result = None
+        self._append_runtime_event("pty_pilot_lane_register", payload)
 
     def _pty_pilot_handles_target(self, target: str) -> bool:
         return (
@@ -1231,13 +1260,29 @@ class WatcherCore:
     # ------------------------------------------------------------------
     def _build_lane_statuses(self, heartbeat_iso: str) -> list[dict[str, object]]:
         active_control = self._get_active_control_signal()
-        return build_lane_statuses(
+        lane_statuses = build_lane_statuses(
             heartbeat_iso=heartbeat_iso,
             active_lane=self._active_lane_name_for_turn(),
             implement_lane=self._prompt_owner("implement") or "",
             implement_live=self._implement_control_should_surface_working(active_control),
             lane_configs=self.runtime_lane_configs or _default_runtime_lane_configs(),
         )
+        if self._pty_pilot_lane == "Gemini" and self.gemini_pane_target:
+            pty_status: dict[str, object] | None = None
+            health_fn = getattr(self._pty_bridge, "health", None)
+            if callable(health_fn):
+                health = health_fn(self.gemini_pane_target)
+                if health is not None:
+                    pty_status = {
+                        "alive": bool(health.get("alive")),
+                        "pid": health.get("pid"),
+                        "exit_code": health.get("exit_code"),
+                    }
+            for lane_status in lane_statuses:
+                if str(lane_status.get("name") or "") == "Gemini":
+                    lane_status["pty"] = pty_status
+                    break
+        return lane_statuses
 
     # ------------------------------------------------------------------
     def _runtime_prompt_status_summary(self) -> str:
@@ -3512,6 +3557,18 @@ class WatcherCore:
         )
         last_report_at = time.time()
         report_interval_sec = 60.0
+        previous_signals: dict[int, object] = {}
+
+        def _handle_shutdown_signal(signum: int, _frame: object) -> None:
+            log.info("watcher shutdown signal: %s", signum)
+            raise SystemExit(0)
+
+        for signum in (signal.SIGTERM, signal.SIGINT):
+            try:
+                previous_signals[signum] = signal.getsignal(signum)
+                signal.signal(signum, _handle_shutdown_signal)
+            except (OSError, ValueError):
+                continue
         try:
             while True:
                 try:
@@ -3525,6 +3582,11 @@ class WatcherCore:
                 time.sleep(self.poll_interval)
         finally:
             self._pty_bridge.teardown()
+            for signum, previous in previous_signals.items():
+                try:
+                    signal.signal(signum, previous)
+                except (OSError, ValueError):
+                    pass
 
     # ------------------------------------------------------------------
     def _reset_job_for_new_round(self, job: JobState, job_id: str, reason: str) -> None:
@@ -3555,6 +3617,7 @@ class WatcherCore:
                 heartbeat_iso=now_iso,
                 write_current_run_pointer=self._write_current_run_pointer,
             )
+            self._emit_pty_pilot_register_event()
         if self._maybe_answer_gemini_git_permission_prompt():
             return
         if self._maybe_write_stale_control_advisory_request():

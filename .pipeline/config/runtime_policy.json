@@ -5,6 +5,6 @@
   "push_remote": "needs_operator",
   "pr_create": "needs_operator",
   "pr_merge": "needs_operator",
-  "pty_pilot_lane": "",
+  "pty_pilot_lane": "Gemini",
   "verify_done_deadline_sec": 900
 }

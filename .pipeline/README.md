@@ -350,6 +350,16 @@ operator 확인 필요:
   bridge가 `None`을 반환하거나 비활성인 경우 기존 tmux capture/send 경로로
   fallback합니다. Codex/Claude implement/verify critical path는 이 pilot
   flag로 전환하지 않습니다.
+- Gemini PTY pilot 등록 결과는 기존 raw 관찰성을 유지하기 위해
+  `.pipeline/logs/experimental/raw.jsonl`에 `pty_pilot_lane_register`로 남기고,
+  watcher exporter가 켜진 standalone 경로에서는 exporter가 준비된 뒤 current
+  run `events.jsonl`에도 같은 event를 한 번만 기록합니다. supervisor production
+  writer 경로에서는 supervisor가 current run 이후의 watcher raw event를 한 번
+  mirror합니다. payload는 `lane`, `pane_target`, `registered`,
+  `result=registered|failed`, `policy_source`, `command`, `pty`를 포함합니다.
+- `status.json`의 `lanes[]`에는 Gemini pilot이 활성화된 경우 Gemini 항목에만
+  additive `pty` 필드를 붙입니다. 값은 `{alive, pid, exit_code}` 형태의
+  PTY child health이며 Codex/Claude lane status shape은 바꾸지 않습니다.
 
 ## 3-agent smoke helper
 

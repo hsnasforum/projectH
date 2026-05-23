@@ -3,7 +3,13 @@
 ## 대상 work
 `work/5/23/2026-05-23-pty-gemini-wiring-pilot.md`
 
-## 검증 결과: READY (live smoke 미실행 명시)
+## 검증 결과: READY → NEXT_CONTROL_DISPATCHED (live smoke 미실행 명시)
+
+### advisory 소비 기록 (2026-05-23)
+- advisory_request#2161 (pty_smoke_pending_next_slice_triage) → advisory_advice#2162 소비 완료.
+- CONTROL_SEQ 2163 발행: `.pipeline/implement_handoff.md` STATUS=verify ROLE=verify OWNER=Claude.
+- 다음 라운드: pipeline STARTING 완료 후 events.jsonl/status.json/health/watcher log 관찰 → live smoke pass/fail 확정.
+- commit/revert 결정은 live smoke 결과 기록 후.
 
 ---
 

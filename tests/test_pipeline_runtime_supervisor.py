@@ -369,6 +369,70 @@ class RuntimeSupervisorTest(unittest.TestCase):
         self.assertGreater(events[-1]["payload"]["dropped_lines"], 0)
         self.assertNotEqual(events[0]["payload"].get("index"), 0)
 
+    def test_watcher_raw_pty_pilot_event_is_mirrored_and_surfaces_lane_health(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_active_profile(root)
+            supervisor = RuntimeSupervisor(root, start_runtime=False)
+            supervisor.events_path.parent.mkdir(parents=True, exist_ok=True)
+            raw_log = supervisor.base_dir / "logs" / "experimental" / "raw.jsonl"
+            raw_log.parent.mkdir(parents=True, exist_ok=True)
+            raw_entry = {
+                "event": "pty_pilot_lane_register",
+                "path": "",
+                "job_id": "runtime_policy",
+                "at": supervisor.started_at + 0.1,
+                "lane": "Gemini",
+                "pane_target": "%2",
+                "registered": True,
+                "result": "registered",
+                "policy_source": "runtime_policy.json",
+                "command": "gemini --yolo",
+                "pty": {"alive": True, "pid": 4242, "exit_code": None},
+            }
+            filler = [
+                json.dumps({"event": "heartbeat", "at": supervisor.started_at + 0.2 + index})
+                for index in range(399)
+            ]
+            raw_log.write_text("\n".join([*filler, json.dumps(raw_entry)]) + "\n", encoding="utf-8")
+
+            supervisor._mirror_watcher_raw_pty_pilot_events()
+            with raw_log.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps({"event": "heartbeat", "at": supervisor.started_at + 999.0}) + "\n")
+            supervisor._mirror_watcher_raw_pty_pilot_events()
+
+            events = [
+                json.loads(line)
+                for line in supervisor.events_path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            mirrored = [event for event in events if event.get("event_type") == "pty_pilot_lane_register"]
+            self.assertEqual(len(mirrored), 1)
+            self.assertEqual(mirrored[0]["source"], "watcher-raw")
+            self.assertEqual(mirrored[0]["payload"]["result"], "registered")
+            self.assertEqual(mirrored[0]["payload"]["pty"], {"alive": True, "pid": 4242, "exit_code": None})
+
+            with (
+                mock.patch.object(supervisor.adapter, "get_pane_map", return_value={}),
+                mock.patch.object(supervisor.adapter, "cache_pane_map", return_value=None),
+                mock.patch.object(supervisor.adapter, "clear_pane_map_cache", return_value=None),
+                mock.patch.object(
+                    supervisor.adapter,
+                    "lane_health",
+                    return_value={"alive": True, "pid": 100, "attachable": True, "pane_id": "%0"},
+                ),
+            ):
+                lanes, _lane_models = supervisor._build_lane_statuses(
+                    wrapper_models={},
+                    active_lane="",
+                    active_round=None,
+                )
+
+            by_name = {str(lane.get("name") or ""): lane for lane in lanes}
+            self.assertEqual(by_name["Gemini"]["pty"], {"alive": True, "pid": 4242, "exit_code": None})
+            self.assertNotIn("pty", by_name["Claude"])
+            self.assertNotIn("pty", by_name["Codex"])
+
     def test_run_launch_failure_preserves_local_socket_guard_reason_and_raw_log(self) -> None:
         launch_error = "error connecting to /tmp/tmux-1000/default (Operation not permitted)"
         with tempfile.TemporaryDirectory() as tmp:

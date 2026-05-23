@@ -219,6 +219,8 @@ class RuntimeSupervisor:
         self._force_stopped_surface = False
         self._mirrored_wrapper_event_keys: set[str] = set()
         self._mirrored_wrapper_event_keys_seeded = False
+        self._mirrored_watcher_raw_event_keys: set[str] = set()
+        self._pty_pilot_health_by_lane: dict[str, dict[str, Any] | None] = {}
         self._last_watcher_source_restart_key = ""
         self._last_watcher_source_restart_at = 0.0
         self._last_seen_control_seq: int | None = None
@@ -548,6 +550,82 @@ class RuntimeSupervisor:
                 payload,
                 source="wrapper",
             )
+
+    @staticmethod
+    def _pty_health_from_raw_value(value: Any) -> dict[str, Any] | None:
+        if not isinstance(value, dict):
+            return None
+        return {
+            "alive": bool(value.get("alive")),
+            "pid": value.get("pid"),
+            "exit_code": value.get("exit_code"),
+        }
+
+    def _watcher_raw_pty_pilot_payload(self, entry: dict[str, Any]) -> dict[str, Any] | None:
+        if str(entry.get("event") or "") != "pty_pilot_lane_register":
+            return None
+        lane = str(entry.get("lane") or "").strip()
+        pane_target = str(entry.get("pane_target") or "").strip()
+        if not lane or not pane_target:
+            return None
+        registered = bool(entry.get("registered"))
+        result = str(entry.get("result") or ("registered" if registered else "failed")).strip()
+        payload: dict[str, Any] = {
+            "lane": lane,
+            "pane_target": pane_target,
+            "registered": registered,
+            "result": result or ("registered" if registered else "failed"),
+            "policy_source": str(entry.get("policy_source") or ""),
+        }
+        command = str(entry.get("command") or "").strip()
+        if command:
+            payload["command"] = command
+        payload["pty"] = self._pty_health_from_raw_value(entry.get("pty"))
+        return payload
+
+    def _mirror_watcher_raw_pty_pilot_events(self) -> None:
+        raw_log = self.base_dir / "logs" / "experimental" / "raw.jsonl"
+        if not raw_log.exists():
+            return
+        try:
+            raw_lines = raw_log.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            return
+        for index, raw_line in enumerate(raw_lines[-400:]):
+            try:
+                entry = json.loads(raw_line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(entry, dict):
+                continue
+            try:
+                event_at = float(entry.get("at") or 0.0)
+            except (TypeError, ValueError):
+                event_at = 0.0
+            if event_at and event_at < self.started_at - 1.0:
+                continue
+            payload = self._watcher_raw_pty_pilot_payload(entry)
+            if payload is None:
+                continue
+            lane = str(payload.get("lane") or "")
+            self._pty_pilot_health_by_lane[lane] = self._pty_health_from_raw_value(payload.get("pty"))
+            key = json.dumps(
+                {
+                    "at": entry.get("at"),
+                    "lane": lane,
+                    "pane_target": payload.get("pane_target"),
+                    "result": payload.get("result"),
+                    "registered": payload.get("registered"),
+                    "command": payload.get("command", ""),
+                    "pty": payload.get("pty"),
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            )
+            if key in self._mirrored_watcher_raw_event_keys:
+                continue
+            self._mirrored_watcher_raw_event_keys.add(key)
+            self._append_event("pty_pilot_lane_register", payload, source="watcher-raw")
 
     def _watcher_status(self) -> dict[str, Any]:
         pid_path = self.base_dir / "experimental.pid"
@@ -1948,17 +2026,18 @@ class RuntimeSupervisor:
                     state = "BOOTING"
                 else:
                     state = "BOOTING"
-            lanes.append(
-                {
-                    "name": lane_name,
-                    "state": state,
-                    "pid": health.get("pid"),
-                    "attachable": bool(health.get("attachable")),
-                    "last_event_at": last_event_at,
-                    "last_heartbeat_at": last_heartbeat_at,
-                    "note": note,
-                }
-            )
+            lane_status = {
+                "name": lane_name,
+                "state": state,
+                "pid": health.get("pid"),
+                "attachable": bool(health.get("attachable")),
+                "last_event_at": last_event_at,
+                "last_heartbeat_at": last_heartbeat_at,
+                "note": note,
+            }
+            if lane_name in self._pty_pilot_health_by_lane:
+                lane_status["pty"] = self._pty_pilot_health_by_lane.get(lane_name)
+            lanes.append(lane_status)
         self.adapter.clear_pane_map_cache()
         return lanes, lane_models
 
@@ -2130,6 +2209,7 @@ class RuntimeSupervisor:
         )
         wrapper_models = build_lane_read_models(self.wrapper_events_dir)
         self._mirror_wrapper_task_events()
+        self._mirror_watcher_raw_pty_pilot_events()
         force_stopped_surface = bool(self._force_stopped_surface)
         active_round_preview = self._build_active_round(
             job_states,

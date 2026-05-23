@@ -8137,6 +8137,14 @@ class PtyPilotWiringTest(unittest.TestCase):
                 self.sent.append((target, text))
                 return True
 
+            def is_registered(self, target: str) -> bool:
+                return target in {call[0] for call in self.register_calls}
+
+            def health(self, target: str) -> dict[str, object] | None:
+                if not self.is_registered(target):
+                    return None
+                return {"name": "Gemini", "alive": True, "pid": 1234, "exit_code": None}
+
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             with mock.patch("watcher_core.PtyLaneBridge", FakeBridge), \
@@ -8169,6 +8177,141 @@ class PtyPilotWiringTest(unittest.TestCase):
 
                 bridge.captures[gemini_target] = None
                 self.assertEqual(core._capture_pane_text(gemini_target), f"tmux:{gemini_target}")
+
+    def test_pty_pilot_register_event_is_emitted_after_poll_starts(self) -> None:
+        class FakeBridge:
+            def __init__(self) -> None:
+                self.register_calls: list[tuple[str, str, str, Path]] = []
+
+            def register(self, pane_target: str, lane_name: str, shell_command: str, project_root: Path) -> bool:
+                self.register_calls.append((pane_target, lane_name, shell_command, project_root))
+                return True
+
+            def is_registered(self, target: str) -> bool:
+                return target in {call[0] for call in self.register_calls}
+
+            def health(self, target: str) -> dict[str, object] | None:
+                if not self.is_registered(target):
+                    return None
+                return {"name": "Gemini", "alive": True, "pid": 1234, "exit_code": None}
+
+            def capture(self, target: str) -> str | None:
+                return None
+
+            def send(self, target: str, text: str) -> bool | None:
+                return None
+
+            def teardown(self) -> None:
+                return None
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with mock.patch("watcher_core.PtyLaneBridge", FakeBridge):
+                core = self._make_core(root, pty_pilot_lane="Gemini", dry_run=False)
+
+                with mock.patch.object(core._exporter, "append_event") as append_event:
+                    core._poll()
+                    core._poll()
+
+                append_event.assert_called_once()
+                event_type, payload = append_event.call_args.args
+                self.assertEqual(event_type, "pty_pilot_lane_register")
+                self.assertEqual(payload["lane"], "Gemini")
+                self.assertEqual(payload["pane_target"], core.gemini_pane_target)
+                self.assertIs(payload["registered"], True)
+                self.assertEqual(payload["result"], "registered")
+                self.assertEqual(payload["policy_source"], "runtime_policy.json")
+                self.assertEqual(payload["command"], "gemini --yolo")
+                self.assertEqual(payload["pty"], {"alive": True, "pid": 1234, "exit_code": None})
+                self.assertIsNone(core._pty_pilot_register_result)
+                raw_rows = [
+                    json.loads(line)
+                    for line in (root / ".pipeline" / "logs" / "experimental" / "raw.jsonl")
+                    .read_text(encoding="utf-8")
+                    .splitlines()
+                ]
+                register_rows = [row for row in raw_rows if row.get("event") == "pty_pilot_lane_register"]
+                self.assertEqual(register_rows[-1]["result"], "registered")
+                self.assertEqual(register_rows[-1]["command"], "gemini --yolo")
+                self.assertEqual(register_rows[-1]["pty"], {"alive": True, "pid": 1234, "exit_code": None})
+
+    def test_gemini_lane_status_includes_pty_health_only_for_pilot_lane(self) -> None:
+        class FakeBridge:
+            instances: list["FakeBridge"] = []
+
+            def __init__(self) -> None:
+                self.registered_targets: set[str] = set()
+                FakeBridge.instances.append(self)
+
+            def register(self, pane_target: str, lane_name: str, shell_command: str, project_root: Path) -> bool:
+                self.registered_targets.add(pane_target)
+                return True
+
+            def is_registered(self, target: str) -> bool:
+                return target in self.registered_targets
+
+            def health(self, target: str) -> dict[str, object] | None:
+                if not self.is_registered(target):
+                    return None
+                return {"name": "Gemini", "alive": True, "pid": 4321, "exit_code": None}
+
+            def capture(self, target: str) -> str | None:
+                return None
+
+            def send(self, target: str, text: str) -> bool | None:
+                return None
+
+            def teardown(self) -> None:
+                return None
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with mock.patch("watcher_core.PtyLaneBridge", FakeBridge):
+                core = self._make_core(root, pty_pilot_lane="Gemini", dry_run=False)
+
+                statuses = core._build_lane_statuses("2026-05-23T00:00:00Z")
+
+        by_name = {str(item.get("name")): item for item in statuses}
+        self.assertEqual(
+            by_name["Gemini"]["pty"],
+            {"alive": True, "pid": 4321, "exit_code": None},
+        )
+        self.assertNotIn("pty", by_name["Codex"])
+        self.assertNotIn("pty", by_name["Claude"])
+
+    def test_gemini_lane_status_sets_pty_none_when_pilot_not_registered(self) -> None:
+        class FakeBridge:
+            def register(self, pane_target: str, lane_name: str, shell_command: str, project_root: Path) -> bool:
+                return False
+
+            def is_registered(self, target: str) -> bool:
+                return False
+
+            def health(self, target: str) -> dict[str, object] | None:
+                return None
+
+            def capture(self, target: str) -> str | None:
+                return None
+
+            def send(self, target: str, text: str) -> bool | None:
+                return None
+
+            def teardown(self) -> None:
+                return None
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with mock.patch("watcher_core.PtyLaneBridge", FakeBridge):
+                core = self._make_core(root, pty_pilot_lane="Gemini", dry_run=False)
+
+                self.assertEqual(core._pty_pilot_register_result["result"], "failed")
+                statuses = core._build_lane_statuses("2026-05-23T00:00:00Z")
+
+        by_name = {str(item.get("name")): item for item in statuses}
+        self.assertIn("pty", by_name["Gemini"])
+        self.assertIsNone(by_name["Gemini"]["pty"])
+        self.assertNotIn("pty", by_name["Codex"])
+        self.assertNotIn("pty", by_name["Claude"])
 
     def test_runtime_policy_default_keeps_pty_pilot_disabled(self) -> None:
         class FakeBridge:

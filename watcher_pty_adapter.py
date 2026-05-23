@@ -270,6 +270,15 @@ class PtyLaneBridge:
             return None
         return lane.send(text)
 
+    def is_registered(self, target: str) -> bool:
+        return str(target or "").strip() in self._lanes_by_target
+
+    def health(self, target: str) -> dict[str, Any] | None:
+        lane = self._lanes_by_target.get(str(target or "").strip())
+        if lane is None:
+            return None
+        return lane.health()
+
     def teardown(self) -> None:
         for lane in list(self._lanes_by_target.values()):
             lane.kill()

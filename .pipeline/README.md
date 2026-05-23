@@ -344,6 +344,12 @@ operator 확인 필요:
 - pane 2: Codex CLI - implement and advisory owner lane in the current Codex+Claude two-agent local profile
 - pane 3: Gemini CLI - disabled in the current local profile unless active
   `selected_agents` and `role_bindings` assign it a role
+- `.pipeline/config/runtime_policy.json`의 `pty_pilot_lane` 기본값은 `""`입니다.
+  `"Gemini"`으로 명시한 경우에만 watcher가 Gemini pane target을
+  `PtyLaneBridge`에 등록해 capture/send를 PTY pilot으로 우회하고,
+  bridge가 `None`을 반환하거나 비활성인 경우 기존 tmux capture/send 경로로
+  fallback합니다. Codex/Claude implement/verify critical path는 이 pilot
+  flag로 전환하지 않습니다.
 
 ## 3-agent smoke helper
 

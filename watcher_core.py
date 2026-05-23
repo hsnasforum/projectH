@@ -30,6 +30,7 @@ import json
 import logging
 import os
 import re
+import shlex
 import subprocess
 import sys
 import time
@@ -70,6 +71,7 @@ from pipeline_runtime.lane_catalog import (
 from pipeline_runtime.operator_autonomy import (
     OPERATOR_APPROVAL_COMPLETED_REASON,
     is_commit_push_approval_stop,
+    load_runtime_policy,
     normalize_reason_code,
     resolve_operator_control,
 )
@@ -152,6 +154,7 @@ from watcher_prompt_assembly import (
 )
 from watcher_runtime_exporter import WatcherRuntimeExporter
 from watcher_recovery import OperatorRetrageTracker, StaleAdvisoryRecovery
+from watcher_pty_adapter import PtyLaneBridge
 from watcher_status_writer import write_runtime_status
 
 _ROLLING_PIPELINE_PATHS = frozenset(
@@ -324,6 +327,7 @@ class WatcherCore:
         self.implement_blocked_cooldown_sec = float(config.get("implement_blocked_cooldown_sec", 300.0))
         self.started_at = time.time()
         self.runtime_adapter = resolve_project_runtime_adapter(self.repo_root)
+        self.runtime_policy = load_runtime_policy(self.repo_root)
         self.runtime_controls = dict(self.runtime_adapter.get("controls") or {})
         self.runtime_role_owners = dict(self.runtime_adapter.get("role_owners") or {})
         self.runtime_prompt_owners = dict(self.runtime_adapter.get("prompt_owners") or self.runtime_role_owners)
@@ -360,6 +364,9 @@ class WatcherCore:
         self.claude_pane_target  = self.agent_pane_targets.get("Claude", "")
         self.gemini_pane_target  = self.agent_pane_targets.get("Gemini", "")
         self.codex_pane_target   = self.agent_pane_targets.get("Codex", "")
+        self._pty_bridge = PtyLaneBridge()
+        self._pty_pilot_lane = self._normalize_pty_pilot_lane(self.runtime_policy.get("pty_pilot_lane"))
+        self._setup_pty_pilot_bridge()
         self.implement_prompt = _normalize_prompt_text(
             config.get("implement_prompt")
             or config.get("claude_prompt")
@@ -524,10 +531,8 @@ class WatcherCore:
         self.collector = ManifestCollector(self.manifests_dir, schema_path)
         self.dispatch_queue = watcher_dispatch.WatcherDispatchQueue(
             lane_input_defer_cooldown_sec=self._lane_input_defer_cooldown_sec,
-            capture_pane_text=lambda target: _shared_capture_pane_text(target),
-            send_keys=lambda target, prompt, pane_type: watcher_dispatch.tmux_send_keys(
-                target, prompt, self.dry_run, pane_type=pane_type
-            ),
+            capture_pane_text=lambda target: self._capture_pane_text(target),
+            send_keys=lambda target, prompt, pane_type: self._send_prompt_to_pane(target, prompt, pane_type),
             get_path_sig=self._get_path_sig,
             role_owner=self._prompt_owner,
             log_raw=self._log_raw,
@@ -586,7 +591,7 @@ class WatcherCore:
             read_status_from_path=lambda path: self._read_status_from_path(path),
             get_path_sig=lambda path: self._get_path_sig(path),
             set_last_advisory_request_sig=lambda sig: setattr(self, "_last_advisory_request_sig", sig),
-            capture_pane_text=lambda target: _shared_capture_pane_text(target),
+            capture_pane_text=lambda target: self._capture_pane_text(target),
             pane_text_has_busy_indicator=lambda text, lane: _shared_pane_text_has_busy_indicator(text, lane),
             pane_text_busy_age_seconds=lambda text, lane: _shared_pane_text_busy_age_seconds(text, lane),
             now_fn=lambda: time.time(),
@@ -654,7 +659,7 @@ class WatcherCore:
             restart_recovery_grace_sec=float(config.get("restart_recovery_grace_sec", 15.0)),
             completion_paths=self.completion_paths,
             error_log=self.events_dir / "errors.jsonl",
-            capture_pane_text=lambda target: _shared_capture_pane_text(target),
+            capture_pane_text=lambda target: self._capture_pane_text(target),
             pane_text_has_busy_indicator=lambda text: _shared_pane_text_has_busy_indicator(text),
             pane_text_has_input_cursor=lambda text: _shared_pane_text_has_input_cursor(text),
             pane_text_is_idle=lambda text: _shared_pane_text_is_idle(text),
@@ -817,6 +822,69 @@ class WatcherCore:
         if str(pane_type or "").strip().lower() == "claude":
             return self._write_claude_verify_pending_prompt(prompt)
         return watcher_dispatch.tmux_send_keys(target, prompt, dry_run, pane_type=pane_type)
+
+    def _normalize_pty_pilot_lane(self, value: object) -> str:
+        lane = str(value or "").strip()
+        return "Gemini" if lane.lower() == "gemini" else ""
+
+    def _pty_pilot_shell_command(self, lane_name: str) -> str:
+        lane = self._lane_config(lane_name) or {}
+        agent_cli = str(lane.get("agent_cli") or lane_name.lower()).strip()
+        vendor_args = lane.get("vendor_args") or ()
+        if not isinstance(vendor_args, (list, tuple)):
+            vendor_args = ()
+        parts = [agent_cli, *(str(arg) for arg in vendor_args if str(arg).strip())]
+        return " ".join(shlex.quote(part) for part in parts if part)
+
+    def _setup_pty_pilot_bridge(self) -> None:
+        if self.dry_run:
+            return
+        if self._pty_pilot_lane != "Gemini":
+            return
+        if not self.gemini_pane_target:
+            return
+        command = self._pty_pilot_shell_command("Gemini")
+        if not command:
+            return
+        registered = self._pty_bridge.register(
+            self.gemini_pane_target,
+            "Gemini",
+            command,
+            self.repo_root,
+        )
+        self._log_raw(
+            "pty_pilot_lane_register",
+            "",
+            "runtime_policy",
+            {
+                "lane": "Gemini",
+                "pane_target": self.gemini_pane_target,
+                "registered": bool(registered),
+                "policy_source": "runtime_policy.json",
+            },
+        )
+
+    def _pty_pilot_handles_target(self, target: str) -> bool:
+        return (
+            self._pty_pilot_lane == "Gemini"
+            and bool(self.gemini_pane_target)
+            and str(target or "").strip() == self.gemini_pane_target
+        )
+
+    def _capture_pane_text(self, target: str) -> str:
+        if self._pty_pilot_handles_target(target):
+            captured = self._pty_bridge.capture(target)
+            if captured is not None:
+                return captured
+        return _shared_capture_pane_text(target)
+
+    def _send_prompt_to_pane(self, target: str, prompt: str, pane_type: str) -> bool:
+        if self._pty_pilot_handles_target(target):
+            payload = prompt if prompt.endswith("\n") else f"{prompt}\n"
+            sent = self._pty_bridge.send(target, payload)
+            if sent is not None:
+                return sent
+        return watcher_dispatch.tmux_send_keys(target, prompt, self.dry_run, pane_type=pane_type)
 
     # ------------------------------------------------------------------
     def _lane_config(self, lane_name: str | None) -> Optional[dict[str, object]]:
@@ -985,7 +1053,7 @@ class WatcherCore:
         target = self._prompt_pane_target("advisory")
         if not target:
             return False
-        snapshot = _shared_capture_pane_text(target)
+        snapshot = self._capture_pane_text(target)
         return self._send_advisory_escape_for_snapshot(
             reason=reason,
             snapshot=snapshot,
@@ -1004,7 +1072,7 @@ class WatcherCore:
             self._reset_inactive_advisory_busy_tracking()
             return False
 
-        snapshot = _shared_capture_pane_text(target)
+        snapshot = self._capture_pane_text(target)
         owner = self._prompt_owner("advisory") or self._role_owner("advisory") or "advisory"
         if (
             not _pane_text_looks_like_advisory_dispatch(snapshot)
@@ -1155,7 +1223,7 @@ class WatcherCore:
         implement_target = self._prompt_pane_target("implement")
         if not implement_target:
             return False
-        pane_text = _shared_capture_pane_text(implement_target)
+        pane_text = self._capture_pane_text(implement_target)
         if not pane_text.strip():
             return False
         return not _shared_pane_text_is_idle(pane_text)
@@ -2304,7 +2372,7 @@ class WatcherCore:
             return
 
         now = time.time()
-        pane_text = _shared_capture_pane_text(target)
+        pane_text = self._capture_pane_text(target)
         pane_fingerprint = hashlib.md5(pane_text.encode()).hexdigest() if pane_text else ""
 
         # Check for progress: pane fingerprint changed
@@ -2350,7 +2418,7 @@ class WatcherCore:
         target = self._prompt_pane_target("verify")
         if not target:
             return
-        verify_snapshot = _shared_capture_pane_text(target)
+        verify_snapshot = self._capture_pane_text(target)
         if not _shared_pane_text_is_idle(verify_snapshot):
             return
         self._mark_operator_retriage_started(operator_sig, marker)
@@ -2892,7 +2960,7 @@ class WatcherCore:
         if not target:
             return False, "implement_target_missing"
         try:
-            pane_text = _shared_capture_pane_text(target)
+            pane_text = self._capture_pane_text(target)
         except Exception:
             return False, "pane_capture_failed"
         if not pane_text.strip():
@@ -3271,7 +3339,7 @@ class WatcherCore:
         if not implement_target:
             self._clear_implement_blocked_state("implement_target_missing")
             return False
-        implement_snapshot = _shared_capture_pane_text(implement_target)
+        implement_snapshot = self._capture_pane_text(implement_target)
         handoff_path_rel = self._repo_relative(handoff_path)
         handoff_sha = self._get_path_sha256(handoff_path)
 
@@ -3389,9 +3457,9 @@ class WatcherCore:
             return
 
         pane_snapshots = {
-            "implement": _shared_capture_pane_text(self._prompt_pane_target("implement")),
-            "verify": _shared_capture_pane_text(self._prompt_pane_target("verify")),
-            "advisory": _shared_capture_pane_text(self._prompt_pane_target("advisory")),
+            "implement": self._capture_pane_text(self._prompt_pane_target("implement")),
+            "verify": self._capture_pane_text(self._prompt_pane_target("verify")),
+            "advisory": self._capture_pane_text(self._prompt_pane_target("advisory")),
         }
         signal = _extract_live_session_escalation(pane_snapshots["implement"])
         if signal is None:
@@ -3444,16 +3512,19 @@ class WatcherCore:
         )
         last_report_at = time.time()
         report_interval_sec = 60.0
-        while True:
-            try:
-                self._poll()
-                now = time.time()
-                if now - last_report_at >= report_interval_sec:
-                    self.print_ab_ratios()
-                    last_report_at = now
-            except Exception as e:
-                log.exception("poll error: %s", e)
-            time.sleep(self.poll_interval)
+        try:
+            while True:
+                try:
+                    self._poll()
+                    now = time.time()
+                    if now - last_report_at >= report_interval_sec:
+                        self.print_ab_ratios()
+                        last_report_at = now
+                except Exception as e:
+                    log.exception("poll error: %s", e)
+                time.sleep(self.poll_interval)
+        finally:
+            self._pty_bridge.teardown()
 
     # ------------------------------------------------------------------
     def _reset_job_for_new_round(self, job: JobState, job_id: str, reason: str) -> None:

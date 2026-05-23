@@ -9,7 +9,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from watcher_pty_adapter import PtyAdapter
+from watcher_pty_adapter import PtyAdapter, PtyLaneBridge
 
 
 class FakeProcess:
@@ -167,6 +167,53 @@ class PtyAdapterTest(unittest.TestCase):
             adapter.lane_health("missing"),
             {"name": "missing", "alive": False, "pid": None, "exit_code": None},
         )
+
+
+class PtyLaneBridgeTest(unittest.TestCase):
+    def test_bridge_maps_target_to_lane_and_uses_none_for_fallback(self) -> None:
+        class FakeLane:
+            def __init__(self, lane_name: str, shell_command: str, project_root: Path) -> None:
+                self.lane_name = lane_name
+                self.shell_command = shell_command
+                self.project_root = project_root
+                self.alive = True
+                self.sent: list[str] = []
+                self.killed = False
+
+            def spawn(self) -> bool:
+                return True
+
+            def is_alive(self) -> bool:
+                return self.alive
+
+            def capture(self) -> str:
+                return f"capture:{self.lane_name}"
+
+            def send(self, text: str) -> bool:
+                self.sent.append(text)
+                return True
+
+            def kill(self) -> bool:
+                self.alive = False
+                self.killed = True
+                return True
+
+        with patch("watcher_pty_adapter.PtyLane", FakeLane):
+            bridge = PtyLaneBridge()
+            self.assertIsNone(bridge.capture("%3"))
+            self.assertIsNone(bridge.send("%3", "hello"))
+
+            self.assertTrue(bridge.register("%3", "Gemini", "gemini --yolo", Path("/tmp/projectH")))
+            self.assertEqual(bridge.capture("%3"), "capture:Gemini")
+            self.assertTrue(bridge.send("%3", "hello\n"))
+            lane = bridge._lanes_by_target["%3"]
+            self.assertEqual(lane.sent, ["hello\n"])
+
+            lane.alive = False
+            self.assertIsNone(bridge.capture("%3"))
+            self.assertIsNone(bridge.send("%3", "fallback"))
+            bridge.teardown()
+            self.assertFalse(bridge._lanes_by_target)
 
 
 if __name__ == "__main__":

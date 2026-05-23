@@ -65,6 +65,27 @@ def _write_active_profile(root: Path, payload: dict | None = None) -> None:
     )
 
 
+def _write_runtime_policy(root: Path, payload: dict | None = None) -> None:
+    policy_path = root / ".pipeline" / "config" / "runtime_policy.json"
+    policy_path.parent.mkdir(parents=True, exist_ok=True)
+    policy_path.write_text(
+        json.dumps(
+            payload
+            or {
+                "schema_version": 1,
+                "publication_default": "hold",
+                "commit_local": "allowed",
+                "push_remote": "needs_operator",
+                "pr_create": "needs_operator",
+                "pr_merge": "needs_operator",
+                "pty_pilot_lane": "",
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+
 def _write_work_note(path: Path, changed_files: list[str]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     changed_lines = "\n".join(f"- `{changed}`" for changed in changed_files) or "- 없음"
@@ -8046,6 +8067,139 @@ class TransitionTurnTest(unittest.TestCase):
                 "implement_idle_timeout",
             )
             self.assertEqual(core._current_turn_state, WatcherTurnState.IDLE)
+
+
+class PtyPilotWiringTest(unittest.TestCase):
+    def _two_agent_profile(self) -> dict:
+        return {
+            "schema_version": 1,
+            "selected_agents": ["Codex", "Claude"],
+            "role_bindings": {"implement": "Codex", "verify": "Claude", "advisory": "Codex"},
+            "role_options": {
+                "advisory_enabled": True,
+                "operator_stop_enabled": True,
+                "session_arbitration_enabled": False,
+            },
+            "mode_flags": {
+                "single_agent_mode": False,
+                "self_verify_allowed": False,
+                "self_advisory_allowed": False,
+            },
+        }
+
+    def _make_core(self, root: Path, *, pty_pilot_lane: str, dry_run: bool = False) -> watcher_core.WatcherCore:
+        watch_dir = root / "work"
+        base_dir = root / ".pipeline"
+        watch_dir.mkdir(parents=True, exist_ok=True)
+        base_dir.mkdir(parents=True, exist_ok=True)
+        _write_active_profile(root, self._two_agent_profile())
+        _write_runtime_policy(
+            root,
+            {
+                "schema_version": 1,
+                "publication_default": "hold",
+                "commit_local": "allowed",
+                "push_remote": "needs_operator",
+                "pr_create": "needs_operator",
+                "pr_merge": "needs_operator",
+                "pty_pilot_lane": pty_pilot_lane,
+            },
+        )
+        return watcher_core.WatcherCore(
+            {
+                "watch_dir": str(watch_dir),
+                "base_dir": str(base_dir),
+                "repo_root": str(root),
+                "dry_run": dry_run,
+            }
+        )
+
+    def test_runtime_policy_registers_gemini_pty_pilot_only(self) -> None:
+        class FakeBridge:
+            instances: list["FakeBridge"] = []
+
+            def __init__(self) -> None:
+                self.register_calls: list[tuple[str, str, str, Path]] = []
+                self.captures: dict[str, str | None] = {}
+                self.sent: list[tuple[str, str]] = []
+                FakeBridge.instances.append(self)
+
+            def register(self, pane_target: str, lane_name: str, shell_command: str, project_root: Path) -> bool:
+                self.register_calls.append((pane_target, lane_name, shell_command, project_root))
+                return True
+
+            def capture(self, target: str) -> str | None:
+                return self.captures.get(target)
+
+            def send(self, target: str, text: str) -> bool | None:
+                if target not in self.captures:
+                    return None
+                self.sent.append((target, text))
+                return True
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with mock.patch("watcher_core.PtyLaneBridge", FakeBridge), \
+                 mock.patch("watcher_core._shared_capture_pane_text", side_effect=lambda target: f"tmux:{target}"), \
+                 mock.patch("watcher_dispatch.tmux_send_keys", return_value=True) as tmux_send:
+                core = self._make_core(root, pty_pilot_lane="Gemini", dry_run=False)
+
+                bridge = FakeBridge.instances[-1]
+                gemini_target = core.gemini_pane_target
+                codex_target = core.codex_pane_target
+                claude_target = core.claude_pane_target
+                self.assertTrue(gemini_target)
+                self.assertEqual(len(bridge.register_calls), 1)
+                self.assertEqual(bridge.register_calls[0][0], gemini_target)
+                self.assertEqual(bridge.register_calls[0][1], "Gemini")
+                self.assertEqual(bridge.register_calls[0][2], "gemini --yolo")
+                self.assertEqual(bridge.register_calls[0][3], root.resolve())
+
+                bridge.captures[gemini_target] = "pty:gemini"
+                self.assertEqual(core._capture_pane_text(gemini_target), "pty:gemini")
+                self.assertEqual(core._capture_pane_text(codex_target), f"tmux:{codex_target}")
+                self.assertEqual(core._capture_pane_text(claude_target), f"tmux:{claude_target}")
+
+                self.assertTrue(core._send_prompt_to_pane(gemini_target, "ROLE: advisory", "gemini"))
+                self.assertEqual(bridge.sent, [(gemini_target, "ROLE: advisory\n")])
+                tmux_send.assert_not_called()
+
+                self.assertTrue(core._send_prompt_to_pane(codex_target, "ROLE: implement", "codex"))
+                tmux_send.assert_called_once_with(codex_target, "ROLE: implement", False, pane_type="codex")
+
+                bridge.captures[gemini_target] = None
+                self.assertEqual(core._capture_pane_text(gemini_target), f"tmux:{gemini_target}")
+
+    def test_runtime_policy_default_keeps_pty_pilot_disabled(self) -> None:
+        class FakeBridge:
+            instances: list["FakeBridge"] = []
+
+            def __init__(self) -> None:
+                self.register_calls: list[tuple[str, str, str, Path]] = []
+                FakeBridge.instances.append(self)
+
+            def register(self, pane_target: str, lane_name: str, shell_command: str, project_root: Path) -> bool:
+                self.register_calls.append((pane_target, lane_name, shell_command, project_root))
+                return True
+
+            def capture(self, target: str) -> str | None:
+                raise AssertionError("disabled PTY pilot should not capture")
+
+            def send(self, target: str, text: str) -> bool | None:
+                raise AssertionError("disabled PTY pilot should not send")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with mock.patch("watcher_core.PtyLaneBridge", FakeBridge), \
+                 mock.patch("watcher_core._shared_capture_pane_text", return_value="tmux"), \
+                 mock.patch("watcher_dispatch.tmux_send_keys", return_value=True) as tmux_send:
+                core = self._make_core(root, pty_pilot_lane="", dry_run=False)
+
+                bridge = FakeBridge.instances[-1]
+                self.assertEqual(bridge.register_calls, [])
+                self.assertEqual(core._capture_pane_text(core.gemini_pane_target), "tmux")
+                self.assertTrue(core._send_prompt_to_pane(core.gemini_pane_target, "ROLE: advisory", "gemini"))
+                tmux_send.assert_called_once_with(core.gemini_pane_target, "ROLE: advisory", False, pane_type="gemini")
 
 
 class BusyLaneNotificationDeferTest(unittest.TestCase):

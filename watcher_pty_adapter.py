@@ -234,3 +234,43 @@ class PtyAdapter:
             "session": self.session_exists(),
             "lanes": {lane_name: lane.health() for lane_name, lane in self._lanes.items()},
         }
+
+
+class PtyLaneBridge:
+    def __init__(self) -> None:
+        self._lanes_by_target: dict[str, PtyLane] = {}
+
+    def register(self, pane_target: str, lane_name: str, shell_command: str, project_root: Path) -> bool:
+        target = str(pane_target or "").strip()
+        name = str(lane_name or "").strip()
+        command = str(shell_command or "").strip()
+        if not target or not name or not command:
+            return False
+
+        existing = self._lanes_by_target.get(target)
+        if existing is not None:
+            existing.kill()
+
+        lane = PtyLane(name, command, Path(project_root))
+        if not lane.spawn():
+            self._lanes_by_target.pop(target, None)
+            return False
+        self._lanes_by_target[target] = lane
+        return True
+
+    def capture(self, target: str) -> str | None:
+        lane = self._lanes_by_target.get(str(target or "").strip())
+        if lane is None or not lane.is_alive():
+            return None
+        return lane.capture()
+
+    def send(self, target: str, text: str) -> bool | None:
+        lane = self._lanes_by_target.get(str(target or "").strip())
+        if lane is None or not lane.is_alive():
+            return None
+        return lane.send(text)
+
+    def teardown(self) -> None:
+        for lane in list(self._lanes_by_target.values()):
+            lane.kill()
+        self._lanes_by_target.clear()

@@ -159,8 +159,17 @@ class CorrectionHandlerMixin:
                 result = self.preference_store.activate_preference(pref["preference_id"])
                 if result is not None:
                     activated_count += 1
-                    enriched = enrich_preference_reliability(result)
-                    if enriched.get("is_highly_reliable") is True:
+                    reliability_projection = dict(result)
+                    reliability_projection.pop("is_highly_reliable", None)
+                    enriched = enrich_preference_reliability(reliability_projection)
+                    promoted_is_highly_reliable = enriched.get("is_highly_reliable") is True
+                    update_preference = getattr(self.preference_store, "update", None)
+                    if callable(update_preference):
+                        update_preference(
+                            pref["preference_id"],
+                            {"is_highly_reliable": promoted_is_highly_reliable},
+                        )
+                    if promoted_is_highly_reliable:
                         is_highly_reliable = True
         return {
             "ok": True,

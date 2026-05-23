@@ -509,6 +509,7 @@ def normalize_decision_class(value: object) -> str:
         "publish_bundle_permission_blocked": "release_gate",
         "publish_gate": "release_gate",
         "publication_boundary": "release_gate",
+        "publication_authorization": "release_gate",
         "publication_or_hold": "release_gate",
         "pr_publication": "release_gate",
         "branch_publication": "release_gate",

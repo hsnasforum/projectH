@@ -82,9 +82,13 @@ from .schema import (
 from .state_contract import reduce_runtime_snapshot
 from .tmux_adapter import TmuxAdapter
 from .turn_arbitration import (
+    active_round_matches_job,
     active_lane_for_runtime,
+    build_active_round_snapshot,
     canonical_turn_state_name,
+    should_suppress_active_round_after_verified_latest_work,
     suppress_active_round_for_turn,
+    verify_round_task_hint,
 )
 from .wrapper_events import append_wrapper_event, build_lane_read_models, iter_wrapper_task_events
 
@@ -1257,85 +1261,16 @@ class RuntimeSupervisor:
         *,
         active_control: dict[str, Any] | None = None,
     ) -> dict[str, Any] | None:
-        if not job_states:
-            return None
-
-        active_control_seq = snapshot_control_seq(
-            active_control_snapshot_from_status(active_control or {})
-        )
-
-        # 동일 run 안에서도 실제 live verify 중인 job이나 receipt-close를 기다리는 job이
-        # `updated_at`/`last_activity_at` 비교에서 stale real job에게 밀리지 않도록,
-        # 먼저 liveness bucket 우선 순위를 보고 그 다음에 timestamp로 tie-break 합니다.
-        # bucket 2: VERIFY_PENDING / VERIFY_RUNNING (live verify round).
-        # bucket 1: VERIFY_DONE인데 matching receipt가 아직 없는 RECEIPT_PENDING round.
-        # bucket 0: 그 외 (CLOSED VERIFY_DONE, NEW_ARTIFACT, STABILIZING, unknown).
-        def _receipt_closes(data: dict[str, Any]) -> bool:
-            return self._receipt_closes_job_round(
-                job_id=str(data.get("job_id") or ""),
-                round_number=int(data.get("round") or 0),
-                last_receipt=last_receipt,
-            )
-
-        def _dispatch_control_seq(data: dict[str, Any]) -> int:
-            return control_seq_value(data.get("dispatch_control_seq"), default=-1)
-
-        def _control_seq_rank(data: dict[str, Any]) -> int:
-            if active_control_seq < 0:
-                return 0
-            return 1 if _dispatch_control_seq(data) == active_control_seq else 0
-
-        def _liveness_rank(data: dict[str, Any]) -> int:
-            status = str(data.get("status") or "")
-            if status in {"VERIFY_PENDING", "VERIFY_RUNNING"}:
-                return 2
-            if status == "VERIFY_DONE" and not _receipt_closes(data):
-                return 1
-            return 0
-
-        latest_job = max(
+        return build_active_round_snapshot(
             job_states,
-            key=lambda data: (
-                _control_seq_rank(data),
-                _liveness_rank(data),
-                float(data.get("updated_at") or 0.0),
-                float(data.get("last_activity_at") or 0.0),
-                str(data.get("job_id") or ""),
+            last_receipt,
+            active_control=active_control,
+            receipt_closes_job_round=lambda job_id, round_number, receipt: self._receipt_closes_job_round(
+                job_id=job_id,
+                round_number=round_number,
+                last_receipt=dict(receipt or {}) if receipt is not None else None,
             ),
         )
-        job_id = str(latest_job.get("job_id") or "")
-        round_number = int(latest_job.get("round") or 0)
-        has_receipt = _receipt_closes(latest_job)
-        status = str(latest_job.get("status") or "")
-        round_state = {
-            "NEW_ARTIFACT": "DISCOVERED",
-            "STABILIZING": "STABILIZING",
-            "VERIFY_PENDING": "VERIFY_PENDING",
-            "VERIFY_RUNNING": "VERIFYING",
-            "VERIFY_DONE": "CLOSED" if has_receipt else "RECEIPT_PENDING",
-        }.get(status, status or "IDLE")
-        dispatch_id = str(latest_job.get("dispatch_id") or "")
-        accepted_dispatch_id = str(latest_job.get("accepted_dispatch_id") or "")
-        done_dispatch_id = str(latest_job.get("done_dispatch_id") or "")
-        completion_stage = str(latest_job.get("completion_stall_stage") or "")
-        if not completion_stage and dispatch_id:
-            if done_dispatch_id == dispatch_id:
-                completion_stage = "receipt_close_pending"
-            elif accepted_dispatch_id == dispatch_id:
-                completion_stage = "task_done_pending"
-        return {
-            "job_id": job_id,
-            "round": round_number,
-            "state": round_state,
-            "artifact_path": str(latest_job.get("artifact_path") or ""),
-            "status": status,
-            "dispatch_id": dispatch_id,
-            "dispatch_control_seq": _dispatch_control_seq(latest_job),
-            "dispatch_stage": str(latest_job.get("dispatch_stall_stage") or ""),
-            "completion_stage": completion_stage,
-            "note": str(latest_job.get("lane_note") or ""),
-            "degraded_reason": str(latest_job.get("degraded_reason") or ""),
-        }
 
     def _suppress_active_round_for_turn(
         self,
@@ -1348,26 +1283,6 @@ class RuntimeSupervisor:
             active_round=active_round,
         )
 
-    def _latest_work_is_verified_by_artifacts(self, artifacts: dict[str, Any] | None) -> bool:
-        if not isinstance(artifacts, dict):
-            return False
-        latest_work = artifacts.get("latest_work")
-        latest_verify = artifacts.get("latest_verify")
-        if not isinstance(latest_work, dict) or not isinstance(latest_verify, dict):
-            return False
-        work_path = str(latest_work.get("path") or "").strip()
-        verify_path = str(latest_verify.get("path") or "").strip()
-        return bool(work_path and work_path != "—" and verify_path and verify_path != "—")
-
-    def _active_round_matches_artifact_path(self, active_round: dict[str, Any] | None, work_path: str) -> bool:
-        if not active_round:
-            return False
-        normalized_round = self._normalize_artifact_path(active_round.get("artifact_path"))
-        normalized_work = str(work_path or "").replace("\\", "/").lstrip("./").strip()
-        if not normalized_round or not normalized_work or normalized_work == "—":
-            return False
-        return normalized_round == normalized_work or normalized_round.endswith(f"/{normalized_work}")
-
     def _suppress_stale_active_round_after_verified_latest_work(
         self,
         *,
@@ -1376,37 +1291,20 @@ class RuntimeSupervisor:
         control: dict[str, Any] | None,
         artifacts: dict[str, Any] | None,
     ) -> bool:
-        if not active_round:
-            return False
-        if str((control or {}).get("active_control_status") or "none") != "none":
-            return False
-        turn_name = canonical_turn_state_name(
-            (turn_state or {}).get("state"),
-            legacy_state=(turn_state or {}).get("legacy_state"),
+        return should_suppress_active_round_after_verified_latest_work(
+            turn_state=turn_state,
+            active_round=active_round,
+            control=control,
+            artifacts=artifacts,
+            normalize_path=self._normalize_artifact_path,
         )
-        if turn_name != "IDLE":
-            return False
-        if str((turn_state or {}).get("reason") or "") not in {"handoff_already_completed", "duplicate_handoff"}:
-            return False
-        if str(active_round.get("state") or "") not in {"VERIFY_PENDING", "VERIFYING", "RECEIPT_PENDING"}:
-            return False
-        if not self._latest_work_is_verified_by_artifacts(artifacts):
-            return False
-        latest_work = ((artifacts or {}).get("latest_work") or {}) if isinstance(artifacts, dict) else {}
-        work_path = str((latest_work or {}).get("path") or "")
-        return not self._active_round_matches_artifact_path(active_round, work_path)
 
     def _job_matches_active_round(
         self,
         job_state: dict[str, Any],
         active_round: dict[str, Any] | None,
     ) -> bool:
-        if not active_round:
-            return False
-        return (
-            str(job_state.get("job_id") or "") == str(active_round.get("job_id") or "")
-            and int(job_state.get("round") or 0) == int(active_round.get("round") or 0)
-        )
+        return active_round_matches_job(job_state, active_round)
 
     def _dispatch_stall_marker(
         self,
@@ -1586,47 +1484,36 @@ class RuntimeSupervisor:
         duplicate_control: dict[str, Any] | None = None,
     ) -> None:
         self.task_hints_dir.mkdir(parents=True, exist_ok=True)
-        active_job_id = str((active_round or {}).get("job_id") or "")
-        active_dispatch_id = str((active_round or {}).get("dispatch_id") or "")
-        active_dispatch_control_seq = (
-            control_seq_value((active_round or {}).get("dispatch_control_seq"), default=-1)
-        )
         control_snapshot = active_control_snapshot_from_status(control)
         active_control_seq = snapshot_control_seq(control_snapshot)
-        turn_state_name = canonical_turn_state_name(
-            (turn_state or {}).get("state"),
-            legacy_state=(turn_state or {}).get("legacy_state"),
-        )
-        active_round_state = str((active_round or {}).get("state") or "")
         implement_owner = self._prompt_owner("implement")
         verify_owner = self._prompt_owner("verify")
+        verify_hint = verify_round_task_hint(
+            active_lane=active_lane,
+            active_round=active_round,
+            turn_state=turn_state,
+            verify_owner=verify_owner,
+        )
         for lane_name in RUNTIME_LANE_ORDER:
-            use_verify_round_hint = (
-                lane_name == verify_owner
-                and lane_name == active_lane
-                and bool(active_job_id)
-                and bool(active_dispatch_id)
-                and active_round_state in {"VERIFY_PENDING", "VERIFYING"}
-                and turn_state_name not in {"VERIFY_FOLLOWUP", "ADVISORY_ACTIVE", "OPERATOR_WAIT"}
-            )
+            use_verify_round_hint = lane_name == verify_owner and verify_hint.active
             active = lane_name == active_lane and (
                 use_verify_round_hint
                 or active_control_seq >= 0
             )
             hint_control_seq = (
-                active_dispatch_control_seq
+                verify_hint.control_seq
                 if use_verify_round_hint
                 else active_control_seq
             )
             if use_verify_round_hint:
-                hint_job_id = active_job_id
-                hint_dispatch_id = active_dispatch_id
+                hint_job_id = verify_hint.job_id
+                hint_dispatch_id = verify_hint.dispatch_id
             elif lane_name == implement_owner and active and active_control_seq >= 0:
                 hint_job_id = f"ctrl-{active_control_seq}"
                 hint_dispatch_id = f"seq-{active_control_seq}"
             else:
-                hint_job_id = active_job_id if use_verify_round_hint else ""
-                hint_dispatch_id = active_dispatch_id if use_verify_round_hint else ""
+                hint_job_id = ""
+                hint_dispatch_id = ""
             inactive_reason = ""
             if not active:
                 if duplicate_control is not None and lane_name == implement_owner:
@@ -2515,7 +2402,8 @@ class RuntimeSupervisor:
             # `VERIFYING`) 같은 surface는 fail-safe 원칙에 따라 여전히 비우고, task hint도
             # active verify가 되살아나지 않도록 항상 초기화합니다.
             if (
-                surfaced_active_round is None
+                self.runtime_state == "STOPPED"
+                or surfaced_active_round is None
                 or str((surfaced_active_round or {}).get("state") or "") != "RECEIPT_PENDING"
             ):
                 surfaced_active_round = None
@@ -2878,6 +2766,11 @@ class RuntimeSupervisor:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(value, encoding="utf-8")
 
+    def _clear_runtime_locks(self) -> None:
+        lease = PaneLease(self.base_dir / "locks")
+        for slot in ("slot_verify", "slot_implement", "slot_advisory", "slot_followup"):
+            lease.release(slot)
+
     def _clear_runtime_sidecars(self) -> None:
         for name in [
             "baseline.pid",
@@ -2892,6 +2785,7 @@ class RuntimeSupervisor:
                 path.unlink()
             except FileNotFoundError:
                 pass
+        self._clear_runtime_locks()
 
     def _cleanup_old_runs(self) -> None:
         disable_value = str(os.environ.get("PIPELINE_RUNTIME_DISABLE_RUNS_CLEANUP") or "").strip().lower()
@@ -3424,6 +3318,7 @@ class RuntimeSupervisor:
         self._terminate_pid_file(self.base_dir / "baseline.pid")
         self._terminate_repo_watchers()
         self.adapter.kill_session()
+        self._clear_runtime_locks()
 
     def run(self) -> int:
         self.run_dir.mkdir(parents=True, exist_ok=True)

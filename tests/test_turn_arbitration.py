@@ -24,9 +24,12 @@ from pipeline_runtime.turn_arbitration import (
     TURN_VERIFY_FOLLOWUP,
     WatcherTurnInputs,
     active_lane_for_runtime,
+    build_active_round_snapshot,
     legacy_watcher_turn_name,
     resolve_watcher_turn,
+    should_suppress_active_round_after_verified_latest_work,
     suppress_active_round_for_turn,
+    verify_round_task_hint,
 )
 
 
@@ -212,6 +215,88 @@ class RuntimeTurnArbitrationTest(unittest.TestCase):
             suppress_active_round_for_turn(
                 turn_state={"state": "IMPLEMENT_ACTIVE"},
                 active_round={"state": "VERIFY_PENDING"},
+            )
+        )
+
+    def test_active_round_selection_uses_dispatch_control_seq_without_status_control(self) -> None:
+        active_round = build_active_round_snapshot(
+            [
+                {
+                    "job_id": "job-newer",
+                    "status": "VERIFY_RUNNING",
+                    "round": 1,
+                    "dispatch_control_seq": 10,
+                    "updated_at": 200.0,
+                },
+                {
+                    "job_id": "job-matching-dispatch",
+                    "status": "VERIFY_RUNNING",
+                    "round": 2,
+                    "dispatch_control_seq": 42,
+                    "dispatch_id": "dispatch-42",
+                    "updated_at": 100.0,
+                },
+            ],
+            last_receipt=None,
+            active_control={
+                "active_control_status": "none",
+                "active_control_seq": -1,
+            },
+        )
+
+        self.assertIsNotNone(active_round)
+        self.assertEqual(active_round["job_id"], "job-newer")
+        self.assertEqual(active_round["dispatch_control_seq"], 10)
+
+    def test_verify_task_hint_can_be_active_without_status_control(self) -> None:
+        hint = verify_round_task_hint(
+            active_lane="Codex",
+            verify_owner="Codex",
+            turn_state={"state": "VERIFY_ACTIVE"},
+            active_round={
+                "state": "VERIFY_PENDING",
+                "job_id": "job-verify",
+                "dispatch_id": "dispatch-verify",
+                "dispatch_control_seq": 2037,
+            },
+        )
+
+        self.assertTrue(hint.active)
+        self.assertEqual(hint.job_id, "job-verify")
+        self.assertEqual(hint.dispatch_id, "dispatch-verify")
+        self.assertEqual(hint.control_seq, 2037)
+
+    def test_verify_task_hint_drops_stale_round_after_followup_turn(self) -> None:
+        hint = verify_round_task_hint(
+            active_lane="Codex",
+            verify_owner="Codex",
+            turn_state={"state": "VERIFY_FOLLOWUP"},
+            active_round={
+                "state": "VERIFY_PENDING",
+                "job_id": "job-stale",
+                "dispatch_id": "dispatch-stale",
+                "dispatch_control_seq": 2038,
+            },
+        )
+
+        self.assertFalse(hint.active)
+        self.assertEqual(hint.job_id, "")
+        self.assertEqual(hint.dispatch_id, "")
+        self.assertEqual(hint.control_seq, -1)
+
+    def test_verified_latest_work_suppresses_stale_active_round(self) -> None:
+        self.assertTrue(
+            should_suppress_active_round_after_verified_latest_work(
+                turn_state={"state": "IDLE", "reason": "handoff_already_completed"},
+                active_round={
+                    "state": "VERIFYING",
+                    "artifact_path": "work/5/22/old.md",
+                },
+                control={"active_control_status": "none"},
+                artifacts={
+                    "latest_work": {"path": "work/5/23/new.md"},
+                    "latest_verify": {"path": "verify/5/23/new.md"},
+                },
             )
         )
 

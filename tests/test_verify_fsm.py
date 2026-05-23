@@ -43,12 +43,17 @@ class _Collector:
 class _Lease:
     def __init__(self) -> None:
         self.released: list[str] = []
+        self.release_mismatches: list[tuple[str, str, int, str]] = []
 
     def acquire(self, slot: str, job_id: str, round_number: int, pane_target: str) -> bool:
         return True
 
     def release(self, slot: str) -> None:
         self.released.append(slot)
+
+    def release_if_mismatched(self, slot: str, job_id: str, round_number: int, *, reason: str) -> bool:
+        self.release_mismatches.append((slot, job_id, round_number, reason))
+        return False
 
 
 class _Dedupe:
@@ -165,6 +170,30 @@ def _receipt_builder(root: Path):
 
 
 class VerifyFsmClaudeDispatchTest(unittest.TestCase):
+    def test_pending_verify_releases_mismatched_lease_before_dispatch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            artifact = root / "work" / "5" / "22" / "note.md"
+            artifact.parent.mkdir(parents=True, exist_ok=True)
+            artifact.write_text("ready\n", encoding="utf-8")
+
+            machine = _make_machine(root, pipeline_dir=None)
+            job = JobState(
+                job_id="job-new-round",
+                status=JobStatus.VERIFY_PENDING,
+                artifact_path=str(artifact),
+                artifact_hash="artifact-hash",
+            )
+            job.round = 7
+
+            result = machine.step(job)
+
+            self.assertEqual(result.status, JobStatus.VERIFY_RUNNING)
+            self.assertEqual(
+                machine.lease.release_mismatches,
+                [("slot_verify", "job-new-round", 7, "new_active_verify_round")],
+            )
+
     def test_claude_verify_dispatch_writes_task_hint_before_prompt_send(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

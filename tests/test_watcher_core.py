@@ -3109,6 +3109,42 @@ class PaneLeaseOwnerPidWiringTest(unittest.TestCase):
             self.assertTrue(lease.archive_for_restart("slot_verify"))
             self.assertFalse((lock_dir / "archive").exists())
 
+    def test_release_if_mismatched_clears_previous_round_lease(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            lock_dir = root / ".pipeline" / "locks"
+            lock_dir.mkdir(parents=True, exist_ok=True)
+            lease = PaneLease(lock_dir, default_ttl=900, dry_run=False)
+            self.assertTrue(lease.acquire("slot_verify", "job-old", 1, "codex-pane", ttl=900))
+
+            released = lease.release_if_mismatched(
+                "slot_verify",
+                "job-new",
+                2,
+                reason="new_active_verify_round",
+            )
+
+            self.assertTrue(released)
+            self.assertFalse((lock_dir / "slot_verify.lock").exists())
+
+    def test_release_if_mismatched_keeps_current_round_lease(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            lock_dir = root / ".pipeline" / "locks"
+            lock_dir.mkdir(parents=True, exist_ok=True)
+            lease = PaneLease(lock_dir, default_ttl=900, dry_run=False)
+            self.assertTrue(lease.acquire("slot_verify", "job-current", 3, "codex-pane", ttl=900))
+
+            released = lease.release_if_mismatched(
+                "slot_verify",
+                "job-current",
+                3,
+                reason="new_active_verify_round",
+            )
+
+            self.assertFalse(released)
+            self.assertTrue((lock_dir / "slot_verify.lock").exists())
+
     def test_watcher_acquire_succeeds_after_archive_for_restart(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

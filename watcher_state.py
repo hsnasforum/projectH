@@ -316,6 +316,25 @@ class PaneLease:
             path.unlink()
             log.info("lease released: slot=%s", slot)
 
+    def release_if_mismatched(self, slot: str, job_id: str, round_: int, *, reason: str) -> bool:
+        path = self._lock_path(slot)
+        self._clear_if_owner_dead(slot)
+        if not path.exists():
+            return False
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            self._clear_lock(slot, reason=reason)
+            return True
+        try:
+            lock_round = int(data.get("round") or 0)
+        except (TypeError, ValueError):
+            lock_round = 0
+        if str(data.get("job_id") or "") == str(job_id or "") and lock_round == int(round_):
+            return False
+        self._clear_lock(slot, reason=reason)
+        return True
+
     def archive_for_restart(self, slot: str, *, archive_dir: Path | None = None) -> bool:
         """
         Preserve a potentially stale lease before watcher self-restart.

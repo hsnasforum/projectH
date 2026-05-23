@@ -1,9 +1,9 @@
 {
   "schema_version": 1,
-  "selected_agents": ["Codex"],
+  "selected_agents": ["Codex", "Claude"],
   "role_bindings": {
     "implement": "Codex",
-    "verify": "Codex",
+    "verify": "Claude",
     "advisory": "Codex"
   },
   "role_options": {
@@ -12,7 +12,7 @@
     "session_arbitration_enabled": false
   },
   "mode_flags": {
-    "single_agent_mode": true,
+    "single_agent_mode": false,
     "self_verify_allowed": true,
     "self_advisory_allowed": true
   }

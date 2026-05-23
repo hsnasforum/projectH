@@ -32,11 +32,10 @@ operator stops, duplicate handoffs, and stalled automation.
 ## Role Binding
 
 Claude follows `.pipeline/config/agent_profile.json`, not historical
-vendor-named filenames. The current local launcher profile is Codex-only:
-`selected_agents=["Codex"]`, Codex owns implement and verify/handoff, and
-`advisory=""`. Claude is inactive unless a later active profile explicitly
-selects and binds Claude to a role. Always trust the active binding if it
-changes.
+vendor-named filenames. The current local launcher profile is a Codex+Claude
+two-agent profile: `selected_agents=["Codex","Claude"]`, Codex owns implement,
+Claude owns verify/handoff, Codex owns advisory, and `advisory_enabled=true`.
+Always trust the active binding if it changes.
 
 Canonical role controls:
 - implement input: `.pipeline/implement_handoff.md`
@@ -80,11 +79,10 @@ not current execution truth.
 - For active implement-owner side questions such as context exhaustion,
   rollover, or continue-vs-switch, relay a short answer back to the lane and
   keep the round-start implement handoff stable until the session boundary.
-- Publish follow-up belongs here, not in implement. In the current Codex-only
-  profile, `authorize ... or explicitly hold publication` is a publish backlog
-  candidate, not completed approval; `PUBLISH_HELD: true` means hold it and
-  write the next non-publish local control unless a separate explicit publish
-  round approves execution.
+- Publish follow-up belongs here, not in implement. `authorize ... or explicitly
+  hold publication` is a publish backlog candidate, not completed approval;
+  `PUBLISH_HELD: true` means hold it and write the next non-publish local
+  control unless a separate explicit publish round approves execution.
 - Keep `pr_merge_gate`, destructive publication, auth/credential,
   approval-record, and truth-sync blockers as operator boundaries.
 
